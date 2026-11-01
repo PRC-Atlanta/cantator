@@ -1,0 +1,99 @@
+import CantorCore
+import SwiftUI
+
+enum LibraryFilter: Hashable {
+    case all, attention, notDownloaded, duplicates
+    case tag(String)
+}
+
+enum SidebarItem: Hashable {
+    case show, check
+    case plan(String)
+    case library(LibraryFilter)
+}
+
+struct RootView: View {
+    @Environment(AppModel.self) private var model
+    @State private var columns = NavigationSplitViewVisibility.all
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationSplitView(columnVisibility: $columns) {
+            SidebarView(selection: $model.selection)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+        } detail: {
+            detail
+        }
+        .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
+        .onChange(of: columns) { _, value in
+            // The sidebar leads to text fields, so it stays closed in Show Mode.
+            if model.show.showMode, value != .detailOnly { columns = .detailOnly }
+        }
+        .onChange(of: model.show.showMode) { _, locked in
+            if locked {
+                model.selection = .show
+                columns = .detailOnly
+            } else {
+                columns = .all
+            }
+        }
+        .alert("Cantor", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.alert ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch model.selection ?? .show {
+        case .show: ShowView()
+        case .check: CheckView()
+        case .plan(let id): ServiceView(planID: id)
+        case .library(let filter): LibraryView(filter: filter)
+        }
+    }
+}
+
+private struct SidebarView: View {
+    @Environment(AppModel.self) private var model
+    @Binding var selection: SidebarItem?
+
+    var body: some View {
+        let library = model.library
+        List(selection: $selection) {
+            Section("Service") {
+                Label("Show", systemImage: "play.rectangle").tag(SidebarItem.show)
+                Label("Pre-Service Check", systemImage: "checklist").tag(SidebarItem.check)
+            }
+            Section("Upcoming") {
+                ForEach(model.plans) { plan in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
+                        Text(plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .tag(SidebarItem.plan(plan.id))
+                }
+                if model.plans.isEmpty {
+                    Text("None synced").foregroundStyle(.secondary)
+                }
+            }
+            Section("Library") {
+                row("All Tracks", "music.note.list", .all, library.tracks.count)
+                ForEach(library.allTags, id: \.self) { tag in
+                    row(tag.capitalized, "tag", .tag(tag), library.tracks.filter { $0.tags.contains(tag) }.count)
+                }
+                row("Needs Attention", "exclamationmark.triangle", .attention, library.tracks.filter(LibraryView.needsAttention).count)
+                row("Not Downloaded", "icloud", .notDownloaded, library.tracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)
+                row("Duplicates", "square.on.square", .duplicates, library.duplicateGroups.count)
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    private func row(_ title: String, _ symbol: String, _ filter: LibraryFilter, _ count: Int) -> some View {
+        Label(title, systemImage: symbol)
+            .badge(count)
+            .tag(SidebarItem.library(filter))
+    }
+}
