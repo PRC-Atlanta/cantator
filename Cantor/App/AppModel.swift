@@ -19,6 +19,13 @@ final class AppModel {
     var isLoadingService = false
     var isScanning = false
     var isSyncing = false
+    /// The service picker: its list, when it was read, and the service being read, if any.
+    var showingServicePicker = false
+    var pickerServices: [PlanSummary] = []
+    var pickerListedAt: Date?
+    var isListingServices = false
+    var readingServiceID: String?
+    var pickerMessage: String?
     var isMatching = false
     var analyzingCount = 0
     var alert: String?
@@ -491,34 +498,19 @@ final class AppModel {
         isSyncing = true
         Task {
             defer { isSyncing = false }
-            var notes: [String] = []
-            var fresh: [ServicePlan]?
-            if settings.planningCenterSource == .connector {
-                do {
-                    fresh = try await plansThroughConnector()
-                    lastPlanningCenterSource = .connector
-                } catch {
-                    noteClaudeFailure(error)
-                    notes.append(error.localizedDescription)
-                }
+            let memory = memory
+            let (fresh, readNotes) = await readPlanningCenter(
+                connector: { stream in try PlanningCenterConnector.plans(fromStream: stream, memory: memory) },
+                prompt: PlanningCenterConnector.prompt(), purpose: "Syncing Planning Center",
+                // Reading every service type's next plans takes many tool calls.
+                timeout: 480,
+                token: { try await $0.fetchUpcomingPlans(memory: memory) }
+            )
+            var notes = readNotes
+            guard let fresh else {
+                alert = (notes + ["Using saved plans."]).joined(separator: " ")
+                return
             }
-            if fresh == nil {
-                do {
-                    guard let appID = try Keychain.lookup(.pcoAppID), let secret = try Keychain.lookup(.pcoSecret) else {
-                        notes.append(notes.isEmpty ? "Add your Planning Center token in Settings." : "Add a Planning Center token in Settings to sync without the connector.")
-                        alert = (notes + ["Using saved plans."]).joined(separator: " ")
-                        return
-                    }
-                    fresh = try await PCOClient(appID: appID, secret: secret).fetchUpcomingPlans(memory: memory)
-                    lastPlanningCenterSource = .token
-                    if !notes.isEmpty { notes.append("Synced with the API token instead.") }
-                } catch {
-                    notes.append("\(error.localizedDescription) Using saved plans.")
-                    alert = notes.joined(separator: " ")
-                    return
-                }
-            }
-            guard let fresh else { return }
             plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
             let failed = fresh.filter(\.syncFailed).count
             if failed > 0 {
@@ -531,23 +523,111 @@ final class AppModel {
         }
     }
 
-    /// The upcoming services through the Planning Center connector on the Claude account. Claude
-    /// only gets the connector's read-only Services tools, and the plans are read from their results.
-    private func plansThroughConnector() async throws -> [ServicePlan] {
+    // MARK: Service picker
+
+    /// Lists the services from six weeks back to three weeks ahead, without their items.
+    func listPickerServices() {
+        guard !isListingServices else { return }
+        isListingServices = true
+        pickerMessage = nil
+        Task {
+            defer { isListingServices = false }
+            let (summaries, notes) = await readPlanningCenter(
+                connector: { stream in try PlanningCenterConnector.summaries(fromStream: stream) },
+                prompt: PlanningCenterConnector.listPrompt(), purpose: "Listing services", timeout: 300,
+                token: { try await $0.listPlans() }
+            )
+            if let summaries {
+                pickerServices = summaries
+                pickerListedAt = Date()
+            }
+            pickerMessage = notes.isEmpty ? nil : notes.joined(separator: " ")
+        }
+    }
+
+    /// Reads the chosen service's items and adds it to the sidebar, then shows it.
+    /// Not in Show Mode, for the same reason as a sync.
+    func pickService(_ summary: PlanSummary) {
+        guard readingServiceID == nil, !show.showMode, !isLoadingService else { return }
+        readingServiceID = summary.id
+        pickerMessage = nil
+        Task {
+            defer { readingServiceID = nil }
+            let memory = memory
+            let prompt: String
+            do {
+                prompt = try PlanningCenterConnector.planPrompt(summary)
+            } catch {
+                pickerMessage = error.localizedDescription
+                return
+            }
+            let (fresh, notes) = await readPlanningCenter(
+                connector: { stream in try PlanningCenterConnector.plan(fromStream: stream, summary: summary, memory: memory) },
+                prompt: prompt, purpose: "Reading \(summary.dates.isEmpty ? summary.title : summary.dates)", timeout: 300,
+                token: { try await $0.fetchPlan(summary, memory: memory) }
+            )
+            guard let fresh, !show.showMode else {
+                pickerMessage = notes.isEmpty ? nil : notes.joined(separator: " ")
+                return
+            }
+            plans = ServicePlan.applyPicked(existing: plans, fresh: fresh)
+            rankAllPlans()
+            markCuesChanged()
+            scheduleSave()
+            if !notes.isEmpty { alert = notes.joined(separator: " ") }
+            showingServicePicker = false
+            selection = .plan(fresh.id)
+        }
+    }
+
+    /// One Planning Center read: through the connector when that is the chosen source, and with the
+    /// token otherwise or whenever the connector can't be used. The notes say what went wrong.
+    private func readPlanningCenter<T>(
+        connector: @escaping (Data) throws -> T, prompt: String, purpose: String, timeout: TimeInterval,
+        token: (PCOClient) async throws -> T
+    ) async -> (T?, [String]) {
+        var notes: [String] = []
+        if settings.planningCenterSource == .connector {
+            do {
+                let stream = try await runConnector(prompt: prompt, purpose: purpose, timeout: timeout)
+                let value = try connector(stream)
+                lastPlanningCenterSource = .connector
+                return (value, notes)
+            } catch {
+                noteClaudeFailure(error)
+                notes.append(error.localizedDescription)
+            }
+        }
+        do {
+            guard let appID = try Keychain.lookup(.pcoAppID), let secret = try Keychain.lookup(.pcoSecret) else {
+                notes.append(notes.isEmpty ? "Add your Planning Center token in Settings." : "Add a Planning Center token in Settings to read it without the connector.")
+                return (nil, notes)
+            }
+            let value = try await token(PCOClient(appID: appID, secret: secret))
+            lastPlanningCenterSource = .token
+            if !notes.isEmpty { notes.append("Used the API token instead.") }
+            return (value, notes)
+        } catch {
+            notes.append(error.localizedDescription)
+            return (nil, notes)
+        }
+    }
+
+    /// Runs Claude Code with only the Planning Center connector's read-only Services tools. The
+    /// caller reads the data from the tools' own results in the stream.
+    private func runConnector(prompt: String, purpose: String, timeout: TimeInterval) async throws -> Data {
         guard settings.llmEnabled else { throw PlanningCenterConnectorError.claudeOff }
         var cli = try await claudeAccount()
         let server = try PlanningCenterConnector.server(in: try await cli.mcpServers())
-        // Reading every service type's next plans takes many tool calls.
-        cli.timeout = 480
+        cli.timeout = timeout
         let model = settings.llmModel
-        let stream = try await usingClaude("Syncing Planning Center") {
+        return try await usingClaude(purpose) {
             try await cli.runWithTools(
-                system: PlanningCenterConnector.system, prompt: PlanningCenterConnector.prompt(),
+                system: PlanningCenterConnector.system, prompt: prompt,
                 allowedTools: PlanningCenterConnector.allowedTools(server: server.name),
                 disallowedTools: PlanningCenterConnector.disallowedTools(server: server.name), model: model
             )
         }
-        return try PlanningCenterConnector.plans(fromStream: stream, memory: memory)
     }
 
     func rankAllPlans() {

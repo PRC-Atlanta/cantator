@@ -57,6 +57,8 @@ Cantator reads your upcoming services in one of two ways, chosen in **Settings >
 
 Claude may only use the connector's three read-only Services tools: service types, plans and plan items. Cantator reads the plans from the connector's own answers, not from what Claude writes, and checks each plan's item count, so a plan that comes back incomplete keeps its saved copy. Claude does see item titles and descriptions, which can include people's names. A sync reads the next four plans of every service type, can take a few minutes, and counts toward your Claude usage. Planning Center's admins are notified the first time someone connects an AI tool.
 
+**Choose Service…** at the top of the sidebar's Services list shows every service from six weeks back to three weeks ahead, for every service type. Pick one and choose **Read Service** (or double-click it): Claude reads that one service's items and it opens, ready to match. Use it for a service further out than the sync reaches, or a past one you want to run again. A picked service stays in the sidebar while it is inside that window. The list is read the first time you open the picker each day; the refresh button reads it again. It uses the same source as sync, with the same token fallback.
+
 The connector doesn't give attachment filenames, which help matching. Cantator keeps the ones from the last token sync.
 
 **API token (the fallback).** If the connector can't be used (Claude Code is signed out, at its usage limit, or the connector isn't connected), Cantator syncs with a token instead and says so. Choose **API Token** to always use it.
@@ -117,7 +119,7 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 
 **During the week**
 
-1. Select the service in the sidebar and choose **Refresh** to pull the latest plan.
+1. Select the service in the sidebar and choose **Refresh** to pull the latest plan. If it isn't there, use **Choose Service…**.
 2. Review each item that needs a track. Check **Needs** for items with playback, preview a candidate on your headphones, then choose **Confirm**.
 3. In Library, set each track's end point and fade. Use **Preview Ending** to hear the last 15 seconds, and **Use** to accept the suggested end.
 

@@ -47,7 +47,7 @@ The kernel is a plain Swift class with an SPSC command ring and atomics. It does
 Stored in `~/Library/Application Support/Cantor/`: `library.json`, `aliases.json`, `services/<planID>.json`, `waveforms/<trackID>.peaks`, `runlog.jsonl`, plus rolling `.bak` copies.
 
 - **Track**: id, contentID, files (path, locality), title, durationSec, sampleRate, channels, startSec, endSec?, suggestedEndSec?, fadeOutSec (3), fadeInSec (0), trimDb, integratedLUFS?, truePeakDb?, markers, key, notes, tags, pcoSongIDs, playCount, lastPlayed, exclusion (reason, by operator)?, keptByOperator, eq (on, high-pass, six bell or shelf bands, low-pass, output dB)?.
-- **ServicePlan**: PCO plan id, serviceType, title, dates, times, syncedAt, items.
+- **ServicePlan**: PCO plan id, serviceType, title, dates, times, syncedAt, items, picked.
 - **ServiceCue**: PCO item id or manual id, position, title, itemType, notes, arrangement, song id, lengthSec, needsPlayback, candidates, trackID (confirmed only), changedSinceConfirm.
 - **AliasMemory**: PCO song id or normalized title to confirmed contentID.
 
@@ -98,6 +98,7 @@ Stream Deck works by sending these keystrokes. MIDI is deferred (see NEXT_STEPS.
 
 - **Show**: full-width state bar (word, icon and color: IDLE, ARMED, LIVE, HOLD, FADING, PANIC, FAULT). Cue list at left. At right: current cue title, large waveform with playhead, start and end markers and fade zone, remaining time in large SF Mono, next cue, house and cue meters. Key legend along the bottom.
 - **Service**: sidebar of upcoming plans. Table of items with Needs, Match, Confidence and State. Inspector shows candidates with the reason, preview on the cue output, Confirm, Choose Other, Not Needed. Load Service builds the cue list and starts the decode.
+- **Service picker**: a sheet from Choose Service… in the sidebar. Every service type's plans from six weeks back to three weeks ahead, Upcoming then Past, with a service type filter. Read Service reads that plan's items and opens it.
 - **EQ window**: one per track, opened from the inspector. Response curve with a handle per band (drag for frequency and gain), band buttons (double-click turns a band on or off), shape, FREQ, Q, GAIN and OUT knobs (drag, Option for fine, double-click to reset), On/Bypass, Preview and Reset. Locked in Show Mode. Always dark, in the Waves F6's palette: a slate graph, a color per band (HP and LP white), orange knobs and yellow brackets on the selected handle. This is the one exception to color meaning state, and it stays inside the EQ window.
 - **Library**: sidebar (All, tags, Needs Attention, Not Downloaded, Duplicates, Excluded). Excluded lists stems and Not a Playback files with the reason, and This Is a Playback brings one back. Sortable table. Inspector with waveform, start, end, fade, trim, markers, key, notes, tags, file paths.
 - **Check**: pre-service checklist grouped by Blocking, Warning and OK, each row saying what to do.
@@ -108,6 +109,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 ## Planning Center and AI flow
 
 0. Source: the Planning Center connector on the Claude account by default, through `claude -p` with `--tools ""`, `--allowedTools` set to `services_service_types`, `services_plans` and `services_plan_items` on that server (found with `claude mcp list`), and `--output-format stream-json`. `PlanningCenterConnector` reads the tool results out of the stream, maps items with the same code as the token client, marks a plan `syncFailed` when its items are missing or its `items_count` disagrees, and sets `attachmentsUnavailable` on playback cues so merging keeps saved filenames. The next four plans per service type. On any connector error the token client below runs instead.
+0a. Service picker: the list is one run with the same three tools, asking each service type for its last 25 past plans and next 10 future ones (the connector can only filter plans by past or future), then keeping those from six weeks back to three weeks ahead. Choosing one is a second run that reads only that plan's items. Its ids are checked to be numbers before they go into the request, and a read whose item count disagrees is an error rather than a half-filled plan. The token path lists with `filter=past` and `filter=future` the same way. A picked plan is marked `picked`, so a sync keeps it while it is inside the window, even with no confirmed cues.
 1. Fetch service types, then future plans, then items (`include=song,arrangement`) and plan times. Attachments are fetched for playback candidates only. Requests are spaced 150 ms apart, 429s honor Retry-After, and pagination follows `links.next`.
 2. Detect needs-playback by item type and keywords, with an operator override remembered per song.
 3. Match each cue: remembered aliases first (0.98), PCO attachment filename, then a string-similarity blend (token Jaccard, Jaro-Winkler, normalized Levenshtein) with a duration check.
@@ -139,7 +141,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 | Crash | Audio stops with the process. System sound output is restored on next launch from a saved record. |
 | File replaced by a new mix | New content ID, new track. Old cue flags the file as missing. Load Service also compares each file with the confirmed audio. |
 | Saved data unreadable | The file is set aside, not overwritten, and the app says so. Older files with missing fields still load. |
-| Plan leaves Planning Center's future list | The loaded plan and recent plans with confirmed work are kept. |
+| Plan leaves Planning Center's future list | The loaded plan, recent plans with confirmed work, and plans chosen in the picker (while inside its window) are kept. |
 
 ## System alerts
 

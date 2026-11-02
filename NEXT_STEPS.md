@@ -9,6 +9,7 @@ These could not be tested in development.
 - **Unplugging the interface during playback.** Fault handling was tested by simulating the loss, not by pulling a cable.
 - **Planning Center with a real token.** The client was tested against stubbed responses built from the documented API. No request has reached the live API.
 - **Claude with your account.** The standalone Claude Code on this Mac is signed out, so no real request has run, for matching or for new files. Run `claude auth login`, then drop a song into a watched folder and try Resolve Ambiguous. The process handling was tested with a stand-in script, and the signed-out result with the real CLI. The success output format is from documentation and has not been seen from a real run.
+- **The service picker.** Listing and reading were tested with stand-in connector output and stubbed parsing, not a live Planning Center account. Check that a service type with more than 25 services in six weeks still shows the oldest ones: the list asks each type for its last 25.
 - **New files from Drive.** The pop-up flow was tested end to end with a file written into a watched folder during a loaded service. Arrival dates of real Drive syncs and AirDrop were not tested.
 - **MP3 decoding.** WAV and AAC were tested with real files. MP3 goes through the same Apple decoder, but no real MP3 was tested.
 - **Keyboard control.** Key handling in the real window has not been exercised. Debug self-checks call the same controller directly. Confirm each key, and confirm that Stream Deck hotkeys arrive.

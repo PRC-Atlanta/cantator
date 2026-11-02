@@ -64,6 +64,45 @@ public actor PCOClient {
         return plans.sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
     }
 
+    /// The service picker's list: every service type's plans inside the picker's window, without items.
+    public func listPlans(pastPerType: Int = 25, futurePerType: Int = 10, now: Date = Date()) async throws -> [PlanSummary] {
+        var summaries: [PlanSummary] = []
+        for type in try await getAll("\(Self.base)/service_types?per_page=100") {
+            guard let typeID = type["id"] as? String else { continue }
+            let typeName = attributes(type)["name"] as? String ?? "Service"
+            let root = "\(Self.base)/service_types/\(typeID)/plans?include=plan_times"
+            for query in ["filter=past&order=-sort_date&per_page=\(pastPerType)", "filter=future&order=sort_date&per_page=\(futurePerType)"] {
+                let document = try await getDocument("\(root)&\(query)")
+                var included: [String: [String: Any]] = [:]
+                for entry in document["included"] as? [[String: Any]] ?? [] {
+                    if let type = entry["type"] as? String, let id = entry["id"] as? String { included["\(type):\(id)"] = entry }
+                }
+                for plan in document["data"] as? [[String: Any]] ?? [] {
+                    guard let planID = plan["id"] as? String else { continue }
+                    let attrs = attributes(plan)
+                    let timeLinks = ((plan["relationships"] as? [String: Any])?["plan_times"] as? [String: Any])?["data"] as? [[String: Any]] ?? []
+                    summaries.append(PlanSummary(
+                        id: planID, serviceTypeID: typeID, serviceTypeName: typeName,
+                        title: attrs["title"] as? String ?? "", dates: attrs["dates"] as? String ?? "",
+                        sortDate: Self.date(attrs["sort_date"]),
+                        serviceTimes: timeLinks
+                            .compactMap { link in (link["id"] as? String).flatMap { included["PlanTime:\($0)"] } }
+                            .filter { attributes($0)["time_type"] as? String == "service" }
+                            .compactMap { Self.date(attributes($0)["starts_at"]) }
+                            .sorted(),
+                        itemsCount: attrs["items_count"] as? Int
+                    ))
+                }
+            }
+        }
+        return PlanSummary.inWindow(summaries, now: now)
+    }
+
+    /// One plan chosen in the service picker, with its items, times and attachment filenames.
+    public func fetchPlan(_ summary: PlanSummary, memory: AliasMemory, now: Date = Date()) async throws -> ServicePlan {
+        try await populate(summary.emptyPlan(now: now), memory: memory)
+    }
+
     /// Errors that every remaining request would hit too.
     static func endsSync(_ error: Error) -> Bool {
         if error is CancellationError { return true }
@@ -80,13 +119,17 @@ public actor PCOClient {
     ) async throws -> ServicePlan {
         guard let planID = plan["id"] as? String else { throw PCOError.malformed }
         let attrs = attributes(plan)
-        var result = ServicePlan(
+        return try await populate(ServicePlan(
             id: planID, serviceTypeID: serviceTypeID, serviceTypeName: serviceTypeName,
             title: attrs["title"] as? String ?? "", dates: attrs["dates"] as? String ?? "",
             sortDate: Self.date(attrs["sort_date"]), syncedAt: now
-        )
+        ), memory: memory)
+    }
 
-        let root = "\(Self.base)/service_types/\(serviceTypeID)/plans/\(planID)"
+    /// Reads a plan's service times and items, and attachment filenames for items that need playback.
+    private func populate(_ plan: ServicePlan, memory: AliasMemory) async throws -> ServicePlan {
+        var result = plan
+        let root = "\(Self.base)/service_types/\(plan.serviceTypeID)/plans/\(plan.id)"
         do {
             result.serviceTimes = try await getAll("\(root)/plan_times?per_page=25")
                 .filter { attributes($0)["time_type"] as? String == "service" }

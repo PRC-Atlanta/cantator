@@ -23,6 +23,7 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             detail
+                .sheet(isPresented: $model.showingServicePicker) { ServicePickerSheet() }
         }
         .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
         .onChange(of: columns) { _, value in
@@ -31,6 +32,7 @@ struct RootView: View {
         }
         .onChange(of: model.show.showMode) { _, locked in
             if locked {
+                model.showingServicePicker = false
                 model.selection = .show
                 columns = .detailOnly
             } else {
@@ -76,7 +78,16 @@ private struct SidebarView: View {
                 Label("Show", systemImage: "play.rectangle").sidebarHover().tag(SidebarItem.show)
                 Label("Pre-Service Check", systemImage: "checklist").sidebarHover().tag(SidebarItem.check)
             }
-            Section("Upcoming") {
+            Section("Services") {
+                Button {
+                    model.showingServicePicker = true
+                } label: {
+                    Label("Choose Service…", systemImage: "calendar.badge.plus")
+                }
+                .buttonStyle(.plain)
+                .sidebarHover()
+                .disabled(model.show.showMode || model.isLoadingService)
+                .help("Pick a service from six weeks back to three weeks ahead")
                 ForEach(model.plans) { plan in
                     VStack(alignment: .leading, spacing: 1) {
                         Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)

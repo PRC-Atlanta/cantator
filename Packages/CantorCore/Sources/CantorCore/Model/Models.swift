@@ -396,6 +396,8 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     public var serviceTimes: [Date]
     public var syncedAt: Date
     public var cues: [ServiceCue]
+    /// Chosen in the service picker, so a sync keeps it while it is inside the picker's window.
+    public var picked = false
     /// Set by a sync whose plan_times request failed, so merging keeps the saved times. Not saved.
     public var serviceTimesUnavailable = false
     /// Set by a sync that could not fetch this plan, so the saved copy is kept as it was. Not saved.
@@ -417,7 +419,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, serviceTypeID, serviceTypeName, title, dates, sortDate, serviceTimes, syncedAt, cues
+        case id, serviceTypeID, serviceTypeName, title, dates, sortDate, serviceTimes, syncedAt, cues, picked
     }
 
     public init(from decoder: Decoder) throws {
@@ -434,14 +436,16 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             syncedAt: try c.decodeIfPresent(Date.self, forKey: .syncedAt) ?? .distantPast,
             cues: try c.decodeIfPresent([ServiceCue].self, forKey: .cues) ?? []
         )
+        picked = try c.decodeIfPresent(Bool.self, forKey: .picked) ?? false
     }
 
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
 
     public var hasOperatorWork: Bool { cues.contains { $0.trackID != nil || $0.isManual } }
 
-    /// Applies a sync. A plan missing from the sync stays if it is loaded, or holds operator work
-    /// and is under two weeks old: Planning Center stops listing a plan as future once it starts.
+    /// Applies a sync. A plan missing from the sync stays if it is loaded, holds operator work and is
+    /// under two weeks old (Planning Center stops listing a plan as future once it starts), or was
+    /// chosen in the service picker and is still inside its window.
     public static func applySync(existing: [ServicePlan], fresh: [ServicePlan], loadedID: String?, now: Date = Date()) -> [ServicePlan] {
         let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let synced = fresh.compactMap { plan in
@@ -449,17 +453,29 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         }
         let freshIDs = Set(fresh.map(\.id))
         let cutoff = now.addingTimeInterval(-14 * 24 * 3600)
+        let pickerStart = PlanSummary.window(now: now).lowerBound
         let kept = existing.filter { plan in
             guard !freshIDs.contains(plan.id) else { return false }
-            return plan.id == loadedID || (plan.hasOperatorWork && (plan.sortDate ?? now) >= cutoff)
+            if plan.id == loadedID { return true }
+            if plan.picked { return (plan.sortDate ?? now) >= pickerStart }
+            return plan.hasOperatorWork && (plan.sortDate ?? now) >= cutoff
         }
         return (synced + kept).sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
+    }
+
+    /// Adds or refreshes the one plan read for the service picker, leaving every other plan as it was.
+    public static func applyPicked(existing: [ServicePlan], fresh: ServicePlan) -> [ServicePlan] {
+        var picked = existing.first { $0.id == fresh.id }?.merging(fresh: fresh) ?? fresh
+        picked.picked = true
+        let others = existing.filter { $0.id != fresh.id }
+        return (others + [picked]).sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
     }
 
     /// Applies a fresh sync, keeping operator work. A confirmed item that is gone moves to a new item
     /// for the same song when exactly one matches; otherwise it stays, marked removed in Planning Center.
     public func merging(fresh: ServicePlan) -> ServicePlan {
         var result = fresh
+        result.picked = picked || fresh.picked
         if fresh.serviceTimesUnavailable { result.serviceTimes = serviceTimes }
         let previous = Dictionary(cues.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let freshIDs = Set(fresh.cues.map(\.id))
@@ -495,6 +511,62 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         }
         result.cues += cues.filter(\.isManual)
         return result
+    }
+}
+
+/// One service in the service picker's list: enough to show and choose it, without its items.
+public struct PlanSummary: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var serviceTypeID: String
+    public var serviceTypeName: String
+    public var title: String
+    public var dates: String
+    public var sortDate: Date?
+    public var serviceTimes: [Date]
+    /// How many items Planning Center lists, so a read that comes back short is caught.
+    public var itemsCount: Int?
+
+    public init(
+        id: String, serviceTypeID: String, serviceTypeName: String, title: String, dates: String, sortDate: Date?,
+        serviceTimes: [Date] = [], itemsCount: Int? = nil
+    ) {
+        self.id = id
+        self.serviceTypeID = serviceTypeID
+        self.serviceTypeName = serviceTypeName
+        self.title = title
+        self.dates = dates
+        self.sortDate = sortDate
+        self.serviceTimes = serviceTimes
+        self.itemsCount = itemsCount
+    }
+
+    public static let weeksBack = 6
+    public static let weeksAhead = 3
+
+    /// From the start of the day six weeks ago to the end of the day three weeks ahead.
+    public static func window(now: Date = Date(), calendar: Calendar = .current) -> ClosedRange<Date> {
+        let today = calendar.startOfDay(for: now)
+        let start = calendar.date(byAdding: .day, value: -7 * weeksBack, to: today) ?? today
+        let end = calendar.date(byAdding: .day, value: 7 * weeksAhead + 1, to: today) ?? today
+        return start...end.addingTimeInterval(-1)
+    }
+
+    /// The plan with no items yet, as the picker starts reading it.
+    public func emptyPlan(now: Date = Date()) -> ServicePlan {
+        ServicePlan(
+            id: id, serviceTypeID: serviceTypeID, serviceTypeName: serviceTypeName, title: title, dates: dates,
+            sortDate: sortDate, serviceTimes: serviceTimes, syncedAt: now
+        )
+    }
+
+    /// Plans inside the window, one per id, by date.
+    public static func inWindow(_ summaries: [PlanSummary], now: Date = Date()) -> [PlanSummary] {
+        let window = window(now: now)
+        var seen = Set<String>()
+        return summaries
+            .filter { $0.sortDate.map(window.contains) ?? false }
+            .filter { seen.insert($0.id).inserted }
+            .sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
     }
 }
 
