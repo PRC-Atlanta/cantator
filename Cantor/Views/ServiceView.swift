@@ -29,12 +29,12 @@ struct ServiceView: View {
     private func toolbar(_ plan: ServicePlan) -> some ToolbarContent {
         ToolbarItemGroup {
             Button {
-                model.refreshPlans()
+                model.refreshPlans(alsoRead: plan.id)
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(model.isSyncing)
-            .help("Pull the latest from Planning Center")
+            .help("Pull the latest from Planning Center, then turn on and match lines from their notes and your library")
 
             Button {
                 model.runAIMatch(planID: plan.id)
@@ -128,6 +128,9 @@ private struct StateChip: View {
                 Label("Removed in Planning Center", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
             } else if cue.changedSinceConfirm {
                 Label("Changed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
+            } else if cue.autoConfirmed {
+                Label("Auto-confirmed", systemImage: "checkmark.circle").foregroundStyle(Theme.live)
+                    .help("Matched by Cantor. Choose another file or Clear Match to change it.")
             } else {
                 Label("Confirmed", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.live)
             }
@@ -157,7 +160,7 @@ private struct CueInspector: View {
                     if !cue.notes.isEmpty { Text(cue.notes).foregroundStyle(.secondary) }
                 }
                 if let id = cue.trackID, let track = model.library.track(id: id) {
-                    Section("Confirmed") {
+                    Section(cue.autoConfirmed ? "Auto-confirmed" : "Confirmed") {
                         LabeledContent("File", value: track.primaryFilename)
                         Button("Preview on Cue Output") { model.audition(track) }
                         if cue.isManual {

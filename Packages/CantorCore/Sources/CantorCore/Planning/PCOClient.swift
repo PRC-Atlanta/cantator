@@ -157,7 +157,7 @@ public actor PCOClient {
 
         for (index, item) in items.enumerated() {
             guard var cue = Self.cue(from: item, position: index, included: included) else { continue }
-            cue.needsPlayback = memory.needsOverride(for: cue) ?? PlaybackDetector.needsPlayback(cue)
+            cue.needsPlayback = PlaybackDetector.needsPlayback(cue, memory: memory)
             if cue.needsPlayback {
                 do {
                     let attachments = try await getAll("\(root)/items/\(cue.id)/attachments?per_page=25")
@@ -272,6 +272,13 @@ public actor PCOClient {
 public enum PlaybackDetector {
     /// Words that say an item runs on a track, in English and Romanian. "Negativ" is a backing track.
     static let trackWords = ["track", "playback", "negativ", "pista"]
+
+    /// A track word in the plan wins over a remembered Not Needed, since the notes are written for
+    /// this service and the remembered choice is for the song in general. A remembered Needed still
+    /// turns on an item whose notes say nothing.
+    public static func needsPlayback(_ cue: ServiceCue, memory: AliasMemory) -> Bool {
+        needsPlayback(cue) || memory.needsOverride(for: cue) == true
+    }
 
     /// The plan says which items run on tracks, in an item's notes ("Choir - tracks"). Songs the
     /// band or choir does live ("Choir - band SOLO orange mic") have no track word, so they stay off.

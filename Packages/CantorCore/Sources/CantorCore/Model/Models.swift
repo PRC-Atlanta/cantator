@@ -317,6 +317,10 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     public var removedInPCO: Bool
     /// Set by a sync whose attachment request failed, so merging keeps the saved filenames. Not saved.
     public var attachmentsUnavailable = false
+    /// The file was put on the item by Cantor, from a strong match, not by the operator.
+    public var autoConfirmed = false
+    /// The operator cleared a match, so Cantor never confirms one on this item by itself again.
+    public var matchCleared = false
 
     public init(
         id: CueID, position: Int, title: String, itemType: String = "item", notes: String = "", arrangement: String = "",
@@ -344,6 +348,7 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, position, title, itemType, notes, arrangement, keyName, songID, lengthSec, attachmentFilenames
         case needsPlayback, candidates, trackID, changedSinceConfirm, isManual, removedInPCO
+        case autoConfirmed, matchCleared
     }
 
     public init(from decoder: Decoder) throws {
@@ -366,6 +371,8 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
         trackID = try c.decodeIfPresent(UUID.self, forKey: .trackID)
         changedSinceConfirm = try c.decodeIfPresent(Bool.self, forKey: .changedSinceConfirm) ?? false
         removedInPCO = try c.decodeIfPresent(Bool.self, forKey: .removedInPCO) ?? false
+        autoConfirmed = try c.decodeIfPresent(Bool.self, forKey: .autoConfirmed) ?? false
+        matchCleared = try c.decodeIfPresent(Bool.self, forKey: .matchCleared) ?? false
     }
 
     /// Something the operator chose the track for has changed. A key saved before Cantor read keys
@@ -440,6 +447,47 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
+
+    /// Enough of the plan to read it again on its own. The item count is unknown, so a short read
+    /// isn't caught; the connector's own page tokens still have to run out.
+    public var summary: PlanSummary {
+        PlanSummary(
+            id: id, serviceTypeID: serviceTypeID, serviceTypeName: serviceTypeName, title: title, dates: dates,
+            sortDate: sortDate, serviceTimes: serviceTimes
+        )
+    }
+
+    /// Sets Needs on each Planning Center item from its notes and the operator's remembered choices,
+    /// as a sync would. An item with a file keeps Needs on unless the notes say nothing and the
+    /// operator turned it off, so a confirmed line never drops out by itself.
+    public mutating func redetect(memory: AliasMemory) {
+        for index in cues.indices where !cues[index].isManual && cues[index].itemType != "header" {
+            let detected = PlaybackDetector.needsPlayback(cues[index], memory: memory)
+            if cues[index].trackID == nil {
+                cues[index].needsPlayback = detected
+            } else if detected {
+                cues[index].needsPlayback = true
+            }
+        }
+    }
+
+    /// Puts the top file on each playback item whose match is strong (Proposed), unless the operator
+    /// has cleared a match there. Returns how many it confirmed.
+    @discardableResult
+    public mutating func autoConfirmStrongMatches() -> Int {
+        var count = 0
+        for index in cues.indices {
+            let cue = cues[index]
+            guard cue.needsPlayback, cue.trackID == nil, !cue.matchCleared, !cue.removedInPCO,
+                  MatchBand(candidates: cue.candidates) == .proposed, let top = cue.candidates.first
+            else { continue }
+            cues[index].trackID = top.trackID
+            cues[index].autoConfirmed = true
+            cues[index].changedSinceConfirm = false
+            count += 1
+        }
+        return count
+    }
 
     /// Every cue in service order.
     public var orderedCues: [ServiceCue] { cues.sorted { $0.position < $1.position } }
@@ -529,6 +577,8 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             // own choices already came in through the remembered override.
             if old.trackID != nil { merged.needsPlayback = old.needsPlayback }
             merged.changedSinceConfirm = old.changedSinceConfirm
+            merged.autoConfirmed = old.autoConfirmed
+            merged.matchCleared = old.matchCleared
             if incoming.attachmentsUnavailable { merged.attachmentFilenames = old.attachmentFilenames }
             if old.trackID != nil, old.differsForPlayback(from: incoming) {
                 merged.changedSinceConfirm = true

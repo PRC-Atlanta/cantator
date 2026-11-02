@@ -219,7 +219,7 @@ public enum PlanningCenterConnector {
         var cues: [ServiceCue] = []
         for (position, item) in items.enumerated() {
             guard var cue = PCOClient.cue(from: item, position: position, included: page.included) else { continue }
-            cue.needsPlayback = memory.needsOverride(for: cue) ?? PlaybackDetector.needsPlayback(cue)
+            cue.needsPlayback = PlaybackDetector.needsPlayback(cue, memory: memory)
             if cue.needsPlayback { cue.attachmentsUnavailable = true }
             cues.append(cue)
         }

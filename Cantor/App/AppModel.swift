@@ -507,9 +507,12 @@ final class AppModel {
 
     /// Not in Show Mode: a sync can add, remove or reorder the loaded cues. Reads Planning Center
     /// through the Claude connector when that is the chosen source, and with the token otherwise or
-    /// whenever the connector can't be used.
-    func refreshPlans() {
+    /// whenever the connector can't be used. Every service is checked against the library first, so
+    /// lines turn on and strong matches land at once. `alsoRead` is a service the sync may not cover,
+    /// such as a past one, read on its own afterwards.
+    func refreshPlans(alsoRead planID: String? = nil) {
         guard !isSyncing, !show.showMode, !isLoadingService else { return }
+        rematchAllPlans()
         isSyncing = true
         Task {
             defer { isSyncing = false }
@@ -523,21 +526,54 @@ final class AppModel {
                 token: { try await $0.fetchUpcomingPlans(skipping: hidden, memory: memory) }
             )
             var notes = readNotes
-            guard let fresh else {
-                alert = (notes + ["Using saved plans."]).joined(separator: " ")
-                return
+            if let fresh {
+                plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
+                noteServiceTypes(fresh.map { ($0.serviceTypeID, $0.serviceTypeName) })
+                let failed = fresh.filter(\.syncFailed).count
+                if failed > 0 {
+                    notes.append("\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept.")
+                }
+            } else {
+                notes.append("Using saved plans.")
             }
-            plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
-            noteServiceTypes(fresh.map { ($0.serviceTypeID, $0.serviceTypeName) })
-            let failed = fresh.filter(\.syncFailed).count
-            if failed > 0 {
-                notes.append("\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept.")
+            if let planID, fresh?.contains(where: { $0.id == planID }) != true,
+               let plan = plans.first(where: { $0.id == planID }), !show.showMode {
+                let (one, oneNotes) = await readService(plan.summary)
+                if let one, let index = plans.firstIndex(where: { $0.id == planID }), !show.showMode {
+                    plans[index] = plans[index].merging(fresh: one)
+                }
+                notes += oneNotes
             }
             if !notes.isEmpty { alert = notes.joined(separator: " ") }
-            rankAllPlans()
+            rematchAllPlans()
             markCuesChanged()
             scheduleSave()
         }
+    }
+
+    /// Checks every line against its notes and the library: lines whose notes say tracks turn on,
+    /// and strong matches confirm themselves.
+    func rematchAllPlans() {
+        for index in plans.indices { plans[index].redetect(memory: memory) }
+        rankAllPlans()
+        markCuesChanged()
+        scheduleSave()
+    }
+
+    /// Reads one service's items, as the service picker does.
+    private func readService(_ summary: PlanSummary) async -> (ServicePlan?, [String]) {
+        let memory = memory
+        let prompt: String
+        do {
+            prompt = try PlanningCenterConnector.planPrompt(summary)
+        } catch {
+            return (nil, [error.localizedDescription])
+        }
+        return await readPlanningCenter(
+            connector: { stream in try PlanningCenterConnector.plan(fromStream: stream, summary: summary, memory: memory) },
+            prompt: prompt, purpose: "Reading \(summary.dates.isEmpty ? summary.title : summary.dates)", timeout: 300,
+            token: { try await $0.fetchPlan(summary, memory: memory) }
+        )
     }
 
     /// Every service type seen in a sync, the picker or a saved service, sorted by name.
@@ -597,19 +633,7 @@ final class AppModel {
         pickerMessage = nil
         Task {
             defer { readingServiceID = nil }
-            let memory = memory
-            let prompt: String
-            do {
-                prompt = try PlanningCenterConnector.planPrompt(summary)
-            } catch {
-                pickerMessage = error.localizedDescription
-                return
-            }
-            let (fresh, notes) = await readPlanningCenter(
-                connector: { stream in try PlanningCenterConnector.plan(fromStream: stream, summary: summary, memory: memory) },
-                prompt: prompt, purpose: "Reading \(summary.dates.isEmpty ? summary.title : summary.dates)", timeout: 300,
-                token: { try await $0.fetchPlan(summary, memory: memory) }
-            )
+            let (fresh, notes) = await readService(summary)
             guard let fresh, !show.showMode else {
                 pickerMessage = notes.isEmpty ? nil : notes.joined(separator: " ")
                 return
@@ -681,6 +705,17 @@ final class AppModel {
                 plans[planIndex].cues[cueIndex].candidates = Matcher.rank(cue: cue, tracks: library.playbackTracks, memory: memory)
             }
         }
+        autoConfirmStrongMatches()
+    }
+
+    /// Strong matches confirm themselves, outside Show Mode so a loaded service never changes mid-show.
+    private func autoConfirmStrongMatches() {
+        guard !show.showMode else { return }
+        var confirmed = 0
+        for planIndex in plans.indices { confirmed += plans[planIndex].autoConfirmStrongMatches() }
+        guard confirmed > 0 else { return }
+        markCuesChanged()
+        scheduleSave()
     }
 
     func runAIMatch(planID: String) {
@@ -788,6 +823,7 @@ final class AppModel {
         updateCue(planID: planID, cueID: cue.id) {
             $0.trackID = track.id
             $0.changedSinceConfirm = false
+            $0.autoConfirmed = false
         }
         if let contentID = track.contentID { memory.remember(cue, contentID: contentID) }
         if let song = cue.songID {
@@ -798,8 +834,13 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// Also stops Cantor from confirming a strong match on this item by itself again.
     func clearMatch(planID: String, cue: ServiceCue) {
-        updateCue(planID: planID, cueID: cue.id) { $0.trackID = nil }
+        updateCue(planID: planID, cueID: cue.id) {
+            $0.trackID = nil
+            $0.autoConfirmed = false
+            $0.matchCleared = true
+        }
     }
 
     func setNeeded(planID: String, cue: ServiceCue, needed: Bool) {

@@ -100,13 +100,16 @@ final class PCOClientTests: XCTestCase {
         XCTAssertEqual(StubProtocol.requests.first?.value(forHTTPHeaderField: "Authorization"), expected)
     }
 
-    func testOperatorOverrideWinsOverDetection() async throws {
+    func testTrackNotesWinOverARememberedChoice() async throws {
         StubProtocol.responder = fixture
         var memory = AliasMemory()
+        // Be Still's notes say tracks, so a remembered Not Needed loses. Welcome has no notes, so a
+        // remembered Needed turns it on.
         memory.rememberNeeds(ServiceCue(id: "x", position: 0, title: "Be Still", songID: "s9"), needed: false)
+        memory.rememberNeeds(ServiceCue(id: "y", position: 0, title: "Welcome"), needed: true)
         let client = PCOClient(appID: "id", secret: "secret", session: StubProtocol.session(), spacing: .zero)
         let plans = try await client.fetchUpcomingPlans(memory: memory)
-        XCTAssertTrue(plans[0].playbackCues.isEmpty)
+        XCTAssertEqual(Set(plans[0].playbackCues.map(\.id)), ["i1", "i3"])
     }
 
     func testUnauthorized() async {
@@ -167,6 +170,19 @@ final class DetectorTests: XCTestCase {
         XCTAssertFalse(needs("Sermon", "item", ""))
         XCTAssertFalse(needs("Tracks", "header", ""))
     }
+
+    func testTrackNotesBeatARememberedNotNeeded() {
+        var memory = AliasMemory()
+        let live = ServiceCue(id: "1", position: 0, title: "Esti Viu", itemType: "song", songID: "9")
+        memory.rememberNeeds(live, needed: false)
+        var tracks = live
+        tracks.notes = "Choir - tracks"
+        XCTAssertTrue(PlaybackDetector.needsPlayback(tracks, memory: memory))
+        XCTAssertFalse(PlaybackDetector.needsPlayback(live, memory: memory))
+        // A remembered Needed still turns on an item whose notes say nothing.
+        memory.rememberNeeds(live, needed: true)
+        XCTAssertTrue(PlaybackDetector.needsPlayback(live, memory: memory))
+    }
 }
 
 final class PlanMergeTests: XCTestCase {
@@ -185,6 +201,52 @@ final class PlanMergeTests: XCTestCase {
         XCTAssertEqual(merged.cues[0].trackID, cue.trackID)
         XCTAssertEqual(merged.orderedCues.map(\.id), ["1", "m"])
         XCTAssertTrue(merged.cues[0].changedSinceConfirm)
+    }
+
+    func testStrongMatchesConfirmThemselvesUntilCleared() {
+        let file = UUID(), other = UUID()
+        func cue(_ id: String, score: Double, needs: Bool = true) -> ServiceCue {
+            var cue = ServiceCue(id: id, position: 0, title: id, needsPlayback: needs)
+            cue.candidates = [MatchCandidate(trackID: file, score: score, source: .string, reason: "")]
+            return cue
+        }
+        var cleared = cue("cleared", score: 0.95)
+        cleared.matchCleared = true
+        var chosen = cue("chosen", score: 0.95)
+        chosen.trackID = other
+        var service = plan([cue("strong", score: 0.94), cue("weak", score: 0.7), cue("live", score: 0.95, needs: false), cleared, chosen])
+        XCTAssertEqual(service.autoConfirmStrongMatches(), 1)
+        let byID = Dictionary(uniqueKeysWithValues: service.cues.map { ($0.id, $0) })
+        XCTAssertEqual(byID["strong"]?.trackID, file)
+        XCTAssertEqual(byID["strong"]?.autoConfirmed, true)
+        XCTAssertNil(byID["weak"]?.trackID)
+        XCTAssertNil(byID["live"]?.trackID)
+        XCTAssertNil(byID["cleared"]?.trackID)
+        XCTAssertEqual(byID["chosen"]?.trackID, other)
+
+        // A sync keeps both marks.
+        let fresh = plan(service.cues.map { ServiceCue(id: $0.id, position: 0, title: $0.id) })
+        let merged = Dictionary(uniqueKeysWithValues: service.merging(fresh: fresh).cues.map { ($0.id, $0) })
+        XCTAssertEqual(merged["strong"]?.autoConfirmed, true)
+        XCTAssertEqual(merged["cleared"]?.matchCleared, true)
+    }
+
+    func testRedetectFollowsTheNotes() {
+        var memory = AliasMemory()
+        let unchecked = ServiceCue(id: "x", position: 0, title: "Esti Viu", itemType: "song", songID: "9")
+        memory.rememberNeeds(unchecked, needed: false)
+        var tracks = ServiceCue(id: "a", position: 0, title: "Esti Viu", itemType: "song", notes: "Choir - tracks", songID: "9", needsPlayback: false)
+        tracks.trackID = UUID()
+        let live = ServiceCue(id: "b", position: 1, title: "Mai Sus", itemType: "song", needsPlayback: true)
+        var kept = ServiceCue(id: "c", position: 2, title: "Special", needsPlayback: true)
+        kept.trackID = UUID()
+        let added = ServiceCue(id: "m", position: 3, title: "Added", needsPlayback: true, isManual: true)
+        var service = plan([tracks, live, kept, added])
+        service.redetect(memory: memory)
+        let needs = Dictionary(uniqueKeysWithValues: service.cues.map { ($0.id, $0.needsPlayback) })
+        // Notes turn a matched line on; a line with no notes and no file goes off; a line with a
+        // file and no notes keeps the operator's choice; an added item is left alone.
+        XCTAssertEqual(needs, ["a": true, "b": false, "c": true, "m": true])
     }
 
     func testAddedCuesGoWhereChosen() {
