@@ -1,5 +1,7 @@
+import AppKit
 import CantorCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
@@ -112,6 +114,9 @@ struct LibraryView: View {
                     .labelStyle(.titleAndIcon)
             }
             ToolbarItem {
+                ImportButton()
+            }
+            ToolbarItem {
                 Button {
                     model.rescan()
                 } label: {
@@ -145,6 +150,34 @@ struct LibraryView: View {
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
         if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
         return "\(model.library.playbackTracks.count) tracks"
+    }
+}
+
+/// Picks audio files and converts them into ~/Music/Cantor as m4a. Used in the toolbar and the File menu.
+struct ImportButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button {
+            Self.choose(model)
+        } label: {
+            Label(model.importingCount > 0 ? "Importing \(model.importingCount)" : "Import…", systemImage: "square.and.arrow.down")
+        }
+        .disabled(!model.canImport)
+        .help("Convert audio files to m4a in ~/Music/Cantor and add them to the library")
+    }
+
+    static func choose(_ model: AppModel) {
+        let panel = NSOpenPanel()
+        panel.title = "Import Audio"
+        panel.prompt = "Import"
+        panel.message = "WAV, AIFF, FLAC and ALAC files are converted to m4a. MP3 and m4a files are copied as they are."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = Importer.pickableExtensions.compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK else { return }
+        model.importFiles(panel.urls)
     }
 }
 

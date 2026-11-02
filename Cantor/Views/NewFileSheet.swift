@@ -13,6 +13,7 @@ struct NewFileSheet: View {
 
     private var track: Track? { model.library.track(id: item.trackID) }
     private var suggestion: FileSuggestion? { item.suggestion }
+    private var isManaged: Bool { track?.files.contains { $0.path.hasPrefix(ManagedFolder.path + "/") } ?? false }
     private var categories: [String] { PlaybackCategory.all(libraryTags: model.library.allTags) }
 
     var body: some View {
@@ -44,7 +45,10 @@ struct NewFileSheet: View {
                         Text("\(upcoming.service) · \(upcoming.title)").tag(ServiceItemRef?.some(upcoming.ref))
                     }
                 }
-                Toggle("Keep a copy in ~/Music/Cantor", isOn: $copyToCantor)
+                // An imported file is already there.
+                if !isManaged {
+                    Toggle("Keep a copy in ~/Music/Cantor", isOn: $copyToCantor)
+                }
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
@@ -113,7 +117,7 @@ struct NewFileSheet: View {
         category = suggestion?.category ?? ""
         serviceItem = suggestion?.serviceItem.flatMap { ref in model.serviceCue(ref)?.trackID == nil ? ref : nil }
         // Downloads and Desktop get cleaned out, so a copy is the safer default there.
-        copyToCantor = track?.files.contains { file in
+        copyToCantor = !isManaged && track?.files.contains { file in
             file.url.pathComponents.contains("Downloads") || file.url.pathComponents.contains("Desktop")
         } ?? false
     }

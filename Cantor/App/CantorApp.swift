@@ -27,7 +27,7 @@ struct CantorApp: App {
         }
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .newItem) { ImportMenu().environment(model) }
             CommandMenu("Transport") { TransportMenu().environment(model) }
             CommandGroup(after: .sidebar) { ShowModeMenu().environment(model) }
         }
@@ -78,6 +78,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+private struct ImportMenu: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Button("Import Audio…") { ImportButton.choose(model) }
+            .keyboardShortcut("i")
+            .disabled(!model.canImport)
+    }
 }
 
 private struct ShowModeMenu: View {

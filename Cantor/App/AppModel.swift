@@ -33,6 +33,8 @@ final class AppModel {
     var pendingExclusion: PendingExclusion?
     var status: String?
     var makingLocal: Set<UUID> = []
+    /// Files Import is converting now.
+    var importingCount = 0
     var unreadableFiles: [String] = []
     var systemSoundStuckOnHouse = false
     var inbox: NewFileInbox
@@ -57,6 +59,9 @@ final class AppModel {
     let cueBus = CueBus()
 
     @ObservationIgnored private let houseBus = HouseBus()
+    /// Imported files the next scan should send to the New File pop-up. The managed folder has no
+    /// watch start, so the scan alone would not count them as new.
+    @ObservationIgnored private var pendingImports: Set<String> = []
     @ObservationIgnored private let sleepGuard = SleepGuard()
     @ObservationIgnored private let soundGuard = SystemSoundGuard()
     @ObservationIgnored private var hashCache: HashCache
@@ -437,6 +442,33 @@ final class AppModel {
         show.setLiveEQ(eq, trackID: id)
         markCuesChanged()
         scheduleSave()
+    }
+
+    /// Import is off while a cue is engaged: encoding is heavy, and the scan it needs would wait anyway.
+    var canImport: Bool {
+        !show.showMode && !show.state.holdsHouseEngine
+    }
+
+    /// Converts the chosen files into ~/Music/Cantor, then scans so they reach the library and the
+    /// New File pop-up. Files are converted one at a time. Failures are listed together at the end.
+    func importFiles(_ urls: [URL]) {
+        guard canImport, !urls.isEmpty else { return }
+        importingCount += urls.count
+        Task {
+            var failures: [String] = []
+            for url in urls {
+                let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
+                    Result { try Importer.importFile(url) }
+                }.value
+                importingCount -= 1
+                switch result {
+                case .success(let destination): pendingImports.insert(destination.path)
+                case .failure(let error): failures.append(error.localizedDescription)
+                }
+            }
+            if !failures.isEmpty { alert = failures.joined(separator: "\n") }
+            rescan()
+        }
     }
 
     func makeLocal(_ track: Track) {
@@ -1055,9 +1087,16 @@ final class AppModel {
         let before = inbox
         // A file found to be a stem leaves the inbox.
         inbox.reconcile(replaced: replaced, existing: Set(library.playbackTracks.map(\.id)))
-        let found = NewFileDetector.newTrackIDs(
+        var found = NewFileDetector.newTrackIDs(
             previousIDs: previousIDs, tracks: library.playbackTracks, scan: scan, watchedSince: settings.watchedSince
         )
+        // An import whose audio was already in the library joins that track and is not new.
+        let imported = library.playbackTracks.filter { track in
+            !previousIDs.contains(track.id) && track.files.contains { pendingImports.contains($0.path) }
+        }
+        found += imported.map(\.id).filter { !found.contains($0) }
+        let scanned = Set(scan.map(\.path))
+        pendingImports.subtract(scanned)
         inbox.add(found)
         if !found.isEmpty { newFilesSnoozed = false }
         if inbox != before {

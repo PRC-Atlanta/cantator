@@ -12,6 +12,7 @@ These could not be tested in development.
 - **The service picker.** Listing and reading were tested with stand-in connector output and stubbed parsing, not a live Planning Center account. Check that a service type with more than 25 services in six weeks still shows the oldest ones: the list asks each type for its last 25.
 - **New files from Drive.** The pop-up flow was tested end to end with a file written into a watched folder during a loaded service. Arrival dates of real Drive syncs and AirDrop were not tested.
 - **MP3 decoding.** WAV and AAC were tested with real files. MP3 goes through the same Apple decoder, but no real MP3 was tested.
+- **Import in the app.** Conversion was tested with generated WAV, AIFF, FLAC, 96 kHz six-channel and mono files, and with tags. The open panel, the scan after it and the New File pop-up for an imported file have not been run in the app.
 - **Keyboard control.** Key handling in the real window has not been exercised. Debug self-checks call the same controller directly. Confirm each key, and confirm that Stream Deck hotkeys arrive.
 - **Sleep prevention and system sound moves.** The sound guard's logic is unit tested with a fake. Neither has run against the live system settings.
 - **Sidebar and inspector appearance.** The self-capture cannot draw macOS glass materials, so these were not visually checked.
