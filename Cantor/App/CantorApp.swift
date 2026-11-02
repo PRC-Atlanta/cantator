@@ -8,7 +8,7 @@ struct CantorApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        Window("Cantor", id: "main") {
+        Window("Cantator", id: "main") {
             RootView()
                 .environment(model)
                 .preferredColorScheme(colorScheme)

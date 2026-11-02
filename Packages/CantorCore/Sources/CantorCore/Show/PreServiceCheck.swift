@@ -136,7 +136,7 @@ public enum PreServiceCheck {
             add(.blocking, .sameOutput, nil, "House and cue use the same device", "Choose a different cue output in Settings.")
         }
         if let house = routing.houseDeviceUID, input.defaultOutputUIDs.contains(house) {
-            add(.warning, .systemSoundOnHouse, nil, "macOS sounds can reach the house output", "Connect a second output so Cantor can move alerts off the house.")
+            add(.warning, .systemSoundOnHouse, nil, "macOS sounds can reach the house output", "Connect a second output so Cantator can move alerts off the house.")
         }
 
         if !input.plan.cues.allSatisfy(\.isManual), input.now.timeIntervalSince(input.plan.syncedAt) > staleAfter {

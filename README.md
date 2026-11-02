@@ -1,4 +1,4 @@
-# Cantor
+# Cantator
 
 Native macOS playback for running choir and special-music tracks from the mixing console. It pulls the service from Planning Center, matches items to your files, and plays them through a two-step arm and go with clean, controlled endings.
 
@@ -17,7 +17,7 @@ From the command line:
 xcodebuild -project Cantor.xcodeproj -scheme Cantor -configuration Release -derivedDataPath build/dd build
 ```
 
-The app ends up in `build/dd/Build/Products/Release/Cantor.app`. Copy it to `/Applications` so macOS keeps its folder permissions between runs. Rebuilding with an ad hoc signature can make macOS ask again.
+The app ends up in `build/dd/Build/Products/Release/Cantator.app`. Copy it to `/Applications` so macOS keeps its folder permissions between runs. Rebuilding with an ad hoc signature can make macOS ask again.
 
 ## Tests
 
@@ -33,17 +33,17 @@ cd Packages/CantorCore && CANTOR_HARDWARE_TEST=1 swift test
 
 ## First-time setup
 
-Everything is in **Cantor > Settings**.
+Everything is in **Cantator > Settings**.
 
 ### Outputs and console routing
 
 1. Connect your audio interface and patch its outputs to a stereo pair of console channels.
 2. In **Outputs > House**, choose the interface. On a multichannel interface, choose the output pair, such as 3-4.
-3. In **Outputs > Cue**, choose a different device for headphones. The Mac's headphone jack works well. House and cue must be separate devices: Cantor refuses to arm otherwise.
+3. In **Outputs > Cue**, choose a different device for headphones. The Mac's headphone jack works well. House and cue must be separate devices: Cantator refuses to arm otherwise.
 4. Set the console channel trim using a loud track while the fader is down, then leave it. Tracks are matched to -18 LUFS, so levels stay consistent from cue to cue. Set the fader for the room.
-5. Cantor applies a static gain only. It has no limiter and never changes level during a cue.
+5. Cantator applies a static gain only. It has no limiter and never changes level during a cue.
 
-While a service is loaded, Cantor moves macOS alert sounds and the default output off the house device, if that's where they are, and restores them afterward. Other apps' notifications can still make sound on other devices. Turn on Do Not Disturb before the service: macOS doesn't let apps do that.
+While a service is loaded, Cantator moves macOS alert sounds and the default output off the house device, if that's where they are, and restores them afterward. Other apps' notifications can still make sound on other devices. Turn on Do Not Disturb before the service: macOS doesn't let apps do that.
 
 ### Planning Center token
 
@@ -55,28 +55,28 @@ Both values are stored only in the macOS Keychain.
 
 ### Claude (optional)
 
-Cantor uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
+Cantator uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
 
 ```bash
 claude auth login
 ```
 
-The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantor also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status, plus a Usage section: whether Claude is in use (and if not, why and what Cantor does instead), what it is doing right now, the last request with its time and result, and how many requests Cantor has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
+The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantator also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status, plus a Usage section: whether Claude is in use (and if not, why and what Cantator does instead), what it is doing right now, the last request with its time and result, and how many requests Cantator has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
 
 ### Folders and new files
 
-Cantor watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
+Cantator watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
 
-When a new audio file arrives in a watched folder, Cantor asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
+When a new audio file arrives in a watched folder, Cantator asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
 
 - The pop-up never appears while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
-- Files that arrive while Cantor is closed show up the next time it starts.
+- Files that arrive while Cantator is closed show up the next time it starts.
 - Files already in a folder when you add it are not treated as new.
 - Claude gets the filename, the two folders above it, the duration, embedded tags, the category names and the titles of upcoming items that still need a file.
 
 ### Stems
 
-Stems and click tracks often sit in the same folders as playbacks. Cantor leaves them out of matching, the library lists and the New File pop-up. It treats a file as a stem when:
+Stems and click tracks often sit in the same folders as playbacks. Cantator leaves them out of matching, the library lists and the New File pop-up. It treats a file as a stem when:
 
 - its name says click, stems, BGVs, vox, drums, snare and so on,
 - it is in a folder named Stems or Multitracks, or the folder above it is, or
@@ -84,9 +84,9 @@ Stems and click tracks often sit in the same folders as playbacks. Cantor leaves
 
 A name that says mix, full, master, playback, accompaniment, instrumental, split, key, with, without or no is never treated as a stem, so "Way Maker - Full Mix" and "Holy Forever No BGVs" stay in. Neither does a track confirmed for a service.
 
-**Excluded** in the Library sidebar lists every file left out, with the reason. If a playback is missing from matching, find it there, preview it, and choose **This Is a Playback**. Cantor remembers that and never excludes it again. Cantor rechecks its own guesses on every scan, but never undoes yours.
+**Excluded** in the Library sidebar lists every file left out, with the reason. If a playback is missing from matching, find it there, preview it, and choose **This Is a Playback**. Cantator remembers that and never excludes it again. Cantator rechecks its own guesses on every scan, but never undoes yours.
 
-Cantor never moves, renames or deletes your files. **Make Local** copies a track to `~/Music/Cantor`, which also downloads it if it's only in Drive.
+Cantator never moves, renames or deletes your files. **Make Local** copies a track to `~/Music/Cantor`, which also downloads it if it's only in Drive.
 
 ### EQ
 
@@ -130,7 +130,7 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 | Return | Acknowledge a fault |
 | Esc | Panic fade. Press twice to stop at once |
 
-Nothing plays until you arm and then press GO. Clicks and double-clicks never start audio. Stream Deck works by sending these keystrokes: Cantor's window must be the active one, and the state bar shows KEYS NOT FOCUSED when it isn't.
+Nothing plays until you arm and then press GO. Clicks and double-clicks never start audio. Stream Deck works by sending these keystrokes: Cantator's window must be the active one, and the state bar shows KEYS NOT FOCUSED when it isn't.
 
 ## Data
 

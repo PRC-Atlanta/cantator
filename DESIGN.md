@@ -1,6 +1,6 @@
-# Cantor: design
+# Cantator: design
 
-Cantor is a native macOS playback app for the person running choir and special-music tracks from the mixing console during a live service. It is an ordered cue list with a two-step arm and go, not a clip launcher.
+Cantator is a native macOS playback app for the person running choir and special-music tracks from the mixing console during a live service. It is an ordered cue list with a two-step arm and go, not a clip launcher.
 
 ## Critique of the four proposals
 
@@ -19,7 +19,7 @@ Cantor is a native macOS playback app for the person running choir and special-m
 ## Architecture
 
 ```
-Cantor (app target: SwiftUI + AppKit)
+Cantor (app target: SwiftUI + AppKit, builds Cantator.app)
   AppModel, Views, KeyRouter
 CantorCore (Swift package: all logic, tested without hardware)
   Playback/   ShowStateMachine, GoGuard, FadeCurve, PlaybackKernel
@@ -69,11 +69,11 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 4. `go` needs a cue armed for at least 300 ms, and key repeats are ignored. Arm and Go are different keys and different buttons.
 5. House transport needs Show Mode (Cmd-L). In Show Mode, library and plan editing are off, the sidebar stays closed and the window cannot be closed. Show Mode cannot be left and the app cannot quit silently while a cue is armed or live.
 6. Esc fades everything (1.5 s). Esc twice within 1 s stops hard. This works in every view and whether or not Show Mode is on.
-7. House device loss during playback stops immediately, retains position, and shows a red fault. Cantor never rebinds to another device by itself.
+7. House device loss during playback stops immediately, retains position, and shows a red fault. Cantator never rebinds to another device by itself.
 8. House and cue must be different devices. Audition is unavailable until a cue device is set.
 9. Transport keys act only when aimed at the main window with no sheet, dialog or text field in focus. Typing in Settings can never arm or start a cue. Transport menu items show their key in the title instead of being menu shortcuts, because a bare-key menu shortcut would fire from a text field.
 10. Show plays what was last saved: edits to a loaded service apply as soon as no cue is engaged.
-11. If the Cantor window is not key while armed or live, the state bar says KEYS NOT FOCUSED.
+11. If the Cantator window is not key while armed or live, the state bar says KEYS NOT FOCUSED.
 12. Cue-to-house level: static gain only, no limiter, no gain change while playing.
 
 ## Keyboard (Show Mode)
@@ -115,7 +115,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 
 ## New files
 
-1. FSEvents triggers a rescan. Each scanned file carries its added-to-folder date. A track created by the scan counts as new when one of its files arrived after Cantor started watching that folder (`AppSettings.watchedSince`, stamped when a folder is first seen and cleared when it is removed). So a launch catches files that arrived while the app was closed, and adding a folder does not flood the inbox. Another copy of audio already in the library is not new.
+1. FSEvents triggers a rescan. Each scanned file carries its added-to-folder date. A track created by the scan counts as new when one of its files arrived after Cantator started watching that folder (`AppSettings.watchedSince`, stamped when a folder is first seen and cleared when it is removed). So a launch catches files that arrived while the app was closed, and adding a folder does not flood the inbox. Another copy of audio already in the library is not new.
 2. After each scan, StemDetector excludes stems: strong words in the name (click, stems, BGVs, drums), a Stems or Multitracks folder (the file's own folder or the one above), or sets of three or more files in one folder within 0.1 s of each other in length, where a weak word (bass, keys, guide, vocals) excludes a file, and a file with no telling words is excluded when two or more of the set are named as stems. Mix words (mix, full, master, accompaniment, key, with, no) always keep a file. Kept and confirmed tracks are never excluded. Detection reruns on every scan, so its own exclusions follow the files, while Not a Playback and This Is a Playback stay as the operator left them. Excluded tracks skip matching, analysis, the library lists and the inbox.
 3. New tracks go into `new-files.json`, so they survive quitting.
 4. While no cue is armed or playing, waiting files go to Claude in batches of 25: filename, the two folders above it, duration, embedded tags, category names and upcoming unmatched item titles. Claude returns a title, one category, whether it is a playback at all, an optional item id from the list, a confidence and a reason. Ids it was not given are ignored. If Claude is off, signed out or fails, the category is guessed from keywords and the item from the name matcher at 0.75 or above, and the pop-up says why.
@@ -142,7 +142,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 
 ## System alerts
 
-While a service is loaded, if the macOS default or alert output device is the house device, Cantor moves it to another output and restores it on unload, quit, or next launch after a crash. If there is no other device, Check says so. Focus cannot be set by an app, so Check reminds the operator.
+While a service is loaded, if the macOS default or alert output device is the house device, Cantator moves it to another output and restores it on unload, quit, or next launch after a crash. If there is no other device, Check says so. Focus cannot be set by an app, so Check reminds the operator.
 
 ## v1 scope
 

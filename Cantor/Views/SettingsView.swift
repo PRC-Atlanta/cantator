@@ -232,7 +232,7 @@ struct ClaudeSettings: View {
                                 .multilineTextAlignment(.trailing)
                         }
                     } else {
-                        Text("None since Cantor opened")
+                        Text("None since Cantator opened")
                     }
                 }
                 LabeledContent("Requests Since Opening", value: "\(model.claudeRequestsThisSession)")
@@ -269,7 +269,7 @@ private struct FolderSettings: View {
             }
             // Adding a folder starts a full scan, and its panel takes the keys.
             .disabled(model.show.showMode)
-            Text("Cantor watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear in the New File pop-up, once no service is loaded and nothing is playing.")
+            Text("Cantator watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear in the New File pop-up, once no service is loaded and nothing is playing.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if !model.unreadableFiles.isEmpty {

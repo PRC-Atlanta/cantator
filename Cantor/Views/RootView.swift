@@ -47,7 +47,7 @@ struct RootView: View {
             NewFileSheet(item: item)
         }
         // An alert is a sheet, which would take the transport keys. Show Mode puts it in the Show view instead.
-        .alert("Cantor", isPresented: Binding(get: { model.alert != nil && !model.show.showMode }, set: { if !$0 { model.alert = nil } })) {
+        .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode }, set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.alert ?? "")

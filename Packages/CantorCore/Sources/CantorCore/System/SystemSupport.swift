@@ -195,7 +195,7 @@ public final class SleepGuard {
 
     public var isActive: Bool { !assertions.isEmpty }
 
-    public func engage(reason: String = "Cantor has a service loaded") {
+    public func engage(reason: String = "Cantator has a service loaded") {
         guard assertions.isEmpty else { return }
         for type in [kIOPMAssertionTypePreventUserIdleSystemSleep, kIOPMAssertionTypePreventUserIdleDisplaySleep] {
             var id = IOPMAssertionID(0)
