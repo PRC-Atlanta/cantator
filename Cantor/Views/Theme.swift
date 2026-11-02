@@ -71,3 +71,46 @@ enum TimeText {
         String(format: "%+.1f dB", value)
     }
 }
+
+/// A soft wash under something clickable while the pointer is over it.
+struct HoverHighlight: ViewModifier {
+    var cornerRadius: CGFloat = 5
+    /// How far the wash reaches past the content.
+    var outset: CGFloat = 0
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(Color.primary.opacity(isHovered && isEnabled ? 0.08 : 0))
+                    .padding(-outset)
+                    .animation(.easeOut(duration: 0.12), value: isHovered)
+            }
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// Lifts a bordered button a little while the pointer is over it.
+struct HoverBrighten: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .brightness(isHovered && isEnabled ? 0.06 : 0)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    func hoverHighlight(cornerRadius: CGFloat = 5, outset: CGFloat = 0) -> some View {
+        modifier(HoverHighlight(cornerRadius: cornerRadius, outset: outset))
+    }
+
+    func hoverBrighten() -> some View {
+        modifier(HoverBrighten())
+    }
+}

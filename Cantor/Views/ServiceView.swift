@@ -211,6 +211,7 @@ private struct CueInspector: View {
                     Image(systemName: "headphones")
                 }
                 .help("Preview on the cue output")
+                .hoverBrighten()
                 .disabled(!track.isLocal)
                 Button("Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }
             }

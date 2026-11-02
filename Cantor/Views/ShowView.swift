@@ -242,6 +242,7 @@ private struct NextCueLine: View {
                     .help(alert)
                 Button("Dismiss") { model.alert = nil }
                     .buttonStyle(.borderless)
+                    .hoverHighlight(outset: 3)
                     .focusable(false)
             }
         }
@@ -294,6 +295,7 @@ private struct TransportButtons: View {
         .buttonStyle(.bordered)
         .controlSize(.large)
         .focusable(false)
+        .hoverBrighten()
         .disabled(!enabled)
     }
 }

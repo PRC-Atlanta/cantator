@@ -305,6 +305,7 @@ private struct TrackInspector: View {
                             Image(systemName: "minus.circle")
                         }
                         .buttonStyle(.borderless)
+                        .hoverHighlight(outset: 3)
                     }
                 }
                 Button("Add Marker at Preview Position") {
@@ -421,6 +422,8 @@ private struct WaveformEditor: View {
                 }
             }
             .contentShape(Rectangle())
+            // Any drag moves the nearer boundary, so the whole waveform shows the resize pointer.
+            .pointerStyle(model.show.showMode ? .default : .columnResize)
             .gesture(DragGesture(minimumDistance: 2).onChanged { value in
                 guard track.durationSec > 0, !model.show.showMode else { return }
                 let seconds = min(max(Double(value.location.x / geometry.size.width) * track.durationSec, 0), track.durationSec)

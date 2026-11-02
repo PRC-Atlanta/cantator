@@ -73,8 +73,8 @@ private struct SidebarView: View {
         let library = model.library
         List(selection: $selection) {
             Section("Service") {
-                Label("Show", systemImage: "play.rectangle").tag(SidebarItem.show)
-                Label("Pre-Service Check", systemImage: "checklist").tag(SidebarItem.check)
+                Label("Show", systemImage: "play.rectangle").sidebarHover().tag(SidebarItem.show)
+                Label("Pre-Service Check", systemImage: "checklist").sidebarHover().tag(SidebarItem.check)
             }
             Section("Upcoming") {
                 ForEach(model.plans) { plan in
@@ -82,6 +82,7 @@ private struct SidebarView: View {
                         Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
                         Text(plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
+                    .sidebarHover()
                     .tag(SidebarItem.plan(plan.id))
                 }
                 if model.plans.isEmpty {
@@ -100,6 +101,7 @@ private struct SidebarView: View {
                         Label("New Files", systemImage: "tray.and.arrow.down").badge(model.inbox.items.count)
                     }
                     .buttonStyle(.plain)
+                    .sidebarHover()
                     .disabled(!model.newFilesCanAppear)
                     .help(model.newFilesCanAppear ? "Review new files" : "New files wait until no service is loaded")
                 }
@@ -118,6 +120,7 @@ private struct SidebarView: View {
     private func row(_ title: String, _ symbol: String, _ filter: LibraryFilter, _ count: Int) -> some View {
         Label(title, systemImage: symbol)
             .badge(count)
+            .sidebarHover()
             .tag(SidebarItem.library(filter))
     }
 }
@@ -136,6 +139,7 @@ private struct ClaudeStatusRow: View {
                     Image(systemName: "gearshape")
                 }
                 .buttonStyle(.borderless)
+                .hoverHighlight(outset: 3)
                 .help("Claude settings")
             }
             if let hint = connection.hint {
@@ -146,6 +150,7 @@ private struct ClaudeStatusRow: View {
             }
         }
         .contentShape(Rectangle())
+        .sidebarHover()
         .onTapGesture { model.refreshClaudeConnection() }
         .help("\(connection.detail) Click to check again.")
     }
@@ -174,5 +179,14 @@ struct ClaudeStatusLabel: View {
         case .off: "minus.circle"
         default: "exclamationmark.triangle"
         }
+    }
+}
+
+private extension View {
+    /// Fills the row so the hover wash spans the sidebar, as the selection does.
+    func sidebarHover() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .hoverHighlight(outset: 4)
     }
 }

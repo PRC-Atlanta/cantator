@@ -146,6 +146,7 @@ private struct EQGraph: View {
     @Binding var selected: Int
     let edit: ((inout TrackEQ) -> Void) -> Void
     @State private var dragging: Int?
+    @State private var hovered: Int?
 
     private static let gridHz = [30.0, 60, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
 
@@ -159,6 +160,13 @@ private struct EQGraph: View {
                 }
             }
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location): hovered = nearest(to: location, size)
+                case .ended: hovered = nil
+                }
+            }
+            .pointerStyle(dragging != nil ? .grabActive : (hovered != nil ? .grabIdle : .default))
             .gesture(drag(size))
         }
         .padding(14)
@@ -218,6 +226,9 @@ private struct EQGraph: View {
             .background(Circle().fill(EQTheme.handleFill))
             .overlay(Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 2, dash: band.isOn ? [] : [3, 2])))
             .opacity(band.isOn ? 1 : 0.5)
+            .shadow(color: color.opacity(index == hovered || index == dragging ? 0.8 : 0), radius: 6)
+            .scaleEffect(index == hovered || index == dragging ? 1.15 : 1)
+            .animation(.easeOut(duration: 0.12), value: hovered)
             .overlay {
                 if index == selected { Brackets().stroke(EQTheme.selection, lineWidth: 2).frame(width: 34, height: 34) }
             }
@@ -225,16 +236,19 @@ private struct EQGraph: View {
             .allowsHitTesting(false)
     }
 
+    /// The handle under the pointer, the selected one first when they overlap.
+    private func nearest(to location: CGPoint, _ size: CGSize) -> Int? {
+        eq.bands.indices
+            .map { ($0, hypot(point(eq.bands[$0], size).x - location.x, point(eq.bands[$0], size).y - location.y) - ($0 == selected ? 4 : 0)) }
+            .filter { $0.1 < 18 }
+            .min { $0.1 < $1.1 }?.0
+    }
+
     private func drag(_ size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if dragging == nil {
-                    // Picks the nearest handle, the selected one first when they overlap.
-                    let near = eq.bands.indices
-                        .map { ($0, hypot(point(eq.bands[$0], size).x - value.startLocation.x, point(eq.bands[$0], size).y - value.startLocation.y) - ($0 == selected ? 4 : 0)) }
-                        .filter { $0.1 < 18 }
-                        .min { $0.1 < $1.1 }
-                    guard let index = near?.0 else { return }
+                    guard let index = nearest(to: value.startLocation, size) else { return }
                     dragging = index
                     selected = index
                 }
@@ -258,6 +272,7 @@ private struct BandStrip: View {
     let eq: TrackEQ
     @Binding var selected: Int
     let toggle: (Int) -> Void
+    @State private var hovered: Int?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -273,7 +288,7 @@ private struct BandStrip: View {
                     }
                     .frame(width: 66, height: 26)
                     .foregroundStyle(color)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(index == selected ? color.opacity(0.22) : EQTheme.knobFace))
+                    .background(RoundedRectangle(cornerRadius: 4).fill(index == selected ? color.opacity(0.22) : (index == hovered ? color.opacity(0.12) : EQTheme.knobFace)))
                     .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(color.opacity(index == selected ? 1 : 0.6), lineWidth: index == selected ? 2 : 1))
                     .overlay(alignment: .bottom) {
                         if index == selected { Rectangle().fill(color).frame(height: 3).offset(y: 7) }
@@ -281,6 +296,8 @@ private struct BandStrip: View {
                     .opacity(band.isOn ? 1 : 0.45)
                 }
                 .buttonStyle(.plain)
+                .onHover { hovered = $0 ? index : (hovered == index ? nil : hovered) }
+                .animation(.easeOut(duration: 0.12), value: hovered)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { toggle(index) })
                 .help(band.isOn ? "Double-click to turn off" : "Double-click to turn on")
             }
@@ -368,6 +385,7 @@ private struct Knob: View {
     let format: (Double) -> String
     let set: (Double) -> Void
     @State private var dragStart: Double?
+    @State private var isHovered = false
 
     private static let sweep = 270.0
 
@@ -396,7 +414,7 @@ private struct Knob: View {
                 Circle().trim(from: 0, to: n * Self.sweep / 360)
                     .stroke(EQTheme.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(135))
-                Circle().fill(EQTheme.knobFace).padding(9)
+                Circle().fill(EQTheme.knobFace).padding(9).brightness(isHovered || dragStart != nil ? 0.08 : 0)
                 Circle().strokeBorder(Color.black.opacity(0.5), lineWidth: 1).padding(9)
                 Rectangle().fill(EQTheme.accent).frame(width: 2, height: 12)
                     .offset(y: -15)
@@ -404,6 +422,9 @@ private struct Knob: View {
             }
             .frame(width: 58, height: 58)
             .contentShape(Circle())
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .pointerStyle(.rowResize)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { drag in
