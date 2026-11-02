@@ -38,10 +38,12 @@ public actor PCOClient {
     /// A plan that cannot be fetched (deleted since the list, a server error) comes back with
     /// `syncFailed` set, so `ServicePlan.applySync` keeps the saved copy. A rejected token, the rate
     /// limit or a lost connection still fails the whole sync, since every later request would too.
-    public func fetchUpcomingPlans(plansPerType: Int = 6, memory: AliasMemory, now: Date = Date()) async throws -> [ServicePlan] {
+    public func fetchUpcomingPlans(
+        plansPerType: Int = 6, skipping: Set<String> = [], memory: AliasMemory, now: Date = Date()
+    ) async throws -> [ServicePlan] {
         var plans: [ServicePlan] = []
         for type in try await getAll("\(Self.base)/service_types?per_page=100") {
-            guard let typeID = type["id"] as? String else { continue }
+            guard let typeID = type["id"] as? String, !skipping.contains(typeID) else { continue }
             let typeName = attributes(type)["name"] as? String ?? "Service"
             let url = "\(Self.base)/service_types/\(typeID)/plans?filter=future&order=sort_date&per_page=\(plansPerType)"
             let (planData, _) = try await getPage(url)

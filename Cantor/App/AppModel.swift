@@ -499,12 +499,13 @@ final class AppModel {
         Task {
             defer { isSyncing = false }
             let memory = memory
+            let hidden = settings.skippedServiceTypeIDs
             let (fresh, readNotes) = await readPlanningCenter(
-                connector: { stream in try PlanningCenterConnector.plans(fromStream: stream, memory: memory) },
-                prompt: PlanningCenterConnector.prompt(), purpose: "Syncing Planning Center",
+                connector: { stream in try PlanningCenterConnector.plans(fromStream: stream, skipping: hidden, memory: memory) },
+                prompt: PlanningCenterConnector.prompt(skipping: hidden), purpose: "Syncing Planning Center",
                 // Reading every service type's next plans takes many tool calls.
                 timeout: 480,
-                token: { try await $0.fetchUpcomingPlans(memory: memory) }
+                token: { try await $0.fetchUpcomingPlans(skipping: hidden, memory: memory) }
             )
             var notes = readNotes
             guard let fresh else {
@@ -512,6 +513,7 @@ final class AppModel {
                 return
             }
             plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
+            noteServiceTypes(fresh.map { ($0.serviceTypeID, $0.serviceTypeName) })
             let failed = fresh.filter(\.syncFailed).count
             if failed > 0 {
                 notes.append("\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept.")
@@ -521,6 +523,32 @@ final class AppModel {
             markCuesChanged()
             scheduleSave()
         }
+    }
+
+    /// Every service type seen in a sync, the picker or a saved service, sorted by name.
+    var knownServiceTypes: [(id: String, name: String)] {
+        var types = settings.serviceTypes
+        for plan in plans where !plan.serviceTypeID.isEmpty { types[plan.serviceTypeID] = plan.serviceTypeName }
+        for summary in pickerServices where !summary.serviceTypeID.isEmpty { types[summary.serviceTypeID] = summary.serviceTypeName }
+        return types.map { (id: $0.key, name: $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Hiding a type takes it out of the sidebar now. Showing one again brings its services in at the next sync.
+    func setServiceType(_ type: (id: String, name: String), shown: Bool) {
+        updateSettings { settings in
+            settings.noteServiceTypes([type])
+            if shown { settings.hiddenServiceTypeIDs.remove(type.id) } else { settings.hiddenServiceTypeIDs.insert(type.id) }
+        }
+    }
+
+    /// Remembers service type names for Settings, saving only when one is new or renamed.
+    private func noteServiceTypes(_ types: [(id: String, name: String)]) {
+        var updated = settings
+        updated.noteServiceTypes(types)
+        guard updated != settings else { return }
+        settings = updated
+        record("settings") { try settingsFile.save(settings) }
     }
 
     // MARK: Service picker
@@ -540,6 +568,7 @@ final class AppModel {
             if let summaries {
                 pickerServices = summaries
                 pickerListedAt = Date()
+                noteServiceTypes(summaries.map { ($0.serviceTypeID, $0.serviceTypeName) })
             }
             pickerMessage = notes.isEmpty ? nil : notes.joined(separator: " ")
         }
@@ -781,10 +810,13 @@ final class AppModel {
 
     var loadedPlan: ServicePlan? { plans.first { $0.id == loadedPlanID } }
 
+    /// The services in the sidebar: hidden service types are left out, unless picked by hand or loaded.
+    var sidebarPlans: [ServicePlan] { plans.filter { !settings.hides($0) || $0.id == loadedPlanID } }
+
     /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent past ones.
     var currentPlan: ServicePlan? {
         let today = Calendar.current.startOfDay(for: Date())
-        return loadedPlan ?? plans.first { ($0.sortDate ?? .distantFuture) >= today } ?? plans.last
+        return loadedPlan ?? sidebarPlans.first { ($0.sortDate ?? .distantFuture) >= today } ?? sidebarPlans.last
     }
 
     /// Decodes every confirmed cue into RAM, then holds sleep and system sound for the service.

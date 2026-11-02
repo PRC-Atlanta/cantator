@@ -88,7 +88,7 @@ private struct SidebarView: View {
                 .sidebarHover()
                 .disabled(model.show.showMode || model.isLoadingService)
                 .help("Pick a service from six weeks back to three weeks ahead")
-                ForEach(model.plans) { plan in
+                ForEach(model.sidebarPlans) { plan in
                     VStack(alignment: .leading, spacing: 1) {
                         Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
                         Text(plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -96,8 +96,8 @@ private struct SidebarView: View {
                     .sidebarHover()
                     .tag(SidebarItem.plan(plan.id))
                 }
-                if model.plans.isEmpty {
-                    Text("None synced").foregroundStyle(.secondary)
+                if model.sidebarPlans.isEmpty {
+                    Text(model.plans.isEmpty ? "None synced" : "None of the shown types").foregroundStyle(.secondary)
                 }
             }
             Section("Library") {

@@ -49,6 +49,8 @@ While a service is loaded, Cantator moves macOS alert sounds and the default out
 
 Cantator reads your upcoming services in one of two ways, chosen in **Settings > Planning Center**. Sync only runs when you choose **Sync Now** or **Refresh**.
 
+**Service Types** in the same pane lists every service type Cantator has seen. **Import all service types** is on at first. Turn it off and uncheck a type, such as weddings or funerals, and Sync Now skips it and the sidebar hides it. **Choose Service…** still lists every type, so one of those can be added by hand when it's needed, and it then stays in the sidebar.
+
 **Claude connector (the default).** Cantator asks Claude Code, signed in to your Claude account, to read Planning Center through the Planning Center connector on that account.
 
 1. At claude.ai, open **Settings > Connectors** and connect **Planning Center**, allowing Services.

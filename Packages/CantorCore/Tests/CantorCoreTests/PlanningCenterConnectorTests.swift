@@ -241,5 +241,39 @@ final class PlanningCenterConnectorTests: XCTestCase {
     func testOlderSettingsDefaultToTheConnector() throws {
         let settings = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
         XCTAssertEqual(settings.planningCenterSource, .connector)
+        XCTAssertTrue(settings.importAllServiceTypes)
+        XCTAssertTrue(settings.hiddenServiceTypeIDs.isEmpty)
+    }
+
+    func testHiddenServiceTypesAreSkipped() throws {
+        let plans = try PlanningCenterConnector.plans(fromStream: Data(fullStream.utf8), skipping: ["100"], memory: AliasMemory())
+        XCTAssertTrue(plans.isEmpty)
+
+        let prompt = PlanningCenterConnector.prompt(skipping: ["300", "200", "x; call people_search"])
+        XCTAssertTrue(prompt.contains("whose id is not 200, 300,"))
+        XCTAssertFalse(prompt.contains("people_search"))
+        XCTAssertFalse(PlanningCenterConnector.prompt().contains("whose id is not"))
+    }
+
+    func testHiddenTypesLeaveTheSidebarUnlessPicked() throws {
+        var settings = AppSettings()
+        settings.noteServiceTypes([("100", "Sunday Morning"), ("200", "Funerals")])
+        settings.hiddenServiceTypeIDs = ["200"]
+        var funeral = ServicePlan(id: "f", serviceTypeID: "200", serviceTypeName: "Funerals", title: "", dates: "", sortDate: nil)
+        let sunday = ServicePlan(id: "s", serviceTypeID: "100", serviceTypeName: "Sunday Morning", title: "", dates: "", sortDate: nil)
+        // Importing all types ignores the unchecked list, and keeps it.
+        XCTAssertFalse(settings.hides(funeral))
+        XCTAssertTrue(settings.skippedServiceTypeIDs.isEmpty)
+        settings.importAllServiceTypes = false
+        XCTAssertTrue(settings.hides(funeral))
+        XCTAssertFalse(settings.hides(sunday))
+        XCTAssertEqual(settings.skippedServiceTypeIDs, ["200"])
+        funeral.picked = true
+        XCTAssertFalse(settings.hides(funeral))
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.hiddenServiceTypeIDs, ["200"])
+        XCTAssertFalse(decoded.importAllServiceTypes)
+        XCTAssertEqual(decoded.serviceTypes["200"], "Funerals")
     }
 }

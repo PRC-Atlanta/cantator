@@ -182,6 +182,33 @@ private struct PlanningCenterSettings: View {
                     ? "Reads the next \(PlanningCenterConnector.plansPerType) plans of each service type through the Planning Center connector on your Claude account, using Claude Code. Claude can only use the connector's read-only Services tools, and Cantator reads the plans from the connector's own answers. Claude does see item titles and descriptions, which can include names. It can take a few minutes and counts toward your Claude usage. Attachment filenames aren't available this way, so matching keeps the ones from the last token sync. If the connector can't be used, the token below is used instead."
                     : "Reads Planning Center directly with the token below. Claude isn't involved.")
             }
+            Section {
+                let types = model.knownServiceTypes
+                let importAll = model.settings.importAllServiceTypes
+                Toggle("Import all service types", isOn: Binding(
+                    get: { importAll },
+                    set: { value in model.updateSettings { $0.importAllServiceTypes = value } }
+                ))
+                .toggleStyle(.checkbox)
+                if types.isEmpty {
+                    Text("Sync once to list your service types.").foregroundStyle(.secondary)
+                }
+                ForEach(types, id: \.id) { type in
+                    Toggle(type.name, isOn: Binding(
+                        get: { importAll || !model.settings.hiddenServiceTypeIDs.contains(type.id) },
+                        set: { shown in model.setServiceType(type, shown: shown) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .padding(.leading, 20)
+                    .disabled(importAll)
+                }
+            } header: {
+                Text("Service Types")
+            } footer: {
+                Text(model.settings.importAllServiceTypes
+                    ? "Sync Now reads every service type. Turn this off to import only the types you check."
+                    : "Sync Now reads only the checked types, and only they appear in the sidebar. Choose Service… still lists every type, so a wedding or funeral can be added when it's needed. A type you check again comes back at the next sync.")
+            }
             Section("API Token") {
                 SecretField(title: "Application ID", key: .pcoAppID)
                 SecretField(title: "Secret", key: .pcoSecret)

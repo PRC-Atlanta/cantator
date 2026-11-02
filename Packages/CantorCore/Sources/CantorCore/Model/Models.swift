@@ -660,6 +660,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var appearance = "dark"
     /// When Cantor started watching each folder. Only files that arrive later count as new.
     public var watchedSince: [String: Date] = [:]
+    /// Every service type seen in Planning Center, name by id, so Settings can list them all.
+    public var serviceTypes: [String: String] = [:]
+    /// Off, Sync Now and the sidebar leave out `hiddenServiceTypeIDs`. On, every type is imported
+    /// and the unchecked list is kept for when it is turned off again.
+    public var importAllServiceTypes = true
+    /// Service types left unchecked. The service picker still lists them.
+    public var hiddenServiceTypeIDs: Set<String> = []
+
+    /// The service types Sync Now skips.
+    public var skippedServiceTypeIDs: Set<String> { importAllServiceTypes ? [] : hiddenServiceTypeIDs }
 
     public init() {}
 
@@ -678,6 +688,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
         watchedSince = try c.decodeIfPresent([String: Date].self, forKey: .watchedSince) ?? watchedSince
+        serviceTypes = try c.decodeIfPresent([String: String].self, forKey: .serviceTypes) ?? serviceTypes
+        importAllServiceTypes = try c.decodeIfPresent(Bool.self, forKey: .importAllServiceTypes) ?? importAllServiceTypes
+        hiddenServiceTypeIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenServiceTypeIDs) ?? hiddenServiceTypeIDs
+    }
+
+    /// A service of a hidden type stays in the sidebar when it was picked by hand.
+    public func hides(_ plan: ServicePlan) -> Bool {
+        skippedServiceTypeIDs.contains(plan.serviceTypeID) && !plan.picked
+    }
+
+    /// Remembers the names of the service types in a sync or a picker list. Types are never
+    /// forgotten, since a hidden type stops coming back from syncs.
+    public mutating func noteServiceTypes(_ types: [(id: String, name: String)]) {
+        for type in types where !type.id.isEmpty { serviceTypes[type.id] = type.name }
     }
 
     /// Starts the clock for folders not yet watched, and forgets removed ones so adding a folder

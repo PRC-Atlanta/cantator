@@ -52,11 +52,15 @@ public enum PlanningCenterConnector {
     every call is done, reply with the single word DONE.
     """
 
-    public static func prompt(plansPerType: Int = PlanningCenterConnector.plansPerType) -> String {
-        """
+    /// Skipped service types are left out of step 2. Their ids are checked to be numbers before
+    /// they go into the request, and `plans(fromStream:)` drops them again whatever Claude calls.
+    public static func prompt(plansPerType: Int = PlanningCenterConnector.plansPerType, skipping: Set<String> = []) -> String {
+        let skipped = skipping.filter(isPlanningCenterID).sorted()
+        let except = skipped.isEmpty ? "" : " and whose id is not \(skipped.joined(separator: ", "))"
+        return """
         1. Call services_service_types with per_page 100 and output_fields ["id", "name", "archived_at"]. If the \
         result has a next_page_token, call it again with page_after set to that token until there is none.
-        2. For every service type whose archived_at is null, call services_plans with that service_type_id, \
+        2. For every service type whose archived_at is null\(except), call services_plans with that service_type_id, \
         filter "future", order_by "sort_date", per_page \(plansPerType), include ["plan_times"] and output_fields \
         ["id", "title", "dates", "sort_date", "items_count"]. Do not ask for further pages.
         3. For every plan from step 2, call services_plan_items with its service_type_id and plan_id, per_page 100, \
@@ -226,7 +230,8 @@ public enum PlanningCenterConnector {
     /// arrive comes back with `syncFailed`, so the saved copy is kept. Attachments are not available
     /// through the connector, so playback cues keep the filenames saved by an earlier token sync.
     public static func plans(
-        fromStream stream: Data, plansPerType: Int = PlanningCenterConnector.plansPerType, memory: AliasMemory, now: Date = Date()
+        fromStream stream: Data, plansPerType: Int = PlanningCenterConnector.plansPerType, skipping: Set<String> = [],
+        memory: AliasMemory, now: Date = Date()
     ) throws -> [ServicePlan] {
         let run = try toolRun(stream)
         let (typeNames, planEntries, itemPages) = collect(run)
@@ -237,7 +242,7 @@ public enum PlanningCenterConnector {
         var perType: [String: Int] = [:]
         for entry in planEntries {
             guard let (summary, timesRead) = summary(entry, typeNames: typeNames),
-                  !seen.contains(summary.id), perType[entry.typeID, default: 0] < plansPerType
+                  !seen.contains(summary.id), !skipping.contains(entry.typeID), perType[entry.typeID, default: 0] < plansPerType
             else { continue }
             seen.insert(summary.id)
             perType[entry.typeID, default: 0] += 1
