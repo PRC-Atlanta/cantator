@@ -136,4 +136,120 @@ final class ImporterTests: XCTestCase {
         XCTAssertEqual(tags["genre"], "Choir")
         XCTAssertEqual(tags["comments"], "Key of D")
     }
+
+    // MARK: Movies and FFmpeg
+
+    /// Makes a test file with FFmpeg's own generators. Skips when FFmpeg isn't installed.
+    private func ffmpegMake(_ name: String, _ arguments: [String]) throws -> URL {
+        let ffmpeg = try XCTUnwrap(FFmpeg.locate(), "FFmpeg is not installed")
+        let url = folder.appendingPathComponent(name)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpeg)
+        process.arguments = ["-nostdin", "-hide_banner", "-loglevel", "error", "-y"] + arguments + [url.path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, "could not make \(name)")
+        return url
+    }
+
+    private func requireFFmpeg() throws {
+        try XCTSkipIf(FFmpeg.locate() == nil, "FFmpeg is not installed")
+    }
+
+    private let tone = ["-f", "lavfi", "-i", "sine=frequency=440:duration=3"]
+    private let picture = ["-f", "lavfi", "-i", "testsrc=duration=3:size=160x120:rate=10"]
+
+    func testMovieAACIsCopiedOutWithoutReencoding() throws {
+        try requireFFmpeg()
+        // 96 kbps is well under the 256 kbps a re-encode would use, so the size shows which happened.
+        let movie = try ffmpegMake("Choir Video.mov", tone + picture + ["-ac", "2", "-c:a", "aac", "-b:a", "96k", "-c:v", "mpeg4", "-shortest"])
+        let result = try Importer.importFile(movie, into: managed, ffmpeg: nil)
+        XCTAssertEqual(result.lastPathComponent, "Choir Video.m4a")
+        try assertM4A(result, channels: 2, rate: 44_100, seconds: 3)
+        let bytes = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: result.path)[.size] as? Int)
+        XCTAssertLessThan(bytes, 3 * 140_000 / 8, "a 3 second copy at 96 kbps, not a 256 kbps re-encode")
+    }
+
+    func testMP4WithUncompressedAudioIsEncoded() throws {
+        try requireFFmpeg()
+        let movie = try ffmpegMake("Camera.mov", tone + picture + ["-ac", "2", "-ar", "48000", "-c:a", "pcm_s24le", "-c:v", "mpeg4", "-shortest"])
+        try assertM4A(try Importer.importFile(movie, into: managed, ffmpeg: nil), channels: 2, rate: 48_000, seconds: 3)
+    }
+
+    func testM4VSurroundIsMixedToStereo() throws {
+        try requireFFmpeg()
+        let movie = try ffmpegMake("Concert.m4v", tone + picture + ["-ac", "6", "-c:a", "aac", "-c:v", "mpeg4", "-shortest"])
+        try assertM4A(try Importer.importFile(movie, into: managed, ffmpeg: nil), channels: 2, rate: 44_100, seconds: 3)
+    }
+
+    func testSilentMovieSaysItHasNoAudio() throws {
+        try requireFFmpeg()
+        let movie = try ffmpegMake("B Roll.mp4", picture + ["-c:v", "mpeg4"])
+        XCTAssertThrowsError(try Importer.importFile(movie, into: managed, ffmpeg: nil)) { error in
+            guard case ImportError.noAudio = error else { return XCTFail("\(error)") }
+        }
+    }
+
+    func testMKVWithoutFFmpegSaysFFmpegIsNeeded() throws {
+        let source = folder.appendingPathComponent("Service.mkv")
+        try Data([0x1A, 0x45, 0xDF, 0xA3, 0, 0, 0, 0]).write(to: source)
+        XCTAssertThrowsError(try Importer.importFile(source, into: managed, ffmpeg: nil)) { error in
+            guard case ImportError.needsFFmpeg = error else { return XCTFail("\(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("FFmpeg"))
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: managed.path), [])
+    }
+
+    func testMKVGoesThroughFFmpeg() throws {
+        try requireFFmpeg()
+        let movie = try ffmpegMake("Livestream.mkv", tone + picture + ["-ac", "2", "-ar", "48000", "-c:a", "libopus", "-c:v", "libvpx", "-shortest",
+                                                                  "-metadata", "title=Way Maker"])
+        let result = try Importer.importFile(movie, into: managed)
+        XCTAssertEqual(result.lastPathComponent, "Livestream.m4a")
+        try assertM4A(result, channels: 2, rate: 48_000, seconds: 3)
+        XCTAssertEqual(AudioTags.read(url: result)["title"], "Way Maker")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path).filter { $0.hasPrefix("cantor-ffmpeg-") }
+        XCTAssertEqual(leftovers, [], "FFmpeg's temporary folder is removed")
+    }
+
+    func testOGGAndAVIGoThroughFFmpeg() throws {
+        try requireFFmpeg()
+        // Opus, since not every FFmpeg build can write Vorbis. It decodes at 48 kHz.
+        let ogg = try ffmpegMake("Prelude.ogg", tone + ["-c:a", "libopus"])
+        try assertM4A(try Importer.importFile(ogg, into: managed), channels: 1, rate: 48_000, seconds: 3)
+        let avi = try ffmpegMake("Old Tape.avi", tone + picture + ["-c:a", "mp3", "-c:v", "mpeg4", "-shortest"])
+        try assertM4A(try Importer.importFile(avi, into: managed), channels: 1, rate: 44_100, seconds: 3)
+    }
+
+    func testBrokenFileThroughFFmpegIsRefusedAndLeavesNothing() throws {
+        try requireFFmpeg()
+        let source = folder.appendingPathComponent("Corrupt.avi")
+        try Data(repeating: 7, count: 4096).write(to: source)
+        XCTAssertThrowsError(try Importer.importFile(source, into: managed))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: managed.path), [])
+    }
+
+    func testFFmpegCannotWriteOutsideItsFolder() throws {
+        try requireFFmpeg()
+        let ffmpeg = try XCTUnwrap(FFmpeg.locate())
+        let allowed = folder.appendingPathComponent("allowed")
+        try FileManager.default.createDirectory(at: allowed, withIntermediateDirectories: true)
+        let resolved = URL(fileURLWithPath: try XCTUnwrap(realpath(allowed.path, nil).map { String(cString: $0) }))
+        let outside = resolved.deletingLastPathComponent().appendingPathComponent("escaped.flac")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: FFmpeg.sandboxExec)
+        process.arguments = ["-p", FFmpeg.sandboxProfile(writableFolder: resolved.path), ffmpeg, "-nostdin", "-loglevel", "quiet"]
+            + tone + [outside.path]
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertNotEqual(process.terminationStatus, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.path))
+    }
+
+    func testFFmpegArgumentsReadNamesAsFiles() {
+        let arguments = FFmpeg.arguments(source: "/tmp/concat:a.mkv", output: "/tmp/out.flac")
+        XCTAssertEqual(arguments[arguments.firstIndex(of: "-i")! + 1], "file:/tmp/concat:a.mkv")
+        XCTAssertEqual(arguments.last, "file:/tmp/out.flac")
+    }
 }

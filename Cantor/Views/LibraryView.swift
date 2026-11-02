@@ -164,14 +164,14 @@ struct ImportButton: View {
             Label(model.importingCount > 0 ? "Importing \(model.importingCount)" : "Import…", systemImage: "square.and.arrow.down")
         }
         .disabled(!model.canImport)
-        .help("Convert audio files to m4a in ~/Music/Cantor and add them to the library")
+        .help("Convert audio files, or the audio from movies, to m4a in ~/Music/Cantor and add them to the library")
     }
 
     static func choose(_ model: AppModel) {
         let panel = NSOpenPanel()
         panel.title = "Import Audio"
         panel.prompt = "Import"
-        panel.message = "WAV, AIFF, FLAC and ALAC files are converted to m4a. MP3 and m4a files are copied as they are."
+        panel.message = "Files are converted to m4a. From a movie, only the audio is kept. Some file types need FFmpeg."
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true

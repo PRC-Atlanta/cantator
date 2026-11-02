@@ -8,6 +8,7 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **Logic in a local Swift package**: `swift test` runs without launching the app, so tests can never touch real audio output.
 - **Swift language mode 5**: render-thread code uses unsafe pointers on purpose. Strict mode would add noise without improving it.
 - **No third-party dependencies**: nothing to break or update before a Sunday.
+- **FFmpeg only if it's installed**: Import uses it for file types macOS can't read, but never bundles it, so Cantator still builds and runs without it. Without it, Import says FFmpeg is needed for that file type and leaves the rest to the operator.
 - **Originals are never moved, renamed or deleted**: Make Local copies to `~/Music/Cantor`, so Drive sharing keeps working.
 - **Points are per track, not per cue** in v1.
 - **Only one house cue at a time**: arming while something plays is refused. Choir playback has no crossfades.

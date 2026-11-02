@@ -110,9 +110,13 @@ Cantator never moves, renames or deletes your files. **Make Local** copies a tra
 
 To add a file from somewhere Cantator doesn't watch, choose **Import…** in the Library toolbar or **File > Import Audio…** (Command-I), then pick one or more files. WAV, AIFF, FLAC, ALAC and CAF files are converted to m4a (AAC, 256 kbps stereo, 128 kbps mono) in `~/Music/Cantor`, under the original file's name. MP3 and m4a files are copied as they are, because converting an already compressed file again only loses quality. Files above 48 kHz are converted to 48 kHz, and files with more than two channels are mixed down to stereo. Title, artist, album, genre and comment tags are kept. The original is left where it was.
 
-Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import is off in Show Mode and while a cue is armed or playing. Formats macOS can't read, such as OGG and WMA, are refused with a message.
+From a movie (MOV, MP4 or M4V), only the audio is imported: the first audio track, which is the main mix. When that audio is already AAC, as it usually is, it is copied out without converting it again.
 
-### EQ
+Some file types, such as MKV, AVI, WebM, OGG and WMA, need FFmpeg. When FFmpeg is installed, Cantator uses it for those files; when it isn't, Import says FFmpeg is needed for that file. Cantator runs FFmpeg with no network access, writing only to a temporary folder of its own.
+
+Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import is off in Show Mode and while a cue is armed or playing.
+
+## EQ
 
 Some playbacks are mixed better than others. Each track has its own EQ, saved with it and used every time it plays, on the house output and in preview. Select a track in the library and choose **Edit EQ** in the inspector.
 

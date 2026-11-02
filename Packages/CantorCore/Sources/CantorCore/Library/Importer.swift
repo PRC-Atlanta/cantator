@@ -4,11 +4,15 @@ import Foundation
 
 public enum ImportError: LocalizedError {
     case unsupported(String)
+    case needsFFmpeg(String)
+    case noAudio(String)
     case failed(String, String)
 
     public var errorDescription: String? {
         switch self {
         case .unsupported(let name): "\(name) is in a format macOS can't read, so it can't be imported."
+        case .needsFFmpeg(let name): "\(name) needs FFmpeg to import. This file type can't be read without it."
+        case .noAudio(let name): "\(name) has no audio to import."
         case .failed(let name, let reason): "Could not import \(name): \(reason)"
         }
     }
@@ -17,18 +21,22 @@ public enum ImportError: LocalizedError {
 /// Brings a file the operator picked into the managed folder as an m4a. Lossless and
 /// uncompressed sources (WAV, AIFF, FLAC, ALAC) are encoded to 256 kbps AAC with Apple's
 /// encoder. Files that are already compressed are copied as they are, since encoding them
-/// again would only lose quality. The original is left where it is.
+/// again would only lose quality, and a movie's AAC soundtrack is copied out the same way.
+/// Formats macOS can't read go through FFmpeg when it is installed. The original is left where it is.
 public enum Importer {
     /// Formats copied unchanged.
     static let compressedExtensions: Set<String> = ["m4a", "mp3", "aac"]
-    /// What the open panel offers. Anything else Core Audio reads can still be chosen by name.
-    public static let pickableExtensions = ["wav", "wave", "aif", "aiff", "aifc", "flac", "caf", "m4a", "mp3", "aac"]
+    /// What the open panel offers: what macOS reads, plus what FFmpeg is there for.
+    public static let pickableExtensions = [
+        "wav", "wave", "aif", "aiff", "aifc", "flac", "caf", "m4a", "mp3", "aac", "mov", "mp4", "m4v",
+    ] + FFmpeg.extensions
     static let stereoBitRate = 256_000
     /// The AAC encoder takes up to 48 kHz. Higher rates are resampled down to this.
     static let maxSampleRate = 48_000.0
 
     /// Imports one file and returns where it landed. Blocks while it encodes, so call it off the main thread.
-    public static func importFile(_ source: URL, into folder: URL = ManagedFolder.url) throws -> URL {
+    /// `ffmpeg` is the FFmpeg to use for formats macOS can't read, or nil for none.
+    public static func importFile(_ source: URL, into folder: URL = ManagedFolder.url, ffmpeg: String? = FFmpeg.locate()) throws -> URL {
         let name = source.lastPathComponent
         let manager = FileManager.default
         do {
@@ -52,7 +60,15 @@ public enum Importer {
         // Hidden, so a scan never picks up a half-written file.
         let partial = folder.appendingPathComponent(".\(UUID().uuidString).m4a")
         do {
-            try encode(source, to: partial)
+            do {
+                try encode(source, to: partial)
+            } catch ImportError.unsupported {
+                guard let ffmpeg else { throw ImportError.needsFFmpeg(name) }
+                // FFmpeg decodes to a lossless file Apple's encoder can take, so the audio is only encoded once.
+                let extracted = try FFmpeg.extractAudio(from: source, ffmpeg: ffmpeg)
+                defer { try? manager.removeItem(at: extracted.deletingLastPathComponent()) }
+                try encode(extracted, to: partial, name: name)
+            }
             try Materializer.verify(partial, name: name)
         } catch {
             try? manager.removeItem(at: partial)
@@ -82,19 +98,26 @@ public enum Importer {
     }
 
     /// Decodes with AVAssetReader and encodes with AVAssetWriter, carrying the source's tags over
-    /// so the title, artist and comments still help filing and matching.
-    static func encode(_ source: URL, to destination: URL) throws {
-        let name = source.lastPathComponent
+    /// so the title, artist and comments still help filing and matching. AAC that already fits,
+    /// such as a movie's soundtrack, is copied across without being decoded.
+    static func encode(_ source: URL, to destination: URL, name: String? = nil) throws {
+        let name = name ?? source.lastPathComponent
         let asset = AVURLAsset(url: source)
-        guard let loaded = load(asset),
-              let basic = CMAudioFormatDescriptionGetStreamBasicDescription(loaded.format)?.pointee,
-              basic.mSampleRate > 0
-        else { throw ImportError.unsupported(name) }
+        let loaded: Loaded
+        switch load(asset) {
+        case .audio(let value): loaded = value
+        case .noAudio: throw ImportError.noAudio(name)
+        case .unreadable: throw ImportError.unsupported(name)
+        }
+        guard let basic = CMAudioFormatDescriptionGetStreamBasicDescription(loaded.format)?.pointee, basic.mSampleRate > 0 else {
+            throw ImportError.unsupported(name)
+        }
         let track = loaded.track
 
         // Cantator plays two channels, so wider files are mixed down here.
         let channels = min(max(Int(basic.mChannelsPerFrame), 1), 2)
         let sampleRate = min(basic.mSampleRate, maxSampleRate)
+        let passThrough = basic.mFormatID == kAudioFormatMPEG4AAC && Int(basic.mChannelsPerFrame) == channels && basic.mSampleRate == sampleRate
         let pcm: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: sampleRate,
@@ -119,9 +142,11 @@ public enum Importer {
         } catch {
             throw ImportError.unsupported(name)
         }
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: pcm)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: passThrough ? nil : pcm)
         output.alwaysCopiesSampleData = false
-        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aac)
+        let input = passThrough
+            ? AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: loaded.format)
+            : AVAssetWriterInput(mediaType: .audio, outputSettings: aac)
         input.expectsMediaDataInRealTime = false
         guard reader.canAdd(output), writer.canAdd(input) else { throw ImportError.unsupported(name) }
         reader.add(output)
@@ -185,17 +210,28 @@ public enum Importer {
         var metadata: [AVMetadataItem]
     }
 
-    /// Loads the audio track, its format and the tags, waiting here: the importer already runs off the main thread.
-    private static func load(_ asset: AVURLAsset) -> Loaded? {
-        let result = Box<Loaded?>(nil)
+    private enum Loading {
+        case audio(Loaded)
+        /// A movie macOS reads that has no sound.
+        case noAudio
+        case unreadable
+    }
+
+    /// Loads the first audio track, its format and the tags, waiting here: the importer already
+    /// runs off the main thread. A movie's first audio track is its main mix.
+    private static func load(_ asset: AVURLAsset) -> Loading {
+        let result = Box<Loading>(.unreadable)
         let done = DispatchSemaphore(value: 0)
         Task.detached {
             defer { done.signal() }
             guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
                   let format = try? await track.load(.formatDescriptions).first
-            else { return }
+            else {
+                if let video = try? await asset.loadTracks(withMediaType: .video), !video.isEmpty { result.value = .noAudio }
+                return
+            }
             let metadata = (try? await asset.load(.commonMetadata)) ?? []
-            result.value = Loaded(track: track, format: format, metadata: metadata)
+            result.value = .audio(Loaded(track: track, format: format, metadata: metadata))
         }
         done.wait()
         return result.value
