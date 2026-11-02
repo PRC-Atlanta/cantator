@@ -13,7 +13,7 @@ struct CantorApp: App {
                 .environment(model)
                 .preferredColorScheme(colorScheme)
                 .tint(Theme.neutralAccent)
-                .frame(minWidth: 1100, minHeight: 700)
+                .frame(minWidth: 1370, minHeight: 700)
                 .background(WindowCapture())
                 .windowDismissBehavior(model.show.showMode ? .disabled : .automatic)
                 .onAppear {
@@ -31,6 +31,16 @@ struct CantorApp: App {
             CommandMenu("Transport") { TransportMenu().environment(model) }
             CommandGroup(after: .sidebar) { ShowModeMenu().environment(model) }
         }
+
+        WindowGroup("EQ", id: "eq", for: UUID.self) { $trackID in
+            if let trackID {
+                EQWindow(trackID: trackID)
+                    .environment(model)
+                    .preferredColorScheme(.dark)
+                    .tint(Theme.neutralAccent)
+            }
+        }
+        .windowToolbarStyle(.unified(showsTitle: true))
 
         Settings {
             SettingsView()

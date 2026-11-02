@@ -31,6 +31,18 @@ public struct Marker: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Why a track is left out of matching and the library lists.
+public struct Exclusion: Codable, Equatable, Sendable {
+    public var reason: String
+    /// True when the operator chose Not a Playback, false when Cantor detected a stem.
+    public var byOperator: Bool
+
+    public init(reason: String, byOperator: Bool) {
+        self.reason = reason
+        self.byOperator = byOperator
+    }
+}
+
 public struct Track: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var contentID: String?
@@ -54,6 +66,12 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
     public var pcoSongIDs: [String]
     public var playCount: Int
     public var lastPlayed: Date?
+    /// Set for stems and other audio that is not a playback. Nil means the track is in use.
+    public var exclusion: Exclusion?
+    /// The operator said this is a playback, so stem detection leaves it alone.
+    public var keptByOperator: Bool
+    /// Nil until the operator opens the EQ, which plays the track unchanged.
+    public var eq: TrackEQ?
 
     public init(
         id: UUID = UUID(), contentID: String? = nil, files: [TrackFile] = [], title: String,
@@ -81,6 +99,9 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
         pcoSongIDs = []
         playCount = 0
         lastPlayed = nil
+        exclusion = nil
+        keptByOperator = false
+        eq = nil
     }
 
     /// Puts edited points back in a playable order.
@@ -103,6 +124,7 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
     public var hasCloudOnlyCopy: Bool { files.contains { $0.locality == .cloudOnly } }
     public var isAnalyzed: Bool { integratedLUFS != nil }
     public var primaryFilename: String { (bestFile() ?? files.first)?.filename ?? title }
+    public var isExcluded: Bool { exclusion != nil }
 }
 
 // A field added in a later version must not make an existing library unreadable.
@@ -133,6 +155,9 @@ extension Track {
         pcoSongIDs = try c.decodeIfPresent([String].self, forKey: .pcoSongIDs) ?? []
         playCount = try c.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
         lastPlayed = try c.decodeIfPresent(Date.self, forKey: .lastPlayed)
+        exclusion = try c.decodeIfPresent(Exclusion.self, forKey: .exclusion)
+        keptByOperator = try c.decodeIfPresent(Bool.self, forKey: .keptByOperator) ?? false
+        eq = try c.decodeIfPresent(TrackEQ.self, forKey: .eq)
     }
 }
 

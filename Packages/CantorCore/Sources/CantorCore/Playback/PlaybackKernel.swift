@@ -18,13 +18,15 @@ public struct PlaybackParameters: Sendable {
     public var fadeOutFrames: Int
     public var fadeInFrames: Int
     public var gainLinear: Float
+    public var eq: EQCoefficients
 
-    public init(startFrame: Int, endFrame: Int, fadeOutFrames: Int, fadeInFrames: Int, gainLinear: Float) {
+    public init(startFrame: Int, endFrame: Int, fadeOutFrames: Int, fadeInFrames: Int, gainLinear: Float, eq: EQCoefficients = .flat) {
         self.startFrame = startFrame
         self.endFrame = endFrame
         self.fadeOutFrames = fadeOutFrames
         self.fadeInFrames = fadeInFrames
         self.gainLinear = gainLinear
+        self.eq = eq
     }
 
     public init(track: Track, sampleRate: Double, frames: Int, gainDb: Double) {
@@ -35,7 +37,8 @@ public struct PlaybackParameters: Sendable {
             endFrame: end,
             fadeOutFrames: toFrames(track.fadeOutSec),
             fadeInFrames: toFrames(track.fadeInSec),
-            gainLinear: Float(pow(10, gainDb / 20))
+            gainLinear: Float(pow(10, gainDb / 20)),
+            eq: EQCoefficients(track.eq, sampleRate: sampleRate)
         )
     }
 }
@@ -58,6 +61,7 @@ public final class PlaybackKernel: @unchecked Sendable {
         case stop
         case seek(frame: Int)
         case setEnd(frame: Int)
+        case setEQ(EQCoefficients)
     }
 
     private enum RampKind { case up, down }
@@ -73,6 +77,12 @@ public final class PlaybackKernel: @unchecked Sendable {
     private let ring: UnsafeMutablePointer<Command>
     private let ringHead = Atomic<Int>(0)
     private let ringTail = Atomic<Int>(0)
+
+    // EQ sections as b0, b1, b2, a1, a2 runs, and two states per section per channel.
+    private let eqCoefficients: UnsafeMutablePointer<Double>
+    private let eqState: UnsafeMutablePointer<Double>
+    private var eqCount = 0
+    private var eqOutput: Float = 1
 
     // Telemetry, written by the render thread.
     private let telemetryPosition = Atomic<Int>(0)
@@ -105,6 +115,13 @@ public final class PlaybackKernel: @unchecked Sendable {
         position = min(max(parameters.startFrame, 0), endFrame)
         ring = .allocate(capacity: Self.ringCapacity)
         ring.initialize(repeating: .stop, count: Self.ringCapacity)
+        eqCoefficients = .allocate(capacity: EQCoefficients.capacity * EQCoefficients.stride)
+        eqCoefficients.initialize(repeating: 0, count: EQCoefficients.capacity * EQCoefficients.stride)
+        eqState = .allocate(capacity: EQCoefficients.capacity * 4)
+        eqState.initialize(repeating: 0, count: EQCoefficients.capacity * 4)
+        parameters.eq.write(to: eqCoefficients)
+        eqCount = parameters.eq.count
+        eqOutput = parameters.eq.outputGain
         telemetryPosition.store(position, ordering: .relaxed)
         telemetryEnd.store(endFrame, ordering: .relaxed)
     }
@@ -112,6 +129,8 @@ public final class PlaybackKernel: @unchecked Sendable {
     deinit {
         ring.deinitialize(count: Self.ringCapacity)
         ring.deallocate()
+        eqCoefficients.deallocate()
+        eqState.deallocate()
     }
 
     // MARK: Control thread
@@ -123,6 +142,8 @@ public final class PlaybackKernel: @unchecked Sendable {
     public func stop() { post(.stop) }
     public func seek(toFrame frame: Int) { post(.seek(frame: frame)) }
     public func setEnd(toFrame frame: Int) { post(.setEnd(frame: frame)) }
+    /// Changes the EQ while playing. Used by preview, so the operator hears edits as they make them.
+    public func setEQ(_ eq: EQCoefficients) { post(.setEQ(eq)) }
 
     private func post(_ command: Command) {
         let tail = ringTail.load(ordering: .relaxed)
@@ -151,7 +172,7 @@ public final class PlaybackKernel: @unchecked Sendable {
         let srcR = buffer.right
         var peakL: Float = 0
         var peakR: Float = 0
-        let gain = parameters.gainLinear
+        let gain = parameters.gainLinear * eqOutput
         var i = 0
 
         while i < frames {
@@ -170,8 +191,11 @@ public final class PlaybackKernel: @unchecked Sendable {
             }
 
             let sampleGain = nextEnvelope() * gain
-            let outL = srcL[position] * sampleGain
-            let outR = srcR[position] * sampleGain
+            var inL = srcL[position]
+            var inR = srcR[position]
+            if eqCount > 0 { equalize(&inL, &inR) }
+            let outL = inL * sampleGain
+            let outR = inR * sampleGain
             left[i] = outL
             right[i] = outR
             peakL = max(peakL, abs(outL))
@@ -250,11 +274,45 @@ public final class PlaybackKernel: @unchecked Sendable {
         case .seek(let frame):
             guard !playing else { return }
             position = min(max(frame, 0), max(endFrame - 1, 0))
+            clearEQState()
 
         case .setEnd(let frame):
             guard !isFadingOut else { return }
             endFrame = min(max(frame, position + 1), buffer.frames)
+
+        case .setEQ(let eq):
+            // Sections keep their history while a knob moves. A band turned on or off shifts the
+            // sections, so their history no longer fits and starts over.
+            if eq.count != eqCount { clearEQState() }
+            eq.write(to: eqCoefficients)
+            eqCount = eq.count
+            eqOutput = eq.outputGain
         }
+    }
+
+    @inline(__always)
+    private func equalize(_ left: inout Float, _ right: inout Float) {
+        var l = Double(left)
+        var r = Double(right)
+        for section in 0..<eqCount {
+            let c = eqCoefficients + section * EQCoefficients.stride
+            let s = eqState + section * 4
+            // Transposed direct form II, one pair of states per channel.
+            let yl = c[0] * l + s[0]
+            s[0] = c[1] * l - c[3] * yl + s[1]
+            s[1] = c[2] * l - c[4] * yl
+            let yr = c[0] * r + s[2]
+            s[2] = c[1] * r - c[3] * yr + s[3]
+            s[3] = c[2] * r - c[4] * yr
+            l = yl
+            r = yr
+        }
+        left = Float(l)
+        right = Float(r)
+    }
+
+    private func clearEQState() {
+        eqState.update(repeating: 0, count: EQCoefficients.capacity * 4)
     }
 
     private func beginRamp(_ kind: RampKind, length: Int, action: RampAction) {

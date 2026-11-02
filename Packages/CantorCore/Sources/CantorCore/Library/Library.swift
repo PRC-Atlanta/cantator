@@ -16,6 +16,9 @@ public struct Library: Codable, Equatable, Sendable {
     }
 
     public func track(id: UUID) -> Track? { tracks.first { $0.id == id } }
+    /// Tracks used for matching and the library lists. Stems and other excluded audio are left out.
+    public var playbackTracks: [Track] { tracks.filter { !$0.isExcluded } }
+    public var excludedTracks: [Track] { tracks.filter(\.isExcluded) }
     public func track(contentID: String) -> Track? { tracks.first { $0.contentID == contentID } }
 
     public mutating func update(id: UUID, _ change: (inout Track) -> Void) {
@@ -93,7 +96,40 @@ public struct Library: Codable, Equatable, Sendable {
         }
     }
 
+    /// Excludes tracks that look like stems and brings back ones that no longer do. The operator's
+    /// own choices are left alone. Returns whether anything changed.
+    @discardableResult
+    public mutating func excludeStems(protecting protected: Set<UUID>) -> Bool {
+        let reasons = StemDetector.detect(tracks: tracks, protected: protected)
+        var changed = false
+        for index in tracks.indices where tracks[index].exclusion?.byOperator != true {
+            let exclusion = reasons[tracks[index].id].map { Exclusion(reason: $0, byOperator: false) }
+            if tracks[index].exclusion != exclusion {
+                tracks[index].exclusion = exclusion
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    /// The operator's Not a Playback.
+    public mutating func exclude(id: UUID) {
+        update(id: id) {
+            $0.exclusion = Exclusion(reason: "You chose Not a Playback", byOperator: true)
+            $0.keptByOperator = false
+        }
+    }
+
+    /// The operator's This Is a Playback. Stem detection leaves the track alone from now on.
+    public mutating func keep(id: UUID) {
+        update(id: id) {
+            $0.exclusion = nil
+            $0.keptByOperator = true
+        }
+    }
+
     public var duplicateGroups: [DuplicateGroup] {
+        let tracks = playbackTracks
         var groups: [DuplicateGroup] = tracks
             .filter { $0.files.count > 1 }
             .map { DuplicateGroup(id: "same-\($0.id)", kind: .sameAudio, trackIDs: [$0.id]) }

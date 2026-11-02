@@ -2,6 +2,9 @@ import CantorCore
 import SwiftUI
 
 struct ShowView: View {
+    /// The narrowest cue list, its divider and the narrowest current cue panel.
+    static let minWidth: CGFloat = 240 + 1 + CurrentCuePanel.minWidth
+
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -9,15 +12,21 @@ struct ShowView: View {
         VStack(spacing: 0) {
             StateBar()
             Divider()
-            HStack(spacing: 0) {
-                CueListPanel()
-                    .frame(width: 320)
-                Divider()
-                CurrentCuePanel()
+            GeometryReader { geometry in
+                // The meters give up width first, then the cue list.
+                let listWidth = min(320, max(240, geometry.size.width - 1 - CurrentCuePanel.minWidth))
+                let meterSpace = geometry.size.width - 1 - listWidth - CurrentCuePanel.widthWithoutMeters
+                HStack(spacing: 0) {
+                    CueListPanel()
+                        .frame(width: listWidth)
+                    Divider()
+                    CurrentCuePanel(meterWidth: min(190, max(110, meterSpace / 2)))
+                }
             }
             Divider()
             KeyLegend()
         }
+        .frame(minWidth: Self.minWidth)
         .background(Theme.showBackground)
         .navigationTitle(model.loadedPlan.map { $0.dates.isEmpty ? $0.title : $0.dates } ?? "Show")
         .toolbar {
@@ -151,7 +160,12 @@ private struct CueRow: View {
 }
 
 private struct CurrentCuePanel: View {
+    /// The transport buttons, which never shrink, with the row's spacing and the panel's padding.
+    static let widthWithoutMeters: CGFloat = 670
+    static let minWidth: CGFloat = widthWithoutMeters + 2 * 110
+
     @Environment(AppModel.self) private var model
+    let meterWidth: CGFloat
 
     private var cue: ShowCue? { model.show.activeCue ?? model.show.pointedCue }
 
@@ -192,8 +206,8 @@ private struct CurrentCuePanel: View {
             HStack(alignment: .bottom, spacing: 20) {
                 TransportButtons()
                 Spacer()
-                MeterGroup(title: "HOUSE", meter: model.houseMeter, fill: Theme.meterFill)
-                MeterGroup(title: "CUE", meter: model.cueMeter, fill: Theme.cue)
+                MeterGroup(title: "HOUSE", meter: model.houseMeter, fill: Theme.meterFill, width: meterWidth)
+                MeterGroup(title: "CUE", meter: model.cueMeter, fill: Theme.cue, width: meterWidth)
             }
         }
         .padding(18)
@@ -298,6 +312,7 @@ struct MeterGroup: View {
     let title: String
     let meter: MeterState
     let fill: Color
+    var width: CGFloat = 190
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -305,7 +320,7 @@ struct MeterGroup: View {
             MeterBar(level: meter.left, fill: fill)
             MeterBar(level: meter.right, fill: fill)
         }
-        .frame(width: 190)
+        .frame(width: width)
     }
 }
 

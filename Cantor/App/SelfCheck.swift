@@ -18,7 +18,7 @@ enum SelfCheck {
         var log: [String] = []
         let note = { (line: String) in log.append(line) }
         let show = model.show
-        NSApp.windows.first?.setFrame(NSRect(x: 40, y: 40, width: 1360, height: 860), display: true)
+        NSApp.windows.first?.setFrame(NSRect(x: 40, y: 40, width: 1370, height: 860), display: true)
 
         await waitUntil { !model.isScanning && model.analyzingCount == 0 && model.library.tracks.count >= 3 && model.library.tracks.allSatisfy(\.isAnalyzed) }
         note("tracks \(model.library.tracks.count), duplicate groups \(model.library.duplicateGroups.count)")

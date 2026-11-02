@@ -46,7 +46,7 @@ The kernel is a plain Swift class with an SPSC command ring and atomics. It does
 
 Stored in `~/Library/Application Support/Cantor/`: `library.json`, `aliases.json`, `services/<planID>.json`, `waveforms/<trackID>.peaks`, `runlog.jsonl`, plus rolling `.bak` copies.
 
-- **Track**: id, contentID, files (path, locality), title, durationSec, sampleRate, channels, startSec, endSec?, suggestedEndSec?, fadeOutSec (3), fadeInSec (0), trimDb, integratedLUFS?, truePeakDb?, markers, key, notes, tags, pcoSongIDs, playCount, lastPlayed.
+- **Track**: id, contentID, files (path, locality), title, durationSec, sampleRate, channels, startSec, endSec?, suggestedEndSec?, fadeOutSec (3), fadeInSec (0), trimDb, integratedLUFS?, truePeakDb?, markers, key, notes, tags, pcoSongIDs, playCount, lastPlayed, exclusion (reason, by operator)?, keptByOperator, eq (on, high-pass, six bell or shelf bands, low-pass, output dB)?.
 - **ServicePlan**: PCO plan id, serviceType, title, dates, times, syncedAt, items.
 - **ServiceCue**: PCO item id or manual id, position, title, itemType, notes, arrangement, song id, lengthSec, needsPlayback, candidates, trackID (confirmed only), changedSinceConfirm.
 - **AliasMemory**: PCO song id or normalized title to confirmed contentID.
@@ -98,7 +98,8 @@ Stream Deck works by sending these keystrokes. MIDI is deferred (see NEXT_STEPS.
 
 - **Show**: full-width state bar (word, icon and color: IDLE, ARMED, LIVE, HOLD, FADING, PANIC, FAULT). Cue list at left. At right: current cue title, large waveform with playhead, start and end markers and fade zone, remaining time in large SF Mono, next cue, house and cue meters. Key legend along the bottom.
 - **Service**: sidebar of upcoming plans. Table of items with Needs, Match, Confidence and State. Inspector shows candidates with the reason, preview on the cue output, Confirm, Choose Other, Not Needed. Load Service builds the cue list and starts the decode.
-- **Library**: sidebar (All, tags, Needs Attention, Not Downloaded, Duplicates). Sortable table. Inspector with waveform, start, end, fade, trim, markers, key, notes, tags, file paths.
+- **EQ window**: one per track, opened from the inspector. Response curve with a handle per band (drag for frequency and gain), band buttons (double-click turns a band on or off), shape, FREQ, Q, GAIN and OUT knobs (drag, Option for fine, double-click to reset), On/Bypass, Preview and Reset. Locked in Show Mode. Always dark, in the Waves F6's palette: a slate graph, a color per band (HP and LP white), orange knobs and yellow brackets on the selected handle. This is the one exception to color meaning state, and it stays inside the EQ window.
+- **Library**: sidebar (All, tags, Needs Attention, Not Downloaded, Duplicates, Excluded). Excluded lists stems and Not a Playback files with the reason, and This Is a Playback brings one back. Sortable table. Inspector with waveform, start, end, fade, trim, markers, key, notes, tags, file paths.
 - **Check**: pre-service checklist grouped by Blocking, Warning and OK, each row saying what to do.
 - **Settings**: Outputs, Planning Center, AI Matching, Folders, Playback.
 
@@ -115,9 +116,10 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 ## New files
 
 1. FSEvents triggers a rescan. Each scanned file carries its added-to-folder date. A track created by the scan counts as new when one of its files arrived after Cantor started watching that folder (`AppSettings.watchedSince`, stamped when a folder is first seen and cleared when it is removed). So a launch catches files that arrived while the app was closed, and adding a folder does not flood the inbox. Another copy of audio already in the library is not new.
-2. New tracks go into `new-files.json`, so they survive quitting.
-3. While no cue is armed or playing, waiting files go to Claude in batches of 25: filename, the two folders above it, duration, embedded tags, category names and upcoming unmatched item titles. Claude returns a title, one category, whether it is a playback at all, an optional item id from the list, a confidence and a reason. Ids it was not given are ignored. If Claude is off, signed out or fails, the category is guessed from keywords and the item from the name matcher at 0.75 or above, and the pop-up says why.
-4. The pop-up shows only when no service is loaded, the show is idle, Show Mode is off, no preview is playing and nothing is loading. Accept writes the title and category tag, confirms the service item if one is chosen and still empty, and can copy the file to `~/Music/Cantor`.
+2. After each scan, StemDetector excludes stems: strong words in the name (click, stems, BGVs, drums), a Stems or Multitracks folder (the file's own folder or the one above), or sets of three or more files in one folder within 0.1 s of each other in length, where a weak word (bass, keys, guide, vocals) excludes a file, and a file with no telling words is excluded when two or more of the set are named as stems. Mix words (mix, full, master, accompaniment, key, with, no) always keep a file. Kept and confirmed tracks are never excluded. Detection reruns on every scan, so its own exclusions follow the files, while Not a Playback and This Is a Playback stay as the operator left them. Excluded tracks skip matching, analysis, the library lists and the inbox.
+3. New tracks go into `new-files.json`, so they survive quitting.
+4. While no cue is armed or playing, waiting files go to Claude in batches of 25: filename, the two folders above it, duration, embedded tags, category names and upcoming unmatched item titles. Claude returns a title, one category, whether it is a playback at all, an optional item id from the list, a confidence and a reason. Ids it was not given are ignored. If Claude is off, signed out or fails, the category is guessed from keywords and the item from the name matcher at 0.75 or above, and the pop-up says why.
+5. The pop-up shows only when no service is loaded, the show is idle, Show Mode is off, no preview is playing and nothing is loading. Accept writes the title and category tag, confirms the service item if one is chosen and still empty, and can copy the file to `~/Music/Cantor`.
 6. Everything is snapshotted to disk. The Show view reads only snapshots and RAM. A resync that changes a confirmed item flags it rather than dropping it.
 
 ## Failure handling

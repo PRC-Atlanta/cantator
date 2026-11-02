@@ -13,9 +13,9 @@ struct LibraryView: View {
     }
 
     private var tracks: [Track] {
-        var result = model.library.tracks
+        var result = filter == .excluded ? model.library.excludedTracks : model.library.playbackTracks
         switch filter {
-        case .all: break
+        case .all, .excluded: break
         case .attention: result = result.filter(Self.needsAttention)
         case .notDownloaded: result = result.filter { !$0.isLocal && $0.hasCloudOnlyCopy }
         case .tag(let tag): result = result.filter { $0.tags.contains(tag) }
@@ -36,10 +36,11 @@ struct LibraryView: View {
                 Text(track.title).lineLimit(1)
             }
             .width(min: 200, ideal: 300)
-            TableColumn("Tags") { (track: Track) in
-                Text(track.tags.joined(separator: ", ")).foregroundStyle(.secondary).lineLimit(1)
+            TableColumn(filter == .excluded ? "Why" : "Tags") { (track: Track) in
+                Text(track.exclusion?.reason ?? track.tags.joined(separator: ", ")).foregroundStyle(.secondary).lineLimit(1)
+                    .help(track.exclusion?.reason ?? "")
             }
-            .width(min: 70, ideal: 110)
+            .width(min: 70, ideal: filter == .excluded ? 260 : 110)
             TableColumn("Length", value: \.durationSec) { track in
                 Text(TimeText.plain(track.durationSec)).font(.system(.body, design: .monospaced))
             }
@@ -99,12 +100,14 @@ struct LibraryView: View {
     private var subtitle: String {
         if model.isScanning { return "Scanning" }
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
-        return "\(model.library.tracks.count) tracks"
+        if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
+        return "\(model.library.playbackTracks.count) tracks"
     }
 }
 
 private struct TrackInspector: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
     let track: Track
     @State private var tagText = ""
 
@@ -112,6 +115,15 @@ private struct TrackInspector: View {
 
     var body: some View {
         Form {
+            if let exclusion = track.exclusion {
+                Section("Excluded") {
+                    Text(exclusion.reason)
+                    Text("Excluded files are left out of matching and the other library lists.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("This Is a Playback") { model.keepTrack(track.id) }
+                        .disabled(!editing)
+                }
+            }
             Section {
                 WaveformEditor(track: track)
                     .frame(height: 110)
@@ -131,6 +143,21 @@ private struct TrackInspector: View {
                     }
                 }
                 .disabled(!track.isLocal)
+            }
+
+            Section("EQ") {
+                let eq = track.eq ?? TrackEQ()
+                EQThumbnail(eq: eq)
+                    .frame(height: 44)
+                HStack {
+                    Button("Edit EQ") { openWindow(id: "eq", value: track.id) }
+                    if track.eq != nil {
+                        Toggle("On", isOn: Binding(get: { eq.isOn }, set: { value in model.updateTrack(track.id) { $0.eq?.isOn = value } }))
+                            .disabled(!editing)
+                    }
+                    Spacer()
+                    Text(eq.isFlat ? "Flat" : "Shaped").foregroundStyle(.secondary)
+                }
             }
 
             Section("Points") {

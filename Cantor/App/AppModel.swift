@@ -280,6 +280,7 @@ final class AppModel {
             let previousIDs = Set(library.tracks.map(\.id))
             let replaced = library.merge(scan: result.0.files, defaultFadeOutSec: settings.defaultFadeOutSec)
             remapCues(replaced)
+            if library.excludeStems(protecting: confirmedTrackIDs) { rankAllPlans() }
             noteNewFiles(previousIDs: previousIDs, scan: result.0.files, replaced: replaced)
             unreadableFiles = result.0.unreadable
             isScanning = false
@@ -287,6 +288,11 @@ final class AppModel {
             if result.0.hasUnsettledFiles { scheduleRescan(after: 3) }
             analyzePending()
         }
+    }
+
+    /// Tracks confirmed for any service. Stem detection never takes these away.
+    private var confirmedTrackIDs: Set<UUID> {
+        Set(plans.flatMap { $0.cues.compactMap(\.trackID) })
     }
 
     private func remapCues(_ replaced: [UUID: UUID]) {
@@ -335,7 +341,7 @@ final class AppModel {
     }
 
     private func needsAnalysis(_ track: Track) -> Bool {
-        !track.isAnalyzed && track.isLocal && !failedAnalysis.contains(track.id)
+        !track.isAnalyzed && track.isLocal && !track.isExcluded && !failedAnalysis.contains(track.id)
     }
 
     private func peaksURL(_ id: UUID) -> URL {
@@ -362,6 +368,10 @@ final class AppModel {
         library.update(id: id) {
             change(&$0)
             $0.sanitizePoints()
+        }
+        // Preview follows EQ edits as they happen. House waits for the next arm.
+        if cueBus.trackID == id, let kernel = cueBus.kernel, let track = library.track(id: id) {
+            kernel.setEQ(EQCoefficients(track.eq, sampleRate: kernel.buffer.sampleRate))
         }
         markCuesChanged()
         scheduleSave()
@@ -458,7 +468,7 @@ final class AppModel {
         for planIndex in plans.indices {
             for cueIndex in plans[planIndex].cues.indices where plans[planIndex].cues[cueIndex].needsPlayback {
                 let cue = plans[planIndex].cues[cueIndex]
-                plans[planIndex].cues[cueIndex].candidates = Matcher.rank(cue: cue, tracks: library.tracks, memory: memory)
+                plans[planIndex].cues[cueIndex].candidates = Matcher.rank(cue: cue, tracks: library.playbackTracks, memory: memory)
             }
         }
     }
@@ -680,9 +690,10 @@ final class AppModel {
 
     private func noteNewFiles(previousIDs: Set<UUID>, scan: [ScannedFile], replaced: [UUID: UUID]) {
         let before = inbox
-        inbox.reconcile(replaced: replaced, existing: Set(library.tracks.map(\.id)))
+        // A file found to be a stem leaves the inbox.
+        inbox.reconcile(replaced: replaced, existing: Set(library.playbackTracks.map(\.id)))
         let found = NewFileDetector.newTrackIDs(
-            previousIDs: previousIDs, tracks: library.tracks, scan: scan, watchedSince: settings.watchedSince
+            previousIDs: previousIDs, tracks: library.playbackTracks, scan: scan, watchedSince: settings.watchedSince
         )
         inbox.add(found)
         if !found.isEmpty { newFilesSnoozed = false }
@@ -815,8 +826,18 @@ final class AppModel {
     }
 
     func skipNewFile(_ id: UUID) {
+        library.exclude(id: id)
         inbox.remove(id)
+        rankAllPlans()
         scheduleSave()
+    }
+
+    /// The operator's This Is a Playback, from the Excluded list.
+    func keepTrack(_ id: UUID) {
+        library.keep(id: id)
+        rankAllPlans()
+        scheduleSave()
+        analyzePending()
     }
 
     // MARK: Pre-service check

@@ -67,14 +67,37 @@ The **Claude** section at the bottom of the sidebar always shows whether Claude 
 
 Cantor watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
 
-When a new audio file arrives in a watched folder, Cantor asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match.
+When a new audio file arrives in a watched folder, Cantor asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
 
 - The pop-up never appears while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
 - Files that arrive while Cantor is closed show up the next time it starts.
 - Files already in a folder when you add it are not treated as new.
 - Claude gets the filename, the two folders above it, the duration, embedded tags, the category names and the titles of upcoming items that still need a file.
 
+### Stems
+
+Stems and click tracks often sit in the same folders as playbacks. Cantor leaves them out of matching, the library lists and the New File pop-up. It treats a file as a stem when:
+
+- its name says click, stems, BGVs, vox, drums, snare and so on,
+- it is in a folder named Stems or Multitracks, or the folder above it is, or
+- it is one of three or more files in one folder with the same length, and its name says bass, keys, guide, vocals and so on, or at least two files in that set are named as stems.
+
+A name that says mix, full, master, playback, accompaniment, instrumental, split, key, with, without or no is never treated as a stem, so "Way Maker - Full Mix" and "Holy Forever No BGVs" stay in. Neither does a track confirmed for a service.
+
+**Excluded** in the Library sidebar lists every file left out, with the reason. If a playback is missing from matching, find it there, preview it, and choose **This Is a Playback**. Cantor remembers that and never excludes it again. Cantor rechecks its own guesses on every scan, but never undoes yours.
+
 Cantor never moves, renames or deletes your files. **Make Local** copies a track to `~/Music/Cantor`, which also downloads it if it's only in Drive.
+
+### EQ
+
+Some playbacks are mixed better than others. Each track has its own EQ, saved with it and used every time it plays, on the house output and in preview. Select a track in the library and choose **Edit EQ** in the inspector.
+
+- Drag a numbered handle on the curve to move a band's frequency and gain. HP and LP are a high-pass and low-pass, off until you turn them on.
+- Click a band button to select it, double-click to turn it on or off. Bands 1 to 6 can each be a low shelf, bell or high shelf.
+- Turn the FREQ, Q, GAIN and OUT knobs by dragging up or down. Hold Option for fine moves, double-click to reset.
+- **Preview** plays the track on the cue output, and every change is heard right away. **EQ On** switches to bypass so you can compare. **Reset** goes back to the track as mixed.
+- Loudness matching measures the file as mixed, so use OUT to bring the level back after a big boost.
+- Editing is locked in Show Mode. A cue that is already armed or playing keeps its EQ until it is armed again.
 
 ## Running a service
 

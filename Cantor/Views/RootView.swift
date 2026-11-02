@@ -2,7 +2,7 @@ import CantorCore
 import SwiftUI
 
 enum LibraryFilter: Hashable {
-    case all, attention, notDownloaded, duplicates
+    case all, attention, notDownloaded, duplicates, excluded
     case tag(String)
 }
 
@@ -88,9 +88,9 @@ private struct SidebarView: View {
                 }
             }
             Section("Library") {
-                row("All Tracks", "music.note.list", .all, library.tracks.count)
+                row("All Tracks", "music.note.list", .all, library.playbackTracks.count)
                 ForEach(library.allTags, id: \.self) { tag in
-                    row(tag.capitalized, "tag", .tag(tag), library.tracks.filter { $0.tags.contains(tag) }.count)
+                    row(tag.capitalized, "tag", .tag(tag), library.playbackTracks.filter { $0.tags.contains(tag) }.count)
                 }
                 if !model.inbox.items.isEmpty {
                     Button {
@@ -102,9 +102,10 @@ private struct SidebarView: View {
                     .disabled(!model.newFilesCanAppear)
                     .help(model.newFilesCanAppear ? "Review new files" : "New files wait until no service is loaded")
                 }
-                row("Needs Attention", "exclamationmark.triangle", .attention, library.tracks.filter(LibraryView.needsAttention).count)
-                row("Not Downloaded", "icloud", .notDownloaded, library.tracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)
+                row("Needs Attention", "exclamationmark.triangle", .attention, library.playbackTracks.filter(LibraryView.needsAttention).count)
+                row("Not Downloaded", "icloud", .notDownloaded, library.playbackTracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)
                 row("Duplicates", "square.on.square", .duplicates, library.duplicateGroups.count)
+                row("Excluded", "eye.slash", .excluded, library.excludedTracks.count)
             }
             Section("Claude") {
                 ClaudeStatusRow()

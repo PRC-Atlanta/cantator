@@ -180,7 +180,7 @@ private struct CueInspector: View {
     private var searchResults: [Track] {
         let query = search.lowercased()
         guard query.count >= 2 else { return [] }
-        return Array(model.library.tracks.filter {
+        return Array(model.library.playbackTracks.filter {
             $0.title.lowercased().contains(query) || $0.primaryFilename.lowercased().contains(query)
         }.prefix(12))
     }
