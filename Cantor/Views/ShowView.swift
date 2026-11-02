@@ -211,8 +211,8 @@ private struct CurrentCuePanel: View {
             HStack(alignment: .bottom, spacing: 20) {
                 TransportButtons()
                 Spacer()
-                MeterGroup(title: "HOUSE", meter: model.houseMeter, fill: Theme.meterFill, width: meterWidth)
-                MeterGroup(title: "CUE", meter: model.cueMeter, fill: Theme.cue, width: meterWidth)
+                MeterGroup(title: "HOUSE", meter: model.houseMeter, width: meterWidth)
+                MeterGroup(title: "CUE", meter: model.cueMeter, width: meterWidth)
             }
         }
         .padding(18)
@@ -362,37 +362,101 @@ private struct KeyLegend: View {
 struct MeterGroup: View {
     let title: String
     let meter: MeterState
-    let fill: Color
     var width: CGFloat = 190
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-            MeterBar(level: meter.left, fill: fill)
-            MeterBar(level: meter.right, fill: fill)
+            MeterZoneTicks()
+            MeterBar(level: meter.left)
+            MeterBar(level: meter.right)
+            MeterScale(width: width)
         }
         .frame(width: width)
     }
 }
 
-private struct MeterBar: View {
-    let level: Float
-    let fill: Color
+/// The meter's zones, on a linear dB scale from -60 to 0: quiet, the target, hot, clipping.
+private enum MeterZones {
+    static let floorDb: Float = -60
+    static let targetLow: Float = -30
+    static let targetHigh: Float = -10
+    static let hot: Float = -3
 
-    private var fraction: CGFloat {
-        guard level > 0 else { return 0 }
-        let db = 20 * log10(level)
-        return CGFloat(min(max((db + 60) / 60, 0), 1))
+    static let quiet = Color(red: 72 / 255, green: 190 / 255, blue: 210 / 255)
+    static let target = Color(red: 120 / 255, green: 210 / 255, blue: 80 / 255)
+    static let warm = Color(red: 236 / 255, green: 196 / 255, blue: 64 / 255)
+    static let clip = Color(red: 1, green: 69 / 255, blue: 58 / 255)
+
+    static func color(atDb db: Float) -> Color {
+        if db < targetLow { return quiet }
+        if db < targetHigh { return target }
+        if db < hot { return warm }
+        return clip
     }
 
+    static func x(_ db: Float, in width: CGFloat) -> CGFloat {
+        width * CGFloat((db - floorDb) / -floorDb)
+    }
+}
+
+/// Marks over the meter where the target zone starts and ends.
+private struct MeterZoneTicks: View {
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Theme.meterTrack)
-                Rectangle().fill(level >= 0.89 ? Theme.danger : fill).frame(width: geometry.size.width * fraction)
+        Canvas { context, size in
+            for db in [MeterZones.targetLow, MeterZones.targetHigh] {
+                let x = MeterZones.x(db, in: size.width).rounded()
+                context.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: size.height)), with: .color(MeterZones.target))
             }
         }
-        .frame(height: 10)
+        .frame(height: 3)
+    }
+}
+
+private struct MeterBar: View {
+    let level: Float
+
+    var body: some View {
+        Canvas { context, size in
+            let db = level > 0 ? 20 * log10(level) : -.infinity
+            // 1.25 dB a segment when there is room, else 2.5, so a segment never gets thinner than the gap.
+            let step: Float = size.width >= 160 ? 1.25 : 2.5
+            let count = Int(-MeterZones.floorDb / step)
+            let gap: CGFloat = 1
+            let segment = (size.width + gap) / CGFloat(count)
+            for index in 0..<count {
+                let low = MeterZones.floorDb + Float(index) * step
+                let color = MeterZones.color(atDb: low)
+                let rect = CGRect(x: CGFloat(index) * segment, y: 0, width: segment - gap, height: size.height)
+                context.fill(Path(rect), with: .color(db > low ? color : color.opacity(0.16)))
+            }
+        }
+        .frame(height: 12)
+    }
+}
+
+/// dB labels under the meter, thinned out when it is narrow.
+private struct MeterScale: View {
+    let width: CGFloat
+
+    private var marks: [Float] { width >= 160 ? [-60, -40, -30, -20, -10, -3, 0] : [-60, -30, -10, 0] }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(marks, id: \.self) { db in
+                Text(db == 0 ? "0" : "\(Int(db))")
+                    .font(.system(size: 9).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .alignmentGuide(.leading) { label in
+                        let x = MeterZones.x(db, in: width)
+                        if db == MeterZones.floorDb { return 0 }
+                        if db == 0 { return label.width - x }
+                        return label.width / 2 - x
+                    }
+            }
+        }
+        .frame(width: width, height: 11, alignment: .topLeading)
     }
 }
 

@@ -25,8 +25,6 @@ enum Theme {
     static let separator = dynamic(dark: rgb(58, 58, 62), light: rgb(205, 205, 210))
     static let waveform = dynamic(dark: rgb(150, 150, 156), light: rgb(110, 110, 116))
     static let waveformDim = dynamic(dark: rgb(70, 70, 76), light: rgb(190, 190, 196))
-    static let meterTrack = dynamic(dark: rgb(40, 40, 44), light: rgb(220, 220, 224))
-    static let meterFill = dynamic(dark: rgb(190, 190, 196), light: rgb(90, 90, 96))
     static let neutralAccent = dynamic(dark: rgb(170, 170, 176), light: rgb(84, 84, 90))
 }
 
