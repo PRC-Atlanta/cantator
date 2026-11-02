@@ -4,7 +4,7 @@ import SwiftUI
 struct LibraryView: View {
     @Environment(AppModel.self) private var model
     let filter: LibraryFilter
-    @State private var selection: UUID?
+    @State private var selection: Set<UUID> = []
     @State private var search = ""
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
 
@@ -71,20 +71,35 @@ struct LibraryView: View {
             }
             .width(40)
         }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            TrackActions(ids: ids, clearSelection: { selection = [] })
+        }
+        .onDeleteCommand { exclude(selection) }
         .searchable(text: $search, placement: .toolbar, prompt: "Search")
         .inspector(isPresented: .constant(true)) {
             Group {
-                if let id = selection, let track = model.library.track(id: id) {
+                if selection.count == 1, let id = selection.first, let track = model.library.track(id: id) {
                     TrackInspector(track: track)
+                } else if selection.count > 1 {
+                    SelectionInspector(ids: selection, clearSelection: { selection = [] })
                 } else {
-                    ContentUnavailableView("No Track Selected", systemImage: "waveform")
+                    ContentUnavailableView(
+                        "No Track Selected", systemImage: "waveform",
+                        description: Text("Shift-click or Command-click to select several tracks, or press Command-A for all.")
+                    )
                 }
             }
             .inspectorColumnWidth(min: 320, ideal: 380, max: 460)
         }
         .navigationTitle("Library")
         .navigationSubtitle(subtitle)
+        // Leaving a list clears what was selected in it, so actions never reach hidden tracks.
+        .onChange(of: filter) { selection = [] }
         .toolbar {
+            ToolbarItemGroup {
+                TrackActions(ids: selection, clearSelection: { selection = [] })
+                    .labelStyle(.titleAndIcon)
+            }
             ToolbarItem {
                 Button {
                     model.rescan()
@@ -97,11 +112,108 @@ struct LibraryView: View {
         }
     }
 
+    private func exclude(_ ids: Set<UUID>) {
+        let ids = ids.filter { model.library.track(id: $0)?.isExcluded == false }
+        guard !ids.isEmpty else { return }
+        model.excludeTracks(ids)
+        selection = []
+    }
+
     private var subtitle: String {
+        if !selection.isEmpty { return "\(selection.count) of \(tracks.count) selected" }
         if model.isScanning { return "Scanning" }
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
         if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
         return "\(model.library.playbackTracks.count) tracks"
+    }
+}
+
+/// Exclude, Include, Make Local and Tag for the selected tracks. Used in the toolbar, the
+/// right-click menu and the inspector when several tracks are selected.
+private struct TrackActions: View {
+    @Environment(AppModel.self) private var model
+    let ids: Set<UUID>
+    let clearSelection: () -> Void
+
+    var body: some View {
+        let tracks = ids.compactMap { model.library.track(id: $0) }
+        let included = Set(tracks.filter { !$0.isExcluded }.map(\.id))
+        let excluded = Set(tracks.filter(\.isExcluded).map(\.id))
+        let locked = model.show.showMode
+        Button {
+            model.excludeTracks(included)
+            clearSelection()
+        } label: {
+            Label("Exclude", systemImage: "eye.slash")
+        }
+        .disabled(included.isEmpty || locked)
+        .help("Not a playback: leave out of matching and the library lists (Delete)")
+
+        Button {
+            model.keepTracks(excluded)
+            clearSelection()
+        } label: {
+            Label("Include", systemImage: "eye")
+        }
+        .disabled(excluded.isEmpty || locked)
+        .help("This is a playback: bring back from Excluded")
+
+        Button {
+            for track in tracks where !model.makingLocal.contains(track.id) { model.makeLocal(track) }
+        } label: {
+            Label("Make Local", systemImage: "arrow.down.circle")
+        }
+        .disabled(tracks.isEmpty)
+        .help("Copy to ~/Music/Cantor, downloading from Drive if needed")
+
+        Menu {
+            ForEach(PlaybackCategory.all(libraryTags: model.library.allTags), id: \.self) { tag in
+                let all = !tracks.isEmpty && tracks.allSatisfy { $0.tags.contains(tag) }
+                Button {
+                    model.toggleTag(tag, on: ids)
+                } label: {
+                    if all { Label(PlaybackCategory.display(tag), systemImage: "checkmark") } else { Text(PlaybackCategory.display(tag)) }
+                }
+            }
+        } label: {
+            Label("Tag", systemImage: "tag")
+        }
+        .disabled(tracks.isEmpty || locked)
+        .help("Add a tag to the selected tracks, or remove it when they all have it")
+    }
+}
+
+/// Shown in place of the track inspector when several tracks are selected.
+private struct SelectionInspector: View {
+    @Environment(AppModel.self) private var model
+    let ids: Set<UUID>
+    let clearSelection: () -> Void
+
+    var body: some View {
+        let tracks = ids.compactMap { model.library.track(id: $0) }
+        Form {
+            Section {
+                LabeledContent("Selected", value: "\(tracks.count) tracks")
+                LabeledContent("Total length", value: TimeText.plain(tracks.reduce(0) { $0 + $1.durationSec }))
+                let excluded = tracks.filter(\.isExcluded).count
+                if excluded > 0 { LabeledContent("Excluded", value: "\(excluded)") }
+                let notLocal = tracks.filter { !$0.isLocal }.count
+                if notLocal > 0 { LabeledContent("Not on this Mac", value: "\(notLocal)") }
+            }
+            Section("Actions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    TrackActions(ids: ids, clearSelection: clearSelection)
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            Section("Titles") {
+                ForEach(tracks.sorted { $0.title < $1.title }.prefix(50), id: \.id) { track in
+                    Text(track.title).lineLimit(1)
+                }
+                if tracks.count > 50 { Text("and \(tracks.count - 50) more").foregroundStyle(.secondary) }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

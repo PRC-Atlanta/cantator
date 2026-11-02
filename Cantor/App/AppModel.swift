@@ -930,10 +930,46 @@ final class AppModel {
 
     /// The operator's This Is a Playback, from the Excluded list.
     func keepTrack(_ id: UUID) {
-        library.keep(id: id)
+        keepTracks([id])
+    }
+
+    // MARK: Actions on several tracks
+
+    /// Not a Playback for each track. A track confirmed for a service stays in, because a cue plays it.
+    func excludeTracks(_ ids: Set<UUID>) {
+        guard !show.showMode else { return }
+        let inUse = ids.intersection(confirmedTrackIDs)
+        for id in ids.subtracting(inUse) {
+            library.exclude(id: id)
+            inbox.remove(id)
+        }
+        if !inUse.isEmpty {
+            alert = inUse.count == 1
+                ? "One track is confirmed for a service, so it stays in. Choose another file for that item first."
+                : "\(inUse.count) tracks are confirmed for a service, so they stay in. Choose other files for those items first."
+        }
+        rankAllPlans()
+        scheduleSave()
+    }
+
+    func keepTracks(_ ids: Set<UUID>) {
+        guard !show.showMode else { return }
+        for id in ids { library.keep(id: id) }
         rankAllPlans()
         scheduleSave()
         analyzePending()
+    }
+
+    /// Adds the tag to every track, or removes it when every track already has it.
+    func toggleTag(_ tag: String, on ids: Set<UUID>) {
+        let tracks = ids.compactMap { library.track(id: $0) }
+        let remove = !tracks.isEmpty && tracks.allSatisfy { $0.tags.contains(tag) }
+        for id in ids {
+            updateTrack(id) { track in
+                track.tags.removeAll { $0 == tag }
+                if !remove { track.tags.append(tag) }
+            }
+        }
     }
 
     // MARK: Pre-service check
