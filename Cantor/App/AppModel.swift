@@ -33,6 +33,8 @@ final class AppModel {
     var claudeWorking: String?
     var lastClaudeUse: ClaudeUse?
     var claudeRequestsThisSession = 0
+    /// Where the last successful Planning Center sync came from, for Settings.
+    var lastPlanningCenterSource: PlanningCenterSource?
     /// Set by Later. Cleared when another new file arrives or the app starts again.
     var newFilesSnoozed = false
 
@@ -481,40 +483,71 @@ final class AppModel {
         (try? Keychain.lookup(.pcoAppID)) != nil && (try? Keychain.lookup(.pcoSecret)) != nil
     }
 
-    /// Not in Show Mode: a sync can add, remove or reorder the loaded cues.
+    /// Not in Show Mode: a sync can add, remove or reorder the loaded cues. Reads Planning Center
+    /// through the Claude connector when that is the chosen source, and with the token otherwise or
+    /// whenever the connector can't be used.
     func refreshPlans() {
         guard !isSyncing, !show.showMode, !isLoadingService else { return }
-        let appID: String?
-        let secret: String?
-        do {
-            appID = try Keychain.lookup(.pcoAppID)
-            secret = try Keychain.lookup(.pcoSecret)
-        } catch {
-            alert = "Could not read the Planning Center token from the Keychain: \(error.localizedDescription)"
-            return
-        }
-        guard let appID, let secret else {
-            alert = "Add your Planning Center token in Settings."
-            return
-        }
         isSyncing = true
         Task {
             defer { isSyncing = false }
-            do {
-                let client = PCOClient(appID: appID, secret: secret)
-                let fresh = try await client.fetchUpcomingPlans(memory: memory)
-                plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
-                let failed = fresh.filter(\.syncFailed).count
-                if failed > 0 {
-                    alert = "\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept."
+            var notes: [String] = []
+            var fresh: [ServicePlan]?
+            if settings.planningCenterSource == .connector {
+                do {
+                    fresh = try await plansThroughConnector()
+                    lastPlanningCenterSource = .connector
+                } catch {
+                    noteClaudeFailure(error)
+                    notes.append(error.localizedDescription)
                 }
-                rankAllPlans()
-                markCuesChanged()
-                scheduleSave()
-            } catch {
-                alert = "\(error.localizedDescription) Using saved plans."
             }
+            if fresh == nil {
+                do {
+                    guard let appID = try Keychain.lookup(.pcoAppID), let secret = try Keychain.lookup(.pcoSecret) else {
+                        notes.append(notes.isEmpty ? "Add your Planning Center token in Settings." : "Add a Planning Center token in Settings to sync without the connector.")
+                        alert = (notes + ["Using saved plans."]).joined(separator: " ")
+                        return
+                    }
+                    fresh = try await PCOClient(appID: appID, secret: secret).fetchUpcomingPlans(memory: memory)
+                    lastPlanningCenterSource = .token
+                    if !notes.isEmpty { notes.append("Synced with the API token instead.") }
+                } catch {
+                    notes.append("\(error.localizedDescription) Using saved plans.")
+                    alert = notes.joined(separator: " ")
+                    return
+                }
+            }
+            guard let fresh else { return }
+            plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
+            let failed = fresh.filter(\.syncFailed).count
+            if failed > 0 {
+                notes.append("\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept.")
+            }
+            if !notes.isEmpty { alert = notes.joined(separator: " ") }
+            rankAllPlans()
+            markCuesChanged()
+            scheduleSave()
         }
+    }
+
+    /// The upcoming services through the Planning Center connector on the Claude account. Claude
+    /// only gets the connector's read-only Services tools, and the plans are read from their results.
+    private func plansThroughConnector() async throws -> [ServicePlan] {
+        guard settings.llmEnabled else { throw PlanningCenterConnectorError.claudeOff }
+        var cli = try await claudeAccount()
+        let server = try PlanningCenterConnector.server(in: try await cli.mcpServers())
+        // Reading every service type's next plans takes many tool calls.
+        cli.timeout = 480
+        let model = settings.llmModel
+        let stream = try await usingClaude("Syncing Planning Center") {
+            try await cli.runWithTools(
+                system: PlanningCenterConnector.system, prompt: PlanningCenterConnector.prompt(),
+                allowedTools: PlanningCenterConnector.allowedTools(server: server.name),
+                disallowedTools: PlanningCenterConnector.disallowedTools(server: server.name), model: model
+            )
+        }
+        return try PlanningCenterConnector.plans(fromStream: stream, memory: memory)
     }
 
     func rankAllPlans() {

@@ -67,6 +67,32 @@ public struct ClaudeCLI: ClaudeRunner {
         try await execute(arguments: Self.arguments(system: system, schema: schema, model: model), input: prompt)
     }
 
+    /// Runs Claude Code with no built-in tools and only `allowedTools` from its MCP servers, which
+    /// include the connectors on the signed-in Claude account. Returns the stream-json events, so
+    /// the caller reads each tool's own result rather than Claude's retelling of it.
+    public func runWithTools(system: String, prompt: String, allowedTools: [String], disallowedTools: [String], model: String) async throws -> Data {
+        try await execute(
+            arguments: Self.toolArguments(system: system, allowedTools: allowedTools, disallowedTools: disallowedTools, model: model),
+            input: prompt
+        )
+    }
+
+    static func toolArguments(system: String, allowedTools: [String], disallowedTools: [String], model: String) -> [String] {
+        var arguments = [
+            "-p", "--output-format", "stream-json", "--verbose", "--system-prompt", system,
+            "--tools", "", "--allowedTools", allowedTools.joined(separator: ","), "--effort", "low",
+            "--no-session-persistence", "--setting-sources", "",
+        ]
+        if !disallowedTools.isEmpty { arguments += ["--disallowedTools", disallowedTools.joined(separator: ",")] }
+        if !model.isEmpty { arguments += ["--model", model] }
+        return arguments
+    }
+
+    /// The MCP servers Claude Code can reach, including Claude account connectors, as `claude mcp list` prints them.
+    public func mcpServers() async throws -> [MCPServerStatus] {
+        MCPServerStatus.parse(String(decoding: try await execute(arguments: ["mcp", "list"], input: ""), as: UTF8.self))
+    }
+
     public func accountStatus() async throws -> ClaudeAccountStatus {
         let data = try await execute(arguments: ["auth", "status"], input: "")
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LLMError.malformed }
@@ -153,16 +179,7 @@ public struct ClaudeCLI: ClaudeRunner {
     /// Reads Claude Code's JSON result. A failed request reports `is_error` with a reason in `result`.
     public static func structuredOutput(_ data: Data) throws -> [String: Any] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LLMError.malformed }
-        if root["is_error"] as? Bool == true {
-            let message = root["result"] as? String ?? ""
-            let lowered = message.lowercased()
-            if lowered.contains("not logged in") || lowered.contains("/login") { throw LLMError.notLoggedIn }
-            if usageLimitPhrases.contains(where: lowered.contains) || (lowered.contains("limit reached") && !lowered.contains("context")
-                && !lowered.contains("token")) {
-                throw LLMError.limitReached
-            }
-            throw LLMError.failed(message)
-        }
+        if root["is_error"] as? Bool == true { throw failure(root["result"] as? String ?? "") }
         if let structured = root["structured_output"] as? [String: Any] { return structured }
         if let text = root["result"] as? String,
            let structured = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
@@ -171,9 +188,45 @@ public struct ClaudeCLI: ClaudeRunner {
         throw LLMError.malformed
     }
 
+    /// The error for a failed request's reason, as Claude Code words it.
+    static func failure(_ message: String) -> LLMError {
+        let lowered = message.lowercased()
+        if lowered.contains("not logged in") || lowered.contains("/login") { return .notLoggedIn }
+        if usageLimitPhrases.contains(where: lowered.contains) || (lowered.contains("limit reached") && !lowered.contains("context")
+            && !lowered.contains("token")) {
+            return .limitReached
+        }
+        return .failed(message)
+    }
+
     private static func emptyDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("cantor-claude", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+/// One line of `claude mcp list`, such as "claude.ai Planning Center: https://mcp.planningcenteronline.com/mcp - ✓ Connected".
+public struct MCPServerStatus: Equatable, Sendable {
+    public var name: String
+    public var address: String
+    public var isConnected: Bool
+    public var needsAuthentication: Bool
+
+    static func parse(_ text: String) -> [MCPServerStatus] {
+        text.split(whereSeparator: \.isNewline).compactMap { line in
+            let line = String(line)
+            guard let separator = line.range(of: ": ") else { return nil }
+            let name = String(line[..<separator.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let rest = String(line[separator.upperBound...])
+            let status = rest.range(of: " - ", options: .backwards)
+            let address = String(status.map { rest[..<$0.lowerBound] } ?? rest[...]).trimmingCharacters(in: .whitespaces)
+            let state = status.map { String(rest[$0.upperBound...]).lowercased() } ?? ""
+            guard !name.isEmpty, !address.isEmpty else { return nil }
+            return MCPServerStatus(
+                name: name, address: address, isConnected: state.contains("connected") && !state.contains("failed"),
+                needsAuthentication: state.contains("auth")
+            )
+        }
     }
 }

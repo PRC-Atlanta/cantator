@@ -563,6 +563,13 @@ public struct OutputRouting: Codable, Equatable, Sendable {
     public var isSameDevice: Bool { houseDeviceUID != nil && houseDeviceUID == cueDeviceUID }
 }
 
+public enum PlanningCenterSource: String, Codable, CaseIterable, Sendable {
+    /// The Planning Center connector on the operator's Claude account, through Claude Code.
+    case connector
+    /// A Planning Center Personal Access Token, read directly.
+    case token
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var routing = OutputRouting()
     public var folders: [String] = AppSettings.defaultFolders()
@@ -575,6 +582,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Empty looks in the usual install locations.
     public var claudePath = ""
     public var llmEnabled = true
+    /// How Planning Center is read. The token is used whenever the connector can't be.
+    public var planningCenterSource = PlanningCenterSource.connector
     public var isolateSystemSound = true
     public var appearance = "dark"
     /// When Cantor started watching each folder. Only files that arrive later count as new.
@@ -593,6 +602,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         llmModel = try c.decodeIfPresent(String.self, forKey: .llmModel) ?? llmModel
         claudePath = try c.decodeIfPresent(String.self, forKey: .claudePath) ?? claudePath
         llmEnabled = try c.decodeIfPresent(Bool.self, forKey: .llmEnabled) ?? llmEnabled
+        planningCenterSource = (try? c.decodeIfPresent(PlanningCenterSource.self, forKey: .planningCenterSource)) ?? planningCenterSource
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
         watchedSince = try c.decodeIfPresent([String: Date].self, forKey: .watchedSince) ?? watchedSince

@@ -107,6 +107,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 
 ## Planning Center and AI flow
 
+0. Source: the Planning Center connector on the Claude account by default, through `claude -p` with `--tools ""`, `--allowedTools` set to `services_service_types`, `services_plans` and `services_plan_items` on that server (found with `claude mcp list`), and `--output-format stream-json`. `PlanningCenterConnector` reads the tool results out of the stream, maps items with the same code as the token client, marks a plan `syncFailed` when its items are missing or its `items_count` disagrees, and sets `attachmentsUnavailable` on playback cues so merging keeps saved filenames. The next four plans per service type. On any connector error the token client below runs instead.
 1. Fetch service types, then future plans, then items (`include=song,arrangement`) and plan times. Attachments are fetched for playback candidates only. Requests are spaced 150 ms apart, 429s honor Retry-After, and pagination follows `links.next`.
 2. Detect needs-playback by item type and keywords, with an operator override remembered per song.
 3. Match each cue: remembered aliases first (0.98), PCO attachment filename, then a string-similarity blend (token Jaccard, Jaro-Winkler, normalized Levenshtein) with a duration check.

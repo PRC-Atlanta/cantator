@@ -166,13 +166,36 @@ private struct PlanningCenterSettings: View {
     var body: some View {
         Form {
             Section {
+                Picker("Sync With", selection: Binding(
+                    get: { model.settings.planningCenterSource },
+                    set: { value in model.updateSettings { $0.planningCenterSource = value } }
+                )) {
+                    Text("Claude Connector").tag(PlanningCenterSource.connector)
+                    Text("API Token").tag(PlanningCenterSource.token)
+                }
+                .pickerStyle(.radioGroup)
+                if let source = model.lastPlanningCenterSource {
+                    LabeledContent("Last sync", value: source == .connector ? "Claude connector" : "API token")
+                }
+            } footer: {
+                Text(model.settings.planningCenterSource == .connector
+                    ? "Reads the next \(PlanningCenterConnector.plansPerType) plans of each service type through the Planning Center connector on your Claude account, using Claude Code. Claude can only use the connector's read-only Services tools, and Cantator reads the plans from the connector's own answers. Claude does see item titles and descriptions, which can include names. It can take a few minutes and counts toward your Claude usage. Attachment filenames aren't available this way, so matching keeps the ones from the last token sync. If the connector can't be used, the token below is used instead."
+                    : "Reads Planning Center directly with the token below. Claude isn't involved.")
+            }
+            Section("API Token") {
                 SecretField(title: "Application ID", key: .pcoAppID)
                 SecretField(title: "Secret", key: .pcoSecret)
-            } footer: {
                 Text("Create a Personal Access Token at api.planningcenteronline.com/oauth/applications.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing || model.show.showMode)
+                HStack {
+                    Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing || model.show.showMode)
+                    if model.isSyncing {
+                        ProgressView().controlSize(.small)
+                        Text(model.claudeWorking ?? "Syncing").foregroundStyle(.secondary)
+                    }
+                }
             } footer: {
                 if model.show.showMode { Text("Sync is off in Show Mode, because it can change the loaded cues.") }
             }
@@ -205,7 +228,7 @@ struct ClaudeSettings: View {
                     Text(model.claudeConnection.detail).foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths, notes or audio, and nothing is applied until you accept it.")
+                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths or audio, and nothing is applied until you accept it. When Planning Center syncs through the Claude connector, Claude also reads service items' titles and descriptions there.")
             }
             Section("Usage") {
                 LabeledContent("In Use") {

@@ -111,7 +111,7 @@ public actor PCOClient {
         }
 
         for (index, item) in items.enumerated() {
-            guard var cue = cue(from: item, position: index, included: included) else { continue }
+            guard var cue = Self.cue(from: item, position: index, included: included) else { continue }
             cue.needsPlayback = memory.needsOverride(for: cue) ?? PlaybackDetector.needsPlayback(cue)
             if cue.needsPlayback {
                 do {
@@ -128,9 +128,10 @@ public actor PCOClient {
         return result
     }
 
-    private func cue(from item: [String: Any], position: Int, included: [String: [String: Any]]) -> ServiceCue? {
+    /// One item as a cue. Shared with connector sync, so both give the same cue for the same item.
+    static func cue(from item: [String: Any], position: Int, included: [String: [String: Any]]) -> ServiceCue? {
         guard let id = item["id"] as? String else { return nil }
-        let attrs = attributes(item)
+        let attrs = resourceAttributes(item)
         let relationships = item["relationships"] as? [String: Any] ?? [:]
         let related = { (name: String) -> [String: Any]? in
             guard let link = (relationships[name] as? [String: Any])?["data"] as? [String: Any],
@@ -146,13 +147,17 @@ public actor PCOClient {
         return ServiceCue(
             id: id, position: attrs["sequence"] as? Int ?? position, title: attrs["title"] as? String ?? "",
             itemType: attrs["item_type"] as? String ?? "item", notes: notes,
-            arrangement: arrangement.flatMap { attributes($0)["name"] as? String } ?? "",
+            arrangement: arrangement.flatMap { resourceAttributes($0)["name"] as? String } ?? "",
             keyName: attrs["key_name"] as? String ?? "",
             songID: song?["id"] as? String, lengthSec: (length ?? 0) > 0 ? length : nil
         )
     }
 
     private nonisolated func attributes(_ resource: [String: Any]) -> [String: Any] {
+        Self.resourceAttributes(resource)
+    }
+
+    static func resourceAttributes(_ resource: [String: Any]) -> [String: Any] {
         resource["attributes"] as? [String: Any] ?? [:]
     }
 
@@ -203,7 +208,7 @@ public actor PCOClient {
         throw PCOError.rateLimited
     }
 
-    private static func date(_ value: Any?) -> Date? {
+    static func date(_ value: Any?) -> Date? {
         guard let text = value as? String else { return nil }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]

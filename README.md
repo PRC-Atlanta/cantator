@@ -45,11 +45,25 @@ Everything is in **Cantator > Settings**.
 
 While a service is loaded, Cantator moves macOS alert sounds and the default output off the house device, if that's where they are, and restores them afterward. Other apps' notifications can still make sound on other devices. Turn on Do Not Disturb before the service: macOS doesn't let apps do that.
 
-### Planning Center token
+### Planning Center
+
+Cantator reads your upcoming services in one of two ways, chosen in **Settings > Planning Center**. Sync only runs when you choose **Sync Now** or **Refresh**.
+
+**Claude connector (the default).** Cantator asks Claude Code, signed in to your Claude account, to read Planning Center through the Planning Center connector on that account.
+
+1. At claude.ai, open **Settings > Connectors** and connect **Planning Center**, allowing Services.
+2. In Terminal, run `claude auth login` so the Claude Code on this Mac uses the same account.
+3. Choose **Sync Now**.
+
+Claude may only use the connector's three read-only Services tools: service types, plans and plan items. Cantator reads the plans from the connector's own answers, not from what Claude writes, and checks each plan's item count, so a plan that comes back incomplete keeps its saved copy. Claude does see item titles and descriptions, which can include people's names. A sync reads the next four plans of every service type, can take a few minutes, and counts toward your Claude usage. Planning Center's admins are notified the first time someone connects an AI tool.
+
+The connector doesn't give attachment filenames, which help matching. Cantator keeps the ones from the last token sync.
+
+**API token (the fallback).** If the connector can't be used (Claude Code is signed out, at its usage limit, or the connector isn't connected), Cantator syncs with a token instead and says so. Choose **API Token** to always use it.
 
 1. Go to [api.planningcenteronline.com/oauth/applications](https://api.planningcenteronline.com/oauth/applications) and sign in.
 2. Under **Personal Access Tokens**, create one.
-3. In **Settings > Planning Center**, paste the Application ID and Secret, then choose **Sync Now**.
+3. In **Settings > Planning Center**, paste the Application ID and Secret.
 
 Both values are stored only in the macOS Keychain.
 
@@ -61,7 +75,7 @@ Cantator uses your Claude account, through Claude Code, for two things: filing n
 claude auth login
 ```
 
-The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantator also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status, plus a Usage section: whether Claude is in use (and if not, why and what Cantator does instead), what it is doing right now, the last request with its time and result, and how many requests Cantator has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
+The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantator also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status, plus a Usage section: whether Claude is in use (and if not, why and what Cantator does instead), what it is doing right now, the last request with its time and result, and how many requests Cantator has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths or audio, and nothing it suggests is applied until you accept it. When Planning Center syncs through the connector, Claude also reads item titles and descriptions there. Without Claude, new files are guessed from their names and matching works by name.
 
 ### Folders and new files
 
