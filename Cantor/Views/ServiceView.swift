@@ -60,8 +60,10 @@ struct ServiceView: View {
             TableColumn("Item") { cue in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(cue.title).fontWeight(cue.itemType == "header" ? .semibold : .regular).lineLimit(1)
-                    if !cue.arrangement.isEmpty {
-                        Text(cue.arrangement).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    let detail = [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
+                    if !detail.isEmpty {
+                        Text(detail.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .help(cue.notes)
                     }
                 }
             }

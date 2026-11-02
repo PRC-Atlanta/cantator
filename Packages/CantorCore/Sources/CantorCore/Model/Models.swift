@@ -495,7 +495,9 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             var merged = incoming
             merged.trackID = old.trackID
             merged.candidates = old.candidates
-            merged.needsPlayback = old.needsPlayback
+            // The notes can change between syncs. A confirmed cue keeps its row, and the operator's
+            // own choices already came in through the remembered override.
+            if old.trackID != nil { merged.needsPlayback = old.needsPlayback }
             merged.changedSinceConfirm = old.changedSinceConfirm
             if incoming.attachmentsUnavailable { merged.attachmentFilenames = old.attachmentFilenames }
             if old.trackID != nil, old.differsForPlayback(from: incoming) {

@@ -45,7 +45,7 @@ final class PlanningCenterConnectorTests: XCTestCase {
         let items900: [String: Any] = [
             "data": [
                 item("1", "Worship Time", type: "header", sequence: 1),
-                item("2", "Choir Special", sequence: 2, description: "Great Is Thy Faithfulness", songID: "55"),
+                item("2", "Choir Special", sequence: 2, description: "Choir - tracks", songID: "55"),
                 item("3", "Welcome", sequence: 3),
             ],
             "included": [["type": "Song", "id": "55", "attributes": ["title": "Great Is Thy Faithfulness"]]],
@@ -73,7 +73,7 @@ final class PlanningCenterConnectorTests: XCTestCase {
         let special = first.cues[1]
         XCTAssertTrue(special.needsPlayback)
         XCTAssertEqual(special.songID, "55")
-        XCTAssertEqual(special.notes, "Great Is Thy Faithfulness")
+        XCTAssertEqual(special.notes, "Choir - tracks")
         // Attachments come only from a token sync, so merging keeps the saved filenames.
         XCTAssertTrue(special.attachmentsUnavailable)
         XCTAssertFalse(first.cues[0].needsPlayback)

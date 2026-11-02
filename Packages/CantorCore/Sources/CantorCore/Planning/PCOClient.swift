@@ -270,20 +270,15 @@ public actor PCOClient {
 }
 
 public enum PlaybackDetector {
-    static let playbackKeywords = [
-        "choir", "special", "anthem", "track", "soloist", "solo", "offertory", "accompaniment", "satb", "playback", "duet", "trio", "quartet",
-    ]
-    static let excludedKeywords = [
-        "welcome", "sermon", "message", "prayer", "announcement", "benediction", "scripture", "offering prayer", "greeting", "dismissal",
-    ]
+    /// Words that say an item runs on a track, in English and Romanian. "Negativ" is a backing track.
+    static let trackWords = ["track", "playback", "negativ", "pista"]
 
-    /// Errs towards including an item: an extra row costs one click, a missed cue costs the moment.
+    /// The plan says which items run on tracks, in an item's notes ("Choir - tracks"). Songs the
+    /// band or choir does live ("Choir - band SOLO orange mic") have no track word, so they stay off.
     public static func needsPlayback(_ cue: ServiceCue) -> Bool {
         if cue.itemType == "header" { return false }
-        let text = [cue.title, cue.arrangement, cue.notes].joined(separator: " ").lowercased()
-        if playbackKeywords.contains(where: { text.contains($0) }) { return true }
-        if cue.itemType == "media" || cue.itemType == "song" { return true }
-        if excludedKeywords.contains(where: { cue.title.lowercased().contains($0) }) { return false }
-        return false
+        let text = [cue.title, cue.arrangement, cue.notes].joined(separator: " ")
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        return trackWords.contains { text.contains($0) }
     }
 }

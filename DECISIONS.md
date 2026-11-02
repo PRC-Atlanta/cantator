@@ -33,7 +33,7 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **Accepting a suggested service item confirms the match**: the operator is looking at it and pressing Accept, which is the confirmation the rule requires.
 - **Claude status lives in the sidebar**: always visible while preparing, hidden in Show Mode where it doesn't matter. Amber only when something needs fixing, never green, because green means LIVE. The check is `claude auth status`, which uses no account usage, and it is skipped while a cue is armed or playing.
 - **Copy to ~/Music/Cantor defaults on for Downloads and Desktop**, since those get cleaned out.
-- **Songs default to Needs Playback**: an extra row costs one click, a missed cue costs the moment. A choice is remembered per song.
+- **The plan's notes say what runs on tracks**: an item is a playback when its title, arrangement or notes have a track word (track, playback, negativ, pista), so "Choir - tracks" is one and "Choir - band SOLO orange mic" is not. Marking every song made live worship look like missing playbacks. A choice is remembered per song, and a sync updates unconfirmed items when their notes change.
 - **Scores cap at 0.97 for string and LLM matches**: 100% would read as certainty, and nothing is auto-confirmed anyway.
 - **Hardware tests are opt-in and use virtual devices only**: `swift test` alone never opens an audio device.
 - **`SelfCheck` is compiled in Debug only**: it drives the real flow with a throwaway home and virtual devices.

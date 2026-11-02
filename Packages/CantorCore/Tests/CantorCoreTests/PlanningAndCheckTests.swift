@@ -50,7 +50,7 @@ final class PCOClientTests: XCTestCase {
                     ["id": "i1", "attributes": ["title": "Welcome", "item_type": "item", "sequence": 1]],
                     ["id": "i2", "attributes": ["title": "Worship", "item_type": "header", "sequence": 2]],
                     ["id": "i3", "attributes": ["title": "Be Still", "item_type": "song", "sequence": 3, "length": 240,
-                                                "html_details": "<p>Choir starts at verse 2</p>"],
+                                                "description": "Choir - tracks", "html_details": "<p>Starts at verse 2</p>"],
                      "relationships": ["song": ["data": ["type": "Song", "id": "s9"]],
                                        "arrangement": ["data": ["type": "Arrangement", "id": "r1"]]]],
                 ],
@@ -83,7 +83,7 @@ final class PCOClientTests: XCTestCase {
         XCTAssertEqual(cue.arrangement, "Choir SATB")
         XCTAssertEqual(cue.songID, "s9")
         XCTAssertEqual(cue.lengthSec, 240)
-        XCTAssertEqual(cue.notes, "Choir starts at verse 2")
+        XCTAssertEqual(cue.notes, "Choir - tracks\nStarts at verse 2")
         XCTAssertEqual(cue.attachmentFilenames, ["Anthem_track.mp3"])
         XCTAssertNil(cue.trackID, "sync must never confirm a match")
 
@@ -154,11 +154,18 @@ final class PCOClientTests: XCTestCase {
 
 final class DetectorTests: XCTestCase {
     func testRules() {
-        XCTAssertTrue(PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: "Special Music")))
-        XCTAssertTrue(PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: "Anything", itemType: "song")))
-        XCTAssertTrue(PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: "Offertory", notes: "")))
-        XCTAssertFalse(PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: "Sermon")))
-        XCTAssertFalse(PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: "Choir", itemType: "header")))
+        let needs = { (title: String, type: String, notes: String) in
+            PlaybackDetector.needsPlayback(ServiceCue(id: "1", position: 0, title: title, itemType: type, notes: notes))
+        }
+        XCTAssertTrue(needs("Esti Viu", "song", "Choir - tracks"))
+        XCTAssertTrue(needs("Cantare", "item", "Fr Ilie Pop - negativ"))
+        XCTAssertTrue(needs("Solo", "item", "PISTĂ"))
+        // Live songs, by the band or the choir, and items with no notes.
+        XCTAssertFalse(needs("Thank You Jesus For The Blood", "song", "Choir - band SOLO orange mic"))
+        XCTAssertFalse(needs("Mai Sus De Oameni Si De-mparati", "song", ""))
+        XCTAssertFalse(needs("Fanfara", "item", "Nr. 79 - Veniți Creștini"))
+        XCTAssertFalse(needs("Sermon", "item", ""))
+        XCTAssertFalse(needs("Tracks", "header", ""))
     }
 }
 
@@ -178,6 +185,21 @@ final class PlanMergeTests: XCTestCase {
         XCTAssertEqual(merged.cues[0].trackID, cue.trackID)
         XCTAssertEqual(merged.cues[0].position, 1)
         XCTAssertTrue(merged.cues[0].changedSinceConfirm)
+    }
+
+    func testResyncFollowsTheNotesUntilConfirmed() {
+        var live = ServiceCue(id: "1", position: 0, title: "Mai Sus", itemType: "song", needsPlayback: true)
+        var confirmed = ServiceCue(id: "2", position: 1, title: "Esti Viu", itemType: "song", needsPlayback: true)
+        confirmed.trackID = UUID()
+        let fresh = plan([
+            ServiceCue(id: "1", position: 0, title: "Mai Sus", itemType: "song", needsPlayback: false),
+            ServiceCue(id: "2", position: 1, title: "Esti Viu", itemType: "song", needsPlayback: false),
+        ])
+        let merged = plan([live, confirmed]).merging(fresh: fresh)
+        XCTAssertFalse(merged.cues[0].needsPlayback)
+        XCTAssertTrue(merged.cues[1].needsPlayback)
+        live.needsPlayback = false
+        XCTAssertEqual(merged.cues[0].needsPlayback, live.needsPlayback)
     }
 
     func testSyncKeepsLoadedAndWorkedPlansOnly() {
