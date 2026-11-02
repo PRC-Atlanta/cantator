@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import AVFoundation
+import SwiftUI
 import CantorCore
 
 /// Debug-only end-to-end run, started with CANTOR_SELF_CHECK=<directory>. It walks the real flow
@@ -127,6 +128,8 @@ enum SelfCheck {
             let track = model.library.track(id: item.trackID)
             note("accepted: \(track?.title ?? "?") tags \(track?.tags ?? []), inbox \(model.inbox.items.count)")
         }
+        note("claude in use: \(model.claudeConnection.usageSummary) requests \(model.claudeRequestsThisSession)")
+        await snapshotView(ClaudeSettings().environment(model), size: NSSize(width: 560, height: 560), "settings-claude", directory)
         finish(log, directory)
     }
 
@@ -159,6 +162,19 @@ enum SelfCheck {
             return
         }
         try? FileManager.default.moveItem(at: partial, to: url)
+    }
+
+    private static func snapshotView(_ view: some View, size: NSSize, _ name: String, _ directory: URL) async {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSApp.windows.first?.effectiveAppearance
+        window.contentView = NSHostingView(rootView: view)
+        window.orderFront(nil)
+        try? await Task.sleep(for: .milliseconds(800))
+        if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+            content.cacheDisplay(in: content.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("\(name).png"))
+        }
+        window.close()
     }
 
     private static func snapshotSheet(_ name: String, _ directory: URL) async {

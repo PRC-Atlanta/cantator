@@ -8,10 +8,10 @@ struct SettingsView: View {
             OutputsSettings().tabItem { Label("Outputs", systemImage: "hifispeaker.2") }
             PlaybackSettings().tabItem { Label("Playback", systemImage: "slider.horizontal.3") }
             PlanningCenterSettings().tabItem { Label("Planning Center", systemImage: "calendar") }
-            AISettings().tabItem { Label("Claude", systemImage: "sparkle.magnifyingglass") }
+            ClaudeSettings().tabItem { Label("Claude", systemImage: "sparkle.magnifyingglass") }
             FolderSettings().tabItem { Label("Folders", systemImage: "folder") }
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 560, height: 520)
     }
 }
 
@@ -160,7 +160,7 @@ private struct PlanningCenterSettings: View {
     }
 }
 
-private struct AISettings: View {
+struct ClaudeSettings: View {
     @Environment(AppModel.self) private var model
 
     private func binding(_ path: WritableKeyPath<AppSettings, String>) -> Binding<String> {
@@ -184,7 +184,37 @@ private struct AISettings: View {
                     Text(model.claudeConnection.detail).foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths, notes or audio, and nothing is applied until you accept it. When Claude is off or signed out, new files are guessed from their names.")
+                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths, notes or audio, and nothing is applied until you accept it.")
+            }
+            Section("Usage") {
+                LabeledContent("In Use") {
+                    Label(model.claudeConnection.isConnected ? "Yes" : "No", systemImage: model.claudeConnection.isConnected ? "checkmark.circle" : "minus.circle")
+                }
+                Text(model.claudeConnection.usageSummary).foregroundStyle(.secondary)
+                LabeledContent("Right Now") {
+                    if let working = model.claudeWorking {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(working)
+                        }
+                    } else {
+                        Text("Idle")
+                    }
+                }
+                LabeledContent("Last Request") {
+                    if let use = model.lastClaudeUse {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(use.purpose), \(use.date.formatted(date: .omitted, time: .shortened))")
+                            Text(use.failure ?? "Succeeded")
+                                .font(.caption)
+                                .foregroundStyle(use.failure == nil ? Color.secondary : Theme.armed)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    } else {
+                        Text("None since Cantor opened")
+                    }
+                }
+                LabeledContent("Requests Since Opening", value: "\(model.claudeRequestsThisSession)")
             }
             Section {
                 TextField("Model", text: binding(\.llmModel), prompt: Text("Account default"))

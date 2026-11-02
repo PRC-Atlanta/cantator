@@ -254,3 +254,13 @@ final class ClaudeConnectionHintTests: XCTestCase {
         XCTAssertNil(ClaudeConnection.connected.hint)
     }
 }
+
+final class ClaudeUsageSummaryTests: XCTestCase {
+    func testSummarySaysWhetherClaudeIsUsedAndWhy() {
+        XCTAssertTrue(ClaudeConnection.connected.usageSummary.contains("filed by Claude"))
+        XCTAssertEqual(ClaudeConnection.signedOut.usageSummary, "Claude Code is signed out, so new files are guessed from their names, and matching works by name.")
+        XCTAssertTrue(ClaudeConnection.limitReached.usageSummary.hasPrefix("Your Claude usage limit"))
+        XCTAssertTrue(ClaudeConnection.off.usageSummary.contains("turned off"))
+        XCTAssertTrue(ClaudeConnection.usesAPIKey.usageSummary.contains("API key"))
+    }
+}

@@ -70,3 +70,36 @@ public enum ClaudeConnection: Equatable, Sendable {
         }
     }
 }
+
+/// One request Cantor made to Claude, for the record in Settings.
+public struct ClaudeUse: Equatable, Sendable {
+    public var date: Date
+    public var purpose: String
+    public var failure: String?
+
+    public init(date: Date = Date(), purpose: String, failure: String? = nil) {
+        self.date = date
+        self.purpose = purpose
+        self.failure = failure
+    }
+}
+
+extension ClaudeConnection {
+    /// What Claude is used for, or why it is not and what Cantor does instead.
+    public var usageSummary: String {
+        switch self {
+        case .connected: return "New files are filed by Claude, and Resolve Ambiguous asks Claude."
+        case .checking: return "Checking."
+        default: break
+        }
+        let reason = switch self {
+        case .off: "Claude is turned off"
+        case .notInstalled: "Claude Code was not found"
+        case .signedOut: "Claude Code is signed out"
+        case .usesAPIKey: "Claude Code is set up with an API key"
+        case .limitReached: "your Claude usage limit was reached"
+        default: "Claude is unavailable"
+        }
+        return "\(reason.prefix(1).uppercased() + reason.dropFirst()), so new files are guessed from their names, and matching works by name."
+    }
+}

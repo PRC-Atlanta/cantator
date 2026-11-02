@@ -29,6 +29,10 @@ final class AppModel {
     var inbox: NewFileInbox
     var isClassifying = false
     var claudeConnection = ClaudeConnection.checking
+    /// What Claude is doing right now, if anything.
+    var claudeWorking: String?
+    var lastClaudeUse: ClaudeUse?
+    var claudeRequestsThisSession = 0
     /// Set by Later. Cleared when another new file arrives or the app starts again.
     var newFilesSnoozed = false
 
@@ -477,7 +481,8 @@ final class AppModel {
             defer { isMatching = false }
             do {
                 let tiebreaker = LLMTiebreaker(runner: try await claudeAccount(), model: model)
-                let results = try await tiebreaker.resolve(cues: cues, tracks: tracks)
+                let purpose = "Ranking \(cues.count) ambiguous \(cues.count == 1 ? "match" : "matches")"
+                let results = try await usingClaude(purpose) { try await tiebreaker.resolve(cues: cues, tracks: tracks) }
                 guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
                 for cueIndex in plans[index].cues.indices {
                     if let updated = results[plans[index].cues[cueIndex].id] {
@@ -505,6 +510,21 @@ final class AppModel {
             return cli
         } catch {
             if settings.llmEnabled { claudeConnection = ClaudeConnection(error: error) }
+            throw error
+        }
+    }
+
+    /// Records a request for Settings: shown as working while it runs, then as the last use.
+    private func usingClaude<T>(_ purpose: String, _ work: () async throws -> T) async throws -> T {
+        claudeWorking = purpose
+        claudeRequestsThisSession += 1
+        defer { claudeWorking = nil }
+        do {
+            let result = try await work()
+            lastClaudeUse = ClaudeUse(purpose: purpose)
+            return result
+        } catch {
+            lastClaudeUse = ClaudeUse(purpose: purpose, failure: error.localizedDescription)
             throw error
         }
     }
@@ -692,7 +712,10 @@ final class AppModel {
             if useClaude {
                 do {
                     let classifier = FileClassifier(runner: try await claudeAccount(), model: model)
-                    suggestions = try await classifier.classify(files: facts, categories: categories, upcoming: upcoming)
+                    let purpose = "Filing \(facts.count) new \(facts.count == 1 ? "file" : "files")"
+                    suggestions = try await usingClaude(purpose) {
+                        try await classifier.classify(files: facts, categories: categories, upcoming: upcoming)
+                    }
                 } catch {
                     noteClaudeFailure(error)
                     note = error.localizedDescription
