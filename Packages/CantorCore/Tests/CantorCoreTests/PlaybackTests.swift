@@ -423,6 +423,28 @@ final class ShowControllerTests: XCTestCase {
         show.go()
     }
 
+    func testEQEditIsHeardOnThePlayingCueOnly() throws {
+        let show = controller()
+        armAndGo(show)
+        let kernel = try XCTUnwrap(house.kernel)
+        var left = [Float](repeating: 0, count: 4_800), right = left
+        let level = { () -> Float in
+            left.withUnsafeMutableBufferPointer { l in
+                right.withUnsafeMutableBufferPointer { r in kernel.render(frames: 4_800, left: l.baseAddress!, right: r.baseAddress!) }
+            }
+            return left.last ?? 0
+        }
+        _ = level()
+        let before = level()
+        var louder = TrackEQ()
+        louder.outputDb = 6
+        // Another track's edit leaves the playing cue alone.
+        show.setLiveEQ(louder, trackID: UUID())
+        XCTAssertEqual(level(), before, accuracy: 0.001)
+        show.setLiveEQ(louder, trackID: try XCTUnwrap(show.activeCue?.track?.id))
+        XCTAssertEqual(level() / before, 2, accuracy: 0.05)
+    }
+
     func testArmRefusedOutsideShowMode() {
         let show = controller()
         XCTAssertEqual(show.arm(), .notInShowMode)

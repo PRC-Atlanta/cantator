@@ -183,8 +183,39 @@ final class PlanMergeTests: XCTestCase {
         let merged = plan([cue, manual]).merging(fresh: fresh)
         XCTAssertEqual(merged.cues.count, 2)
         XCTAssertEqual(merged.cues[0].trackID, cue.trackID)
-        XCTAssertEqual(merged.cues[0].position, 1)
+        XCTAssertEqual(merged.orderedCues.map(\.id), ["1", "m"])
         XCTAssertTrue(merged.cues[0].changedSinceConfirm)
+    }
+
+    func testAddedCuesGoWhereChosen() {
+        var service = plan([
+            ServiceCue(id: "a", position: 1, title: "Welcome"),
+            ServiceCue(id: "b", position: 5, title: "Choir"),
+        ])
+        let added = { (id: String) in ServiceCue(id: id, position: 0, title: id, isManual: true) }
+        service.insert([added("x")], at: .after("a"))
+        service.insert([added("y"), added("z")], at: .start)
+        service.insert([added("w")], at: .end)
+        service.insert([added("v")], at: .after("gone"))
+        XCTAssertEqual(service.orderedCues.map(\.id), ["y", "z", "a", "x", "b", "w", "v"])
+        XCTAssertEqual(service.orderedCues.map(\.position), Array(0..<7))
+    }
+
+    func testAddedCuesKeepTheirPlaceThroughSyncs() {
+        var service = plan([
+            ServiceCue(id: "a", position: 1, title: "Welcome"),
+            ServiceCue(id: "b", position: 2, title: "Choir"),
+            ServiceCue(id: "c", position: 3, title: "Sermon"),
+        ])
+        service.insert([ServiceCue(id: "x", position: 0, title: "Added", isManual: true)], at: .after("b"))
+        service.insert([ServiceCue(id: "s", position: 0, title: "First", isManual: true)], at: .start)
+        // Planning Center adds an item before Choir and drops Sermon.
+        let fresh = plan([
+            ServiceCue(id: "a", position: 1, title: "Welcome"),
+            ServiceCue(id: "n", position: 2, title: "Reading"),
+            ServiceCue(id: "b", position: 3, title: "Choir"),
+        ])
+        XCTAssertEqual(service.merging(fresh: fresh).orderedCues.map(\.id), ["s", "a", "n", "b", "x"])
     }
 
     func testResyncFollowsTheNotesUntilConfirmed() {

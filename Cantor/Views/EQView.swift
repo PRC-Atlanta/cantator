@@ -1,45 +1,55 @@
 import CantorCore
 import SwiftUI
 
-/// The per-track EQ, in its own window so the curve has room. Edits are saved with the track and
-/// heard right away in preview. House playback picks them up the next time the cue is armed.
+/// The per-track EQ, in its own window so the curve has room.
 struct EQWindow: View {
     @Environment(AppModel.self) private var model
     let trackID: UUID
-    @State private var selected = 3
 
     var body: some View {
         if let track = model.library.track(id: trackID) {
-            let eq = track.eq ?? TrackEQ()
-            let editing = !model.show.showMode
-            VStack(spacing: 0) {
-                header(track, eq, editing)
-                EQGraph(eq: eq, selected: $selected) { change in edit(change) }
-                    .frame(minHeight: 280)
-                    .disabled(!editing)
-                BandStrip(eq: eq, selected: $selected) { index in edit { $0.bands[index].isOn.toggle() } }
-                    .disabled(!editing)
-                BandControls(eq: eq, index: selected, edit: edit)
-                    .disabled(!editing)
-            }
-            .frame(minWidth: 760, minHeight: 560)
-            .background(EQTheme.chrome)
-            .tint(EQTheme.accent)
-            .navigationTitle("EQ: \(track.title)")
+            EQEditor(trackID: trackID)
+                .frame(minWidth: 760, minHeight: 560)
+                .navigationTitle("EQ: \(track.title)")
         } else {
             ContentUnavailableView("Track Not Found", systemImage: "slider.vertical.3")
                 .frame(minWidth: 400, minHeight: 300)
         }
     }
+}
 
-    private func header(_ track: Track, _ eq: TrackEQ, _ editing: Bool) -> some View {
+/// The whole EQ: On/Bypass, Preview and Reset, the curve, the band buttons and the knobs. Used by
+/// the EQ window and under the Show view's waveform. Edits are saved with the track and heard right
+/// away, in preview and on the house cue that is armed or playing. It stays open in Show Mode, so
+/// the mix can be adjusted live.
+struct EQEditor: View {
+    @Environment(AppModel.self) private var model
+    let trackID: UUID
+    var graphMinHeight: CGFloat = 280
+    @State private var selected = 3
+
+    var body: some View {
+        if let track = model.library.track(id: trackID) {
+            let eq = track.eq ?? TrackEQ()
+            VStack(spacing: 0) {
+                header(track, eq)
+                EQGraph(eq: eq, selected: $selected) { change in edit(change) }
+                    .frame(minHeight: graphMinHeight)
+                BandStrip(eq: eq, selected: $selected) { index in edit { $0.bands[index].isOn.toggle() } }
+                BandControls(eq: eq, index: selected, edit: edit)
+            }
+            .background(EQTheme.chrome)
+            .tint(EQTheme.accent)
+        }
+    }
+
+    private func header(_ track: Track, _ eq: TrackEQ) -> some View {
         let previewing = model.cueBus.isPlaying && model.cueBus.trackID == track.id
         return HStack(spacing: 12) {
             Toggle(isOn: Binding(get: { eq.isOn }, set: { value in edit { $0.isOn = value } })) {
                 Label(eq.isOn ? "EQ On" : "Bypassed", systemImage: "power")
             }
             .toggleStyle(.button)
-            .disabled(!editing)
             .help("Compare with the track as mixed")
 
             Button {
@@ -53,11 +63,12 @@ struct EQWindow: View {
             }
 
             Spacer()
-            if model.show.showMode {
-                Label("Locked in Show Mode", systemImage: "lock.fill").foregroundStyle(.secondary)
+            if live(track) {
+                Label("Live", systemImage: "dot.radiowaves.left.and.right").foregroundStyle(Theme.live)
+                    .help("Changes are heard on the house output now, and saved for next time")
             }
-            Button("Reset") { model.updateTrack(trackID) { $0.eq = nil } }
-                .disabled(!editing || track.eq == nil)
+            Button("Reset") { model.updateTrackEQ(trackID, nil) }
+                .disabled(track.eq == nil)
                 .help("Back to the track as mixed")
         }
         .padding(.horizontal, 16)
@@ -65,14 +76,17 @@ struct EQWindow: View {
         .background(EQTheme.chrome)
     }
 
+    /// This track is the cue armed or playing on the house output.
+    private func live(_ track: Track) -> Bool {
+        model.show.state.holdsHouseEngine && model.show.activeCue?.track?.id == track.id
+    }
+
     private func edit(_ change: (inout TrackEQ) -> Void) {
-        model.updateTrack(trackID) { track in
-            var eq = track.eq ?? TrackEQ()
-            change(&eq)
-            for index in eq.bands.indices { eq.bands[index].clamp() }
-            eq.outputDb = min(max(eq.outputDb, TrackEQ.outputRange.lowerBound), TrackEQ.outputRange.upperBound)
-            track.eq = eq
-        }
+        var eq = model.library.track(id: trackID)?.eq ?? TrackEQ()
+        change(&eq)
+        for index in eq.bands.indices { eq.bands[index].clamp() }
+        eq.outputDb = min(max(eq.outputDb, TrackEQ.outputRange.lowerBound), TrackEQ.outputRange.upperBound)
+        model.updateTrackEQ(trackID, eq)
     }
 }
 

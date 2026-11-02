@@ -115,7 +115,7 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 - Turn the FREQ, Q, GAIN and OUT knobs by dragging up or down. Hold Option for fine moves, double-click to reset.
 - **Preview** plays the track on the cue output, and every change is heard right away. **EQ On** switches to bypass so you can compare. **Reset** goes back to the track as mixed.
 - Loudness matching measures the file as mixed, so use OUT to bring the level back after a big boost.
-- Editing is locked in Show Mode. A cue that is already armed or playing keeps its EQ until it is armed again.
+- Editing is locked in Show Mode, except the EQ. EQ changes are heard at once on the cue that is armed or playing, and saved with the track for next time.
 
 ## Running a service
 
@@ -124,13 +124,14 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 1. Select the service in the sidebar and choose **Refresh** to pull the latest plan. If it isn't there, use **Choose Service…**.
 2. Review each item that needs a track. Check **Needs** for items with playback, preview a candidate on your headphones, then choose **Confirm**.
 3. In Library, set each track's end point and fade. Use **Preview Ending** to hear the last 15 seconds, and **Use** to accept the suggested end.
+4. To play a track the plan doesn't list, add it from Library: **Add to Service** in the right-click menu or the track's details picks the service and the spot, or drag it onto a service in the sidebar to add it at the end. Hold the drag there for a moment and the service opens, so you can drop it on the item it should follow. **Remove from Service** in the item's details takes it out again.
 
 **Before the service**
 
 1. Choose **Load Service** to load every cue into memory.
 2. Open **Pre-Service Check** and clear everything under **Must Fix**.
 3. Plug in the Mac and keep the lid open. Closing the lid sleeps it.
-4. Press Command-L to enter Show Mode. This locks editing and enables the house transport.
+4. Press Command-Shift-L to enter Show Mode. This locks editing, except the EQ, and enables the house transport.
 
 **During the service**
 

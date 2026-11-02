@@ -441,6 +441,36 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
 
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
 
+    /// Every cue in service order.
+    public var orderedCues: [ServiceCue] { cues.sorted { $0.position < $1.position } }
+
+    public enum InsertPoint: Equatable, Sendable {
+        case start, end
+        case after(CueID)
+    }
+
+    /// Adds cues at a point in the service. An item that is gone counts as the end.
+    public mutating func insert(_ added: [ServiceCue], at point: InsertPoint) {
+        var ordered = orderedCues
+        let index: Int
+        switch point {
+        case .start: index = 0
+        case .end: index = ordered.count
+        case .after(let id): index = ordered.firstIndex { $0.id == id }.map { $0 + 1 } ?? ordered.count
+        }
+        ordered.insert(contentsOf: added, at: index)
+        cues = Self.numbered(ordered)
+    }
+
+    /// Numbers cues in the order given. Positions only order the cues, so renumbering is safe.
+    static func numbered(_ ordered: [ServiceCue]) -> [ServiceCue] {
+        ordered.enumerated().map { index, cue in
+            var cue = cue
+            cue.position = index
+            return cue
+        }
+    }
+
     public var hasOperatorWork: Bool { cues.contains { $0.trackID != nil || $0.isManual } }
 
     /// Applies a sync. A plan missing from the sync stays if it is loaded, holds operator work and is
@@ -506,12 +536,25 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             return merged
         }
         let adoptedIDs = Set(adopted.values.map(\.id))
-        result.cues += orphans.filter { !adoptedIDs.contains($0.id) }.map { orphan in
+        let removed = orphans.filter { !adoptedIDs.contains($0.id) }.map { orphan in
             var removed = orphan
             removed.removedInPCO = true
             return removed
         }
-        result.cues += cues.filter(\.isManual)
+        // Removed and added items go back after the item they followed, so a cue added by hand keeps
+        // its place. An adopted item is followed under its new id.
+        let kept = Dictionary((removed + cues.filter(\.isManual)).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let renamed = Dictionary(adopted.map { ($0.value.id, $0.key) }, uniquingKeysWith: { a, _ in a })
+        let oldOrder = orderedCues
+        var ordered = result.cues.sorted { $0.position < $1.position }
+        for (index, old) in oldOrder.enumerated() {
+            guard let cue = kept[old.id] else { continue }
+            let at = oldOrder[..<index].reversed().lazy
+                .compactMap { earlier in ordered.firstIndex { $0.id == (renamed[earlier.id] ?? earlier.id) } }
+                .first.map { $0 + 1 } ?? 0
+            ordered.insert(cue, at: at)
+        }
+        result.cues = Self.numbered(ordered)
         return result
     }
 }

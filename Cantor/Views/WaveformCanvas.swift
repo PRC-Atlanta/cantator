@@ -10,10 +10,13 @@ struct WaveformCanvas: View, Equatable {
     let endSec: Double?
     let fadeSec: Double
     let markers: [Marker]
+    var background = Theme.panel
+    var fill = Theme.waveform
+    var dimFill = Theme.waveformDim
 
     var body: some View {
         Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.panel))
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(background))
             guard durationSec > 0 else { return }
             let x = { (seconds: Double) in CGFloat(seconds / durationSec) * size.width }
             let end = endSec ?? durationSec
@@ -34,8 +37,8 @@ struct WaveformCanvas: View, Equatable {
                         dim.addRect(rect)
                     }
                 }
-                context.fill(dim, with: .color(Theme.waveformDim))
-                context.fill(active, with: .color(Theme.waveform))
+                context.fill(dim, with: .color(dimFill))
+                context.fill(active, with: .color(fill))
             }
 
             let fadeStart = max(end - fadeSec, startSec)

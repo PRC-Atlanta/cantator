@@ -87,7 +87,8 @@ private struct ShowModeMenu: View {
         Button(model.show.showMode ? "Leave Show Mode" : "Enter Show Mode") {
             model.show.setShowMode(!model.show.showMode)
         }
-        .keyboardShortcut("l", modifiers: .command)
+        // Not Command-L, which locks the screen on some Macs.
+        .keyboardShortcut("l", modifiers: [.command, .shift])
         .disabled((model.show.cues.isEmpty || model.isLoadingService) && !model.show.showMode)
     }
 }

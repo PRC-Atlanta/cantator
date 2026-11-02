@@ -31,7 +31,7 @@ struct LibraryView: View {
     }
 
     var body: some View {
-        Table(tracks, selection: $selection, sortOrder: $sortOrder) {
+        Table(of: Track.self, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Title", value: \.title) { track in
                 Text(track.title).lineLimit(1)
             }
@@ -70,9 +70,16 @@ struct LibraryView: View {
                 Text("\(track.files.count)").foregroundStyle(.secondary)
             }
             .width(40)
+        } rows: {
+            ForEach(tracks) { track in
+                // Drag onto a service in the sidebar, or onto an item in a service.
+                TableRow(track).draggable(TrackDrag.payload(track.id))
+            }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             TrackActions(ids: ids, clearSelection: { selection = [] })
+            Divider()
+            AddToServiceMenu(trackIDs: inTableOrder(ids))
         }
         .onDeleteCommand { exclude(selection) }
         .searchable(text: $search, placement: .toolbar, prompt: "Search")
@@ -110,6 +117,10 @@ struct LibraryView: View {
                 .help("Rescan your folders")
             }
         }
+    }
+
+    private func inTableOrder(_ ids: Set<UUID>) -> [UUID] {
+        tracks.map(\.id).filter(ids.contains)
     }
 
     private func exclude(_ ids: Set<UUID>) {
@@ -204,6 +215,8 @@ private struct SelectionInspector: View {
                 VStack(alignment: .leading, spacing: 8) {
                     TrackActions(ids: ids, clearSelection: clearSelection)
                         .labelStyle(.titleAndIcon)
+                    AddToServiceMenu(trackIDs: tracks.sorted { $0.title < $1.title }.map(\.id))
+                        .fixedSize()
                 }
             }
             Section("Titles") {
@@ -362,11 +375,7 @@ private struct TrackInspector: View {
                 Button(model.makingLocal.contains(track.id) ? "Copying" : "Make Local") { model.makeLocal(track) }
                     .disabled(model.makingLocal.contains(track.id))
                     .help("Copy to ~/Music/Cantor. The original stays where it is.")
-                if let plan = model.currentPlan {
-                    Button("Add to \(plan.dates.isEmpty ? plan.title : plan.dates)") {
-                        model.addManualCue(planID: plan.id, track: track)
-                    }
-                }
+                AddToServiceMenu(trackIDs: [track.id])
             }
         }
         .formStyle(.grouped)

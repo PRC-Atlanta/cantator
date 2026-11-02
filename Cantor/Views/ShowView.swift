@@ -37,7 +37,7 @@ struct ShowView: View {
                 }
                 .toggleStyle(.button)
                 .disabled((show.cues.isEmpty || model.isLoadingService) && !show.showMode)
-                .help("Show Mode enables the house transport and locks editing (Command-L)")
+                .help("Show Mode enables the house transport and locks editing (Command-Shift-L)")
 
                 if model.loadedPlanID != nil {
                     Button("Unload") { model.unloadService() }
@@ -66,6 +66,17 @@ private struct StateBar: View {
                 .font(.system(size: 22, weight: .semibold))
                 .lineLimit(1)
             Spacer()
+            if let cue = show.activeCue ?? show.pointedCue, let track = cue.track {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("REMAINING").font(.system(size: 10, weight: .semibold)).opacity(0.7)
+                    Text(TimeText.tenths(CurrentCuePanel.remaining(track, show: show)))
+                        .font(.system(size: 44, weight: .medium, design: .monospaced))
+                        .foregroundStyle(style.color == nil ? Color.primary : .black)
+                        .contentTransition(.identity)
+                        .monospacedDigit()
+                }
+                .accessibilityElement(children: .combine)
+            }
             if activeState != .key, show.state.holdsHouseEngine {
                 Label("KEYS NOT FOCUSED", systemImage: "keyboard.badge.ellipsis")
                     .font(.system(size: 15, weight: .bold))
@@ -84,7 +95,8 @@ private struct StateBar: View {
         .foregroundStyle(foreground)
         .padding(.horizontal, 20)
         .frame(height: 76)
-        .background(style.color ?? Theme.panel)
+        .background(style.color ?? EQTheme.chrome)
+        .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .combine)
     }
 }
@@ -171,33 +183,26 @@ private struct CurrentCuePanel: View {
 
     var body: some View {
         let show = model.show
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             if let cue, let track = cue.track {
                 ShowWaveform(track: track)
+                    .frame(height: 110)
+                    .f6Panel()
+                // The track's EQ in full. Edits apply the next time the cue is armed; Show Mode locks it.
+                EQEditor(trackID: track.id, graphMinHeight: 120)
                     .frame(maxHeight: .infinity)
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("REMAINING").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                        Text(TimeText.tenths(remaining(track)))
-                            .font(.system(size: 76, weight: .medium, design: .monospaced))
-                            .foregroundStyle(StateStyle(show.state).color ?? .primary)
-                            .contentTransition(.identity)
-                            .monospacedDigit()
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                    F6Readout("FADE", "\(String(format: "%.1f", track.fadeOutSec)) s")
+                    F6Readout("GAIN", TimeText.decibels(cue.gainDb))
+                    F6Readout("END", track.endSec == nil ? "file end" : TimeText.tenths(track.endSec ?? 0))
+                    if let resume = show.resumeSec, show.state != .idle || show.pointedCue?.id == cue.id {
+                        F6Readout("STARTS AT", TimeText.tenths(resume), color: Theme.armed)
                     }
                     Spacer()
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text("Fade \(String(format: "%.1f", track.fadeOutSec)) s")
-                        Text("Gain \(TimeText.decibels(cue.gainDb))")
-                        if let resume = show.resumeSec, show.state != .idle || show.pointedCue?.id == cue.id {
-                            Text("Starts at \(TimeText.tenths(resume))").foregroundStyle(Theme.armed)
-                        }
-                        Text(track.endSec == nil ? "End: file end" : "End: \(TimeText.tenths(track.endSec ?? 0))")
-                    }
-                    .font(.system(size: 14, design: .monospaced))
-                    .foregroundStyle(.secondary)
                 }
                 if !cue.notes.isEmpty {
-                    Text(cue.notes).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(cue.notes).font(.system(size: 14)).foregroundStyle(EQTheme.label).lineLimit(2)
                 }
             } else {
                 Spacer()
@@ -211,12 +216,44 @@ private struct CurrentCuePanel: View {
             }
         }
         .padding(18)
+        .background(EQTheme.chrome)
+        // The F6 palette is always dark, like the EQ window.
+        .environment(\.colorScheme, .dark)
     }
 
-    private func remaining(_ track: Track) -> Double {
-        let show = model.show
+    /// What is left of the cue: live while it plays, otherwise from its start to its end.
+    static func remaining(_ track: Track, show: ShowController) -> Double {
         if show.state.holdsHouseEngine { return show.remainingSec }
         return (track.endSec ?? track.durationSec) - track.startSec
+    }
+}
+
+/// A label over a value, as under the F6's knobs.
+private struct F6Readout: View {
+    let title: String
+    let value: String
+    var color = EQTheme.passes
+
+    init(_ title: String, _ value: String, color: Color = EQTheme.passes) {
+        self.title = title
+        self.value = value
+        self.color = color
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.white.opacity(0.75))
+            Text(value).font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundStyle(color)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private extension View {
+    /// The F6's slate panel behind the waveform.
+    func f6Panel() -> some View {
+        background(LinearGradient(colors: [EQTheme.graphTop, EQTheme.graphBottom], startPoint: .top, endPoint: .bottom))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -318,7 +355,7 @@ private struct KeyLegend: View {
 
     private static let items = [
         ("A", "Arm"), ("Space", "GO"), ("F", "End fade"), ("P", "Hold"), ("Esc", "Panic"), ("Esc Esc", "Hard stop"),
-        ("M", "Marker"), ("[ ]", "Move end"), ("H", "Phones next"), ("D", "Disarm"), ("Cmd-L", "Show Mode"),
+        ("M", "Marker"), ("[ ]", "Move end"), ("H", "Phones next"), ("D", "Disarm"), ("Cmd-Shift-L", "Show Mode"),
     ]
 }
 
@@ -368,7 +405,8 @@ private struct ShowWaveform: View {
         let live = show.state.cueID == show.activeCue?.id && show.state.holdsHouseEngine
         WaveformCanvas(
             peaks: model.peaks(for: track.id), durationSec: track.durationSec, startSec: track.startSec,
-            endSec: live ? show.endSec : track.endSec, fadeSec: track.fadeOutSec, markers: track.markers
+            endSec: live ? show.endSec : track.endSec, fadeSec: track.fadeOutSec, markers: track.markers,
+            background: .clear, fill: Color.white.opacity(0.62), dimFill: Color.white.opacity(0.18)
         )
         .overlay {
             GeometryReader { geometry in

@@ -106,6 +106,7 @@ private struct SidebarView: View {
                                 Text(plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
+                        .acceptsTracks(open: { selection = .plan(plan.id) }) { model.addTracks($0, to: plan.id, at: .end) }
                     }
                     if model.sidebarPlans.isEmpty {
                         Text(model.plans.isEmpty ? "None synced" : "None of the shown types")

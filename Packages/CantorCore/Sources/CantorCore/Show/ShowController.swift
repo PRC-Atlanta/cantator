@@ -191,6 +191,14 @@ public final class ShowController {
         return nil
     }
 
+    /// An EQ edit heard right away on the armed or playing cue when it is that track. The cue list
+    /// itself catches up once nothing is engaged, so the next arm plays the edit too.
+    public func setLiveEQ(_ eq: TrackEQ?, trackID: UUID) {
+        guard state.holdsHouseEngine, activeCue?.track?.id == trackID, let kernel else { return }
+        kernel.setEQ(EQCoefficients(eq, sampleRate: kernel.buffer.sampleRate))
+        log?.record("eq", cue: activeCue?.title ?? "")
+    }
+
     /// Also forgets a kept position, so disarm then arm starts the cue from the top. With nothing
     /// armed, it clears the mid-track start shown on the cue.
     public func disarm() {

@@ -418,6 +418,19 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// The one track edit allowed in Show Mode, so the operator can adjust the mix as it plays. The
+    /// playing cue and preview hear it at once. It is saved with the track like any edit; while a
+    /// cue is engaged the save waits, as every save does, and lands once the cue stops.
+    func updateTrackEQ(_ id: UUID, _ eq: TrackEQ?) {
+        library.update(id: id) { $0.eq = eq }
+        if cueBus.trackID == id, let kernel = cueBus.kernel {
+            kernel.setEQ(EQCoefficients(eq, sampleRate: kernel.buffer.sampleRate))
+        }
+        show.setLiveEQ(eq, trackID: id)
+        markCuesChanged()
+        scheduleSave()
+    }
+
     func makeLocal(_ track: Track) {
         guard !makingLocal.contains(track.id) else { return }
         makingLocal.insert(track.id)
@@ -794,14 +807,25 @@ final class AppModel {
         scheduleSave()
     }
 
-    func addManualCue(planID: String, track: Track) {
-        guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
-        var cue = ServiceCue(
-            id: "manual-\(UUID().uuidString)", position: (plans[index].cues.map(\.position).max() ?? 0) + 1,
-            title: track.title, isManual: true
-        )
-        cue.trackID = track.id
-        plans[index].cues.append(cue)
+    /// Adds library tracks to a service as items of their own, already confirmed. Locked in Show Mode
+    /// like every other edit.
+    func addTracks(_ trackIDs: [UUID], to planID: String, at point: ServicePlan.InsertPoint) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }) else { return }
+        let cues = trackIDs.compactMap { library.track(id: $0) }.map { track in
+            var cue = ServiceCue(id: "manual-\(UUID().uuidString)", position: 0, title: track.title, isManual: true)
+            cue.trackID = track.id
+            return cue
+        }
+        guard !cues.isEmpty else { return }
+        plans[index].insert(cues, at: point)
+        markCuesChanged()
+        scheduleSave()
+    }
+
+    /// Only items added by hand can be removed. Planning Center owns the rest.
+    func removeManualCue(planID: String, cueID: CueID) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }) else { return }
+        plans[index].cues.removeAll { $0.id == cueID && $0.isManual }
         markCuesChanged()
         scheduleSave()
     }

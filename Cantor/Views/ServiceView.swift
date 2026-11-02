@@ -56,11 +56,13 @@ struct ServiceView: View {
     }
 
     private func table(_ plan: ServicePlan) -> some View {
-        Table(plan.cues.sorted { $0.position < $1.position }, selection: $selectedCue) {
+        Table(of: ServiceCue.self, selection: $selectedCue) {
             TableColumn("Item") { cue in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(cue.title).fontWeight(cue.itemType == "header" ? .semibold : .regular).lineLimit(1)
-                    let detail = [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
+                    let detail = cue.isManual
+                        ? ["Added in Cantator"]
+                        : [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
                     if !detail.isEmpty {
                         Text(detail.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             .help(cue.notes)
@@ -101,6 +103,13 @@ struct ServiceView: View {
                 if cue.needsPlayback { StateChip(cue: cue) }
             }
             .width(min: 90, ideal: 110)
+        } rows: {
+            ForEach(plan.orderedCues) { cue in
+                // Library tracks dropped on an item go right after it.
+                TableRow(cue).dropDestination(for: String.self) { items in
+                    model.addTracks(TrackDrag.trackIDs(items), to: plan.id, at: .after(cue.id))
+                }
+            }
         }
     }
 
@@ -151,7 +160,12 @@ private struct CueInspector: View {
                     Section("Confirmed") {
                         LabeledContent("File", value: track.primaryFilename)
                         Button("Preview on Cue Output") { model.audition(track) }
-                        Button("Clear Match") { model.clearMatch(planID: plan.id, cue: cue) }
+                        if cue.isManual {
+                            Button("Remove from Service") { model.removeManualCue(planID: plan.id, cueID: cue.id) }
+                                .disabled(model.show.showMode)
+                        } else {
+                            Button("Clear Match") { model.clearMatch(planID: plan.id, cue: cue) }
+                        }
                     }
                 }
                 Section("Candidates") {
