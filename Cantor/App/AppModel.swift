@@ -435,8 +435,12 @@ final class AppModel {
     }
 
     func runAIMatch(planID: String) {
-        guard settings.llmEnabled, let key = Keychain.read(.anthropicAPIKey) else {
-            alert = "Add a Claude API key in Settings to use AI matching. String matching still works without one."
+        guard settings.llmEnabled else {
+            alert = "AI matching is turned off in Settings. Matching by name still works."
+            return
+        }
+        guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
+            alert = LLMError.notInstalled.localizedDescription
             return
         }
         guard let planIndex = plans.firstIndex(where: { $0.id == planID }), !isMatching else { return }
@@ -447,10 +451,14 @@ final class AppModel {
         }
         isMatching = true
         let tracks = Dictionary(library.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let tiebreaker = LLMTiebreaker(apiKey: key, model: settings.llmModel)
+        let cli = ClaudeCLI(path: path)
+        let tiebreaker = LLMTiebreaker(runner: cli, model: settings.llmModel)
         Task {
             defer { isMatching = false }
             do {
+                let account = try await cli.accountStatus()
+                guard account.isLoggedIn else { throw LLMError.notLoggedIn }
+                guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
                 let results = try await tiebreaker.resolve(cues: cues, tracks: tracks)
                 guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
                 for cueIndex in plans[index].cues.indices {
@@ -462,6 +470,21 @@ final class AppModel {
             } catch {
                 alert = error.localizedDescription
             }
+        }
+    }
+
+    /// One line for Settings saying whether AI matching can use the Claude account.
+    func claudeAccountSummary() async -> String {
+        guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
+            return LLMError.notInstalled.localizedDescription
+        }
+        do {
+            let account = try await ClaudeCLI(path: path).accountStatus()
+            if !account.isLoggedIn { return LLMError.notLoggedIn.localizedDescription }
+            if account.usesAPIKey { return LLMError.usesAPIKey.localizedDescription }
+            return "Signed in to your Claude account."
+        } catch {
+            return error.localizedDescription
         }
     }
 

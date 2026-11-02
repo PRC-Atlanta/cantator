@@ -162,6 +162,11 @@ private struct PlanningCenterSettings: View {
 
 private struct AISettings: View {
     @Environment(AppModel.self) private var model
+    @State private var accountSummary = "Checking"
+
+    private func binding(_ path: WritableKeyPath<AppSettings, String>) -> Binding<String> {
+        Binding(get: { model.settings[keyPath: path] }, set: { value in model.updateSettings { $0[keyPath: path] = value } })
+    }
 
     var body: some View {
         Form {
@@ -170,16 +175,26 @@ private struct AISettings: View {
                     get: { model.settings.llmEnabled },
                     set: { value in model.updateSettings { $0.llmEnabled = value } }
                 ))
-                SecretField(title: "API Key", key: .anthropicAPIKey)
-                TextField("Model", text: Binding(
-                    get: { model.settings.llmModel },
-                    set: { value in model.updateSettings { $0.llmModel = value } }
-                ))
+                LabeledContent("Claude Account") {
+                    HStack {
+                        Text(accountSummary).multilineTextAlignment(.trailing)
+                        Button("Check") { Task { await refresh() } }
+                    }
+                }
             } footer: {
-                Text("Sends item titles, arrangement names, filenames and durations only. Every match still needs your confirmation.")
+                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Sends item titles, arrangement names, filenames and durations only. Every match still needs your confirmation.")
+            }
+            Section {
+                TextField("Model", text: binding(\.llmModel), prompt: Text("Account default"))
+                TextField("Claude Code Path", text: binding(\.claudePath), prompt: Text("Found automatically"))
             }
         }
         .formStyle(.grouped)
+        .task { await refresh() }
+    }
+
+    private func refresh() async {
+        accountSummary = await model.claudeAccountSummary()
     }
 }
 

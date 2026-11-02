@@ -95,7 +95,6 @@ public enum Keychain {
     public enum Key: String, CaseIterable, Sendable {
         case pcoAppID = "pco-app-id"
         case pcoSecret = "pco-secret"
-        case anthropicAPIKey = "anthropic-api-key"
     }
 
     static let service = "org.prcatlanta.Cantor"

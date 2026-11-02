@@ -55,7 +55,13 @@ Both values are stored only in the macOS Keychain.
 
 ### AI matching (optional)
 
-Matching works without AI. To have Claude rank ambiguous matches, paste an Anthropic API key in **Settings > AI Matching**. Cantor sends item titles, arrangement names, filenames and durations only, which can include a soloist's name if it's in the title or filename. You confirm every match either way.
+Matching works without AI. To have Claude rank ambiguous matches, install [Claude Code](https://code.claude.com/docs) and sign in with your Claude account, then choose **Resolve Ambiguous** in the Service view:
+
+```bash
+claude auth login
+```
+
+**Settings > AI Matching** shows whether Cantor can see the sign-in. No API key is involved, and requests count toward your Claude account's usage. Cantor sends item titles, arrangement names, filenames and durations only, which can include a soloist's name if it's in the title or filename. You confirm every match either way.
 
 ### Folders
 

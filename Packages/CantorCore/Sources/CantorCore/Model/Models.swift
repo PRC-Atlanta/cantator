@@ -344,7 +344,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultFadeOutSec = 3.0
     public var targetLUFS = -18.0
     public var normalize = true
-    public var llmModel = "claude-opus-5-5"
+    /// Empty uses the Claude account's default model.
+    public var llmModel = ""
+    /// Empty looks in the usual install locations.
+    public var claudePath = ""
     public var llmEnabled = true
     public var isolateSystemSound = true
     public var appearance = "dark"
@@ -360,6 +363,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         targetLUFS = try c.decodeIfPresent(Double.self, forKey: .targetLUFS) ?? targetLUFS
         normalize = try c.decodeIfPresent(Bool.self, forKey: .normalize) ?? normalize
         llmModel = try c.decodeIfPresent(String.self, forKey: .llmModel) ?? llmModel
+        claudePath = try c.decodeIfPresent(String.self, forKey: .claudePath) ?? claudePath
         llmEnabled = try c.decodeIfPresent(Bool.self, forKey: .llmEnabled) ?? llmEnabled
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance

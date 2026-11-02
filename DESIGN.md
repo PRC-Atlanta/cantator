@@ -109,7 +109,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 1. Fetch service types, then future plans, then items (`include=song,arrangement`) and plan times. Attachments are fetched for playback candidates only. Requests are spaced 150 ms apart, 429s honor Retry-After, and pagination follows `links.next`.
 2. Detect needs-playback by item type and keywords, with an operator override remembered per song.
 3. Match each cue: remembered aliases first (0.98), PCO attachment filename, then a string-similarity blend (token Jaccard, Jaro-Winkler, normalized Levenshtein) with a duration check.
-4. Items in the ambiguous band (top 0.45 to 0.85, or a margin under 0.08) go to the LLM in one batch: item titles, arrangement names, candidate filenames and durations only. No paths, no audio, no names of people or the church. The result blends 0.6 string, 0.4 LLM.
+4. On request, items in the ambiguous band (top 0.45 to 0.85, or a margin under 0.08) go to Claude in one batch: item titles, arrangement names, candidate filenames and durations only. No paths, no notes, no audio. The call runs the operator's installed Claude Code headlessly, using its signed-in Claude account, with no tools, settings or MCP servers. The result blends 0.6 string, 0.4 Claude.
 5. Everything needs operator confirmation. Nothing is auto-confirmed, at any confidence.
 6. Everything is snapshotted to disk. The Show view reads only snapshots and RAM. A resync that changes a confirmed item flags it rather than dropping it.
 

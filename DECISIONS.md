@@ -17,8 +17,10 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **A manual fade that would run past the end marker is shortened to land on it.**
 - **Fade curve**: equal-power cosine. It sounds even and reaches exact silence.
 - **Suggested end = last point above -50 dBFS, and it is not automatically saved**: the operator has to accept it, because "has an end point" should mean a person checked it.
-- **LLM provider**: Anthropic Claude over plain HTTPS, because no official Swift SDK exists. Optional. Without a key, string matching still works.
-- **LLM model**: `claude-opus-5-5` at low effort, changeable in Settings. Server-side refusal fallback is on (`fallbacks: "default"`).
+- **AI uses the operator's Claude account, not an API key**: Cantor runs their installed, unmodified Claude Code (`claude -p`) with its existing login. API variables are removed from its environment, and a Claude Code set up with an API key is refused. Optional: name matching works without it.
+- **This is for the owner's own use**: Anthropic's terms say products built for other people should use API keys and may not route requests through subscription credentials on users' behalf. If Cantor is ever given to anyone else, this part has to change.
+- **Claude Code call**: no tools, no settings, no MCP servers, no saved session, low effort, from an empty folder, with the prompt on stdin. `--bare` is not used because it skips the account login.
+- **Model**: blank uses the account's default, changeable in Settings.
 - **Songs default to Needs Playback**: an extra row costs one click, a missed cue costs the moment. A choice is remembered per song.
 - **Scores cap at 0.97 for string and LLM matches**: 100% would read as certainty, and nothing is auto-confirmed anyway.
 - **Hardware tests are opt-in and use virtual devices only**: `swift test` alone never opens an audio device.

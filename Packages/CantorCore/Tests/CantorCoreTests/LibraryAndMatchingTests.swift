@@ -402,6 +402,11 @@ final class MatcherTests: XCTestCase {
 }
 
 final class LLMTiebreakerTests: XCTestCase {
+    struct FakeRunner: ClaudeRunner {
+        var output: String
+        func run(system: String, prompt: String, schema: String, model: String) async throws -> Data { Data(output.utf8) }
+    }
+
     private func cue() -> (ServiceCue, [UUID: Track]) {
         let a = Track(contentID: "a", files: [TrackFile(path: "/Users/someone/Drive/Pat Smith/one.mp3", locality: .local)], title: "One", durationSec: 200)
         let b = Track(contentID: "b", files: [TrackFile(path: "/Users/someone/two.mp3", locality: .local)], title: "Two", durationSec: 210)
@@ -413,37 +418,45 @@ final class LLMTiebreakerTests: XCTestCase {
         return (cue, [a.id: a, b.id: b])
     }
 
-    func testRequestContainsNoPathsOrNotes() throws {
+    func testPromptContainsNoPathsOrNotes() throws {
         let (cue, tracks) = cue()
-        let body = String(decoding: try LLMTiebreaker.requestBody(model: "m", cues: [cue], tracks: tracks), as: UTF8.self)
-        XCTAssertFalse(body.contains("/Users"))
-        XCTAssertFalse(body.contains("Pat Smith"))
-        XCTAssertTrue(body.contains("one.mp3"))
+        let prompt = try LLMTiebreaker.prompt(cues: [cue], tracks: tracks)
+        XCTAssertFalse(prompt.contains("/Users"))
+        XCTAssertFalse(prompt.contains("Pat Smith"))
+        XCTAssertTrue(prompt.contains("one.mp3"))
     }
 
-    func testRequestShape() throws {
-        let (cue, tracks) = cue()
-        let body = try JSONSerialization.jsonObject(with: LLMTiebreaker.requestBody(model: "claude-opus-5-5", cues: [cue], tracks: tracks)) as! [String: Any]
-        XCTAssertEqual(body["model"] as? String, "claude-opus-5-5")
-        XCTAssertNil(body["thinking"])
-        XCTAssertNil(body["temperature"])
-        let config = body["output_config"] as! [String: Any]
-        XCTAssertEqual(config["effort"] as? String, "low")
-        XCTAssertEqual((config["format"] as! [String: Any])["type"] as? String, "json_schema")
+    func testSchemaIsValidJSON() throws {
+        XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(LLMTiebreaker.schema.utf8)))
     }
 
-    func testParsesResponse() throws {
-        let text = #"{\"results\":[{\"item_id\":\"9\",\"chosen_index\":1,\"confidence\":0.9,\"reason\":\"same song\"},{\"item_id\":\"8\",\"chosen_index\":null,\"confidence\":0.1,\"reason\":\"none\"}]}"#
-        let data = Data(#"{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":""},{"type":"text","text":"\#(text)"}]}"#.utf8)
-        let verdicts = try LLMTiebreaker.parse(data)
+    func testReadsStructuredOutput() throws {
+        let output = #"{"type":"result","is_error":false,"result":"","structured_output":{"results":[{"item_id":"9","chosen_index":1,"confidence":0.9,"reason":"same song"},{"item_id":"8","chosen_index":null,"confidence":0.1,"reason":"none"}]}}"#
+        let verdicts = try LLMTiebreaker.parse(Data(output.utf8))
         XCTAssertEqual(verdicts.count, 2)
         XCTAssertEqual(verdicts[0].chosenIndex, 1)
         XCTAssertNil(verdicts[1].chosenIndex)
     }
 
-    func testRefusalIsAnError() {
-        XCTAssertThrowsError(try LLMTiebreaker.parse(Data(#"{"stop_reason":"refusal","content":[]}"#.utf8))) {
-            XCTAssertEqual($0 as? LLMError, .refused)
+    func testResolveReordersThroughRunner() async throws {
+        let (cue, tracks) = cue()
+        let output = #"{"is_error":false,"structured_output":{"results":[{"item_id":"9","chosen_index":1,"confidence":1,"reason":"same"}]}}"#
+        let result = try await LLMTiebreaker(runner: FakeRunner(output: output)).resolve(cues: [cue], tracks: tracks)
+        XCTAssertEqual(result["9"]?.first?.trackID, cue.candidates[1].trackID)
+    }
+
+    func testSignedOutIsReported() {
+        // The exact output Claude Code printed when signed out.
+        let output = #"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}"#
+        XCTAssertThrowsError(try LLMTiebreaker.parse(Data(output.utf8))) {
+            XCTAssertEqual($0 as? LLMError, .notLoggedIn)
+        }
+    }
+
+    func testUsageLimitIsReported() {
+        let output = #"{"is_error":true,"result":"You've hit your usage limit"}"#
+        XCTAssertThrowsError(try LLMTiebreaker.parse(Data(output.utf8))) {
+            XCTAssertEqual($0 as? LLMError, .limitReached)
         }
     }
 
@@ -462,5 +475,83 @@ final class LLMTiebreakerTests: XCTestCase {
         let (cue, _) = cue()
         let blended = LLMTiebreaker.blend(candidates: cue.candidates, verdict: .init(cueID: "9", chosenIndex: nil, confidence: 0.9, reason: ""))
         XCTAssertLessThan(blended[0].score, cue.candidates[0].score)
+    }
+}
+
+final class ClaudeCLITests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    /// A stand-in for the claude binary. It records what it was given.
+    private func script(_ body: String) throws -> String {
+        let url = directory.appendingPathComponent("claude")
+        try ("#!/bin/sh\n" + body + "\n").write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url.path
+    }
+
+    func testArgumentsDisableToolsAndNeverUseBareMode() {
+        let arguments = ClaudeCLI.arguments(system: "s", schema: "{}", model: "")
+        let tools = try! XCTUnwrap(arguments.firstIndex(of: "--tools"))
+        XCTAssertEqual(arguments[tools + 1], "")
+        XCTAssertTrue(arguments.contains("--strict-mcp-config"))
+        XCTAssertTrue(arguments.contains("--no-session-persistence"))
+        XCTAssertFalse(arguments.contains("--bare"), "bare mode skips the account login")
+        XCTAssertFalse(arguments.contains("--model"))
+        XCTAssertTrue(ClaudeCLI.arguments(system: "s", schema: "{}", model: "sonnet").contains("sonnet"))
+    }
+
+    func testAPICredentialsAreRemoved() {
+        let environment = ClaudeCLI.environment(from: ["ANTHROPIC_API_KEY": "x", "ANTHROPIC_AUTH_TOKEN": "y", "ANTHROPIC_BASE_URL": "z", "HOME": "/h"])
+        XCTAssertEqual(environment, ["HOME": "/h"])
+    }
+
+    func testRunsProcessWithPromptOnStdin() async throws {
+        let log = directory.appendingPathComponent("stdin.txt").path
+        let path = try script(#"cat > "\#(log)"; echo '{"is_error":false}'"#)
+        let output = try await ClaudeCLI(path: path).run(system: "s", prompt: "hello", schema: "{}", model: "")
+        XCTAssertEqual(String(decoding: output, as: UTF8.self), "{\"is_error\":false}\n")
+        XCTAssertEqual(try String(contentsOfFile: log, encoding: .utf8), "hello")
+    }
+
+    func testFailureOutputIsStillReturnedForTheReason() async throws {
+        let path = try script(#"echo '{"is_error":true,"result":"Not logged in"}'; exit 1"#)
+        let output = try await ClaudeCLI(path: path).run(system: "s", prompt: "", schema: "{}", model: "")
+        XCTAssertThrowsError(try LLMTiebreaker.parse(output))
+    }
+
+    func testProcessThatExitsWithoutReadingDoesNotKillTheApp() async throws {
+        let path = try script("exit 3")
+        do {
+            _ = try await ClaudeCLI(path: path).run(system: "s", prompt: String(repeating: "x", count: 200_000), schema: "{}", model: "")
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? LLMError, .failed("Claude Code exited with status 3."))
+        }
+    }
+
+    func testMissingBinary() async {
+        do {
+            _ = try await ClaudeCLI(path: "/no/such/claude").run(system: "", prompt: "", schema: "{}", model: "")
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? LLMError, .notInstalled)
+        }
+    }
+
+    func testAccountStatusRefusesAPIKey() async throws {
+        let path = try script(#"echo '{"loggedIn":true,"authMethod":"apiKey"}'"#)
+        let status = try await ClaudeCLI(path: path).accountStatus()
+        XCTAssertTrue(status.isLoggedIn)
+        XCTAssertTrue(status.usesAPIKey)
+        XCTAssertFalse(ClaudeAccountStatus(isLoggedIn: true, authMethod: "claude.ai").usesAPIKey)
     }
 }
