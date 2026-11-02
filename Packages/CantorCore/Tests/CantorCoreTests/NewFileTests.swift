@@ -224,3 +224,33 @@ final class FileClassifierTests: XCTestCase {
         XCTAssertEqual(AudioTags.clean(["title": " Be Still ", "genre": "", "approximate duration in seconds": "241", "artist": 5]), ["title": "Be Still"])
     }
 }
+
+final class ClaudeConnectionTests: XCTestCase {
+    func testErrorsMapToWhatTheOperatorCanFix() {
+        XCTAssertEqual(ClaudeConnection(error: LLMError.notLoggedIn), .signedOut)
+        XCTAssertEqual(ClaudeConnection(error: LLMError.notInstalled), .notInstalled)
+        XCTAssertEqual(ClaudeConnection(error: LLMError.usesAPIKey), .usesAPIKey)
+        XCTAssertEqual(ClaudeConnection(error: LLMError.limitReached), .limitReached)
+        XCTAssertEqual(ClaudeConnection(error: LLMError.timedOut), .unavailable(LLMError.timedOut.localizedDescription))
+        XCTAssertEqual(ClaudeConnection(error: CocoaError(.fileNoSuchFile)), .unavailable(CocoaError(.fileNoSuchFile).localizedDescription))
+    }
+
+    func testOnlyFixableStatesAskForAttention() {
+        XCTAssertFalse(ClaudeConnection.connected.needsAttention)
+        XCTAssertFalse(ClaudeConnection.off.needsAttention)
+        XCTAssertFalse(ClaudeConnection.checking.needsAttention)
+        XCTAssertTrue(ClaudeConnection.signedOut.needsAttention)
+        XCTAssertTrue(ClaudeConnection.signedOut.detail.contains("claude auth login"))
+        XCTAssertTrue(ClaudeConnection.connected.isConnected)
+    }
+}
+
+final class ClaudeConnectionHintTests: XCTestCase {
+    func testEveryProblemHasAShortHint() {
+        let problems: [ClaudeConnection] = [.notInstalled, .signedOut, .usesAPIKey, .limitReached, .unavailable("x")]
+        for problem in problems {
+            XCTAssertLessThanOrEqual(problem.hint?.count ?? 99, 36, "\(problem)")
+        }
+        XCTAssertNil(ClaudeConnection.connected.hint)
+    }
+}

@@ -30,8 +30,14 @@ enum SelfCheck {
         for cue in plan.playbackCues {
             note("rank \(cue.title): \(model.plans[0].cues.first { $0.id == cue.id }?.candidates.first?.score ?? 0) \(MatchBand(candidates: model.plans[0].cues.first { $0.id == cue.id }?.candidates ?? []).rawValue)")
         }
+        await waitUntil { model.claudeConnection != .checking }
+        note("claude status: \(model.claudeConnection.title)")
         model.selection = .plan(plan.id)
         await snapshot("service", directory)
+        // Leaves time for an outside window capture, which can draw the sidebar.
+        if let hold = ProcessInfo.processInfo.environment["CANTOR_SELF_CHECK_HOLD"].flatMap(Double.init) {
+            try? await Task.sleep(for: .seconds(hold))
+        }
 
         model.selection = .check
         await snapshot("check-before", directory)

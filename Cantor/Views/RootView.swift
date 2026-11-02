@@ -106,6 +106,9 @@ private struct SidebarView: View {
                 row("Not Downloaded", "icloud", .notDownloaded, library.tracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)
                 row("Duplicates", "square.on.square", .duplicates, library.duplicateGroups.count)
             }
+            Section("Claude") {
+                ClaudeStatusRow()
+            }
         }
         .listStyle(.sidebar)
     }
@@ -114,5 +117,60 @@ private struct SidebarView: View {
         Label(title, systemImage: symbol)
             .badge(count)
             .tag(SidebarItem.library(filter))
+    }
+}
+
+/// Claude status in the sidebar, whenever the sidebar is open. Click to check again.
+private struct ClaudeStatusRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let connection = model.claudeConnection
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                ClaudeStatusLabel(connection: connection)
+                Spacer()
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Claude settings")
+            }
+            if let hint = connection.hint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.refreshClaudeConnection() }
+        .help("\(connection.detail) Click to check again.")
+    }
+}
+
+/// Color only when something needs fixing. Green is kept for LIVE.
+struct ClaudeStatusLabel: View {
+    let connection: ClaudeConnection
+
+    var body: some View {
+        Label {
+            Text(connection.title)
+        } icon: {
+            if connection == .checking {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: symbol).foregroundStyle(connection.needsAttention ? Theme.armed : .secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var symbol: String {
+        switch connection {
+        case .connected: "checkmark.circle"
+        case .off: "minus.circle"
+        default: "exclamationmark.triangle"
+        }
     }
 }

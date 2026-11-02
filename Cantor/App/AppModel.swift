@@ -28,6 +28,7 @@ final class AppModel {
     var systemSoundStuckOnHouse = false
     var inbox: NewFileInbox
     var isClassifying = false
+    var claudeConnection = ClaudeConnection.checking
     /// Set by Later. Cleared when another new file arrives or the app starts again.
     var newFilesSnoozed = false
 
@@ -54,6 +55,7 @@ final class AppModel {
     @ObservationIgnored private var cuesNeedRefresh = false
     @ObservationIgnored private var tickCount = 0
     @ObservationIgnored private var lastSaveError: String?
+    @ObservationIgnored private var isCheckingClaude = false
 
     private static func file<T>(_ name: String) -> JSONFile<T> {
         JSONFile(url: AppPaths.support.appendingPathComponent(name))
@@ -115,6 +117,11 @@ final class AppModel {
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.rescan() }
         }
+        // Signing in happens in Terminal, so coming back to Cantor is when the status may have changed.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshClaudeConnection() }
+        }
+        refreshClaudeConnection()
 
         restartWatcher()
         rescan()
@@ -142,6 +149,7 @@ final class AppModel {
             show.checkDevice()
             classifyNewFiles()
         }
+        if tickCount.isMultiple(of: 30 * 300) { refreshClaudeConnection() }
         if cuesNeedRefresh { refreshLoadedCues() }
         houseMeter.update(left: show.peakLeft, right: show.peakRight)
         if let kernel = cueBus.kernel {
@@ -176,6 +184,7 @@ final class AppModel {
     func updateSettings(_ change: (inout AppSettings) -> Void) {
         let previousFolders = settings.folders
         let previousRouting = settings.routing
+        let previousClaude = (settings.llmEnabled, settings.claudePath)
         change(&settings)
         settings.stampWatchedFolders()
         applySettingsToShow()
@@ -186,6 +195,7 @@ final class AppModel {
         syncSoundGuard()
         markCuesChanged()
         record { try settingsFile.save(settings) }
+        if previousClaude != (settings.llmEnabled, settings.claudePath) { refreshClaudeConnection() }
         if settings.folders != previousFolders {
             restartWatcher()
             rescan()
@@ -476,28 +486,50 @@ final class AppModel {
                 }
                 scheduleSave()
             } catch {
+                noteClaudeFailure(error)
                 alert = error.localizedDescription
             }
         }
     }
 
     /// Claude Code, checked to be signed in to a Claude account rather than set up with an API key.
+    /// Every check updates the status the sidebar shows.
     private func claudeAccount() async throws -> ClaudeCLI {
-        guard let path = ClaudeCLI.locate(override: settings.claudePath) else { throw LLMError.notInstalled }
-        let cli = ClaudeCLI(path: path)
-        let account = try await cli.accountStatus()
-        guard account.isLoggedIn else { throw LLMError.notLoggedIn }
-        guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
-        return cli
+        do {
+            guard let path = ClaudeCLI.locate(override: settings.claudePath) else { throw LLMError.notInstalled }
+            let cli = ClaudeCLI(path: path)
+            let account = try await cli.accountStatus()
+            guard account.isLoggedIn else { throw LLMError.notLoggedIn }
+            guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
+            if settings.llmEnabled { claudeConnection = .connected }
+            return cli
+        } catch {
+            if settings.llmEnabled { claudeConnection = ClaudeConnection(error: error) }
+            throw error
+        }
     }
 
-    /// One line for Settings saying whether Cantor can use the Claude account.
-    func claudeAccountSummary() async -> String {
-        do {
-            _ = try await claudeAccount()
-            return "Signed in to your Claude account."
-        } catch {
-            return error.localizedDescription
+    /// A request that failed after the account check, such as a usage limit, also changes the status.
+    private func noteClaudeFailure(_ error: Error) {
+        guard settings.llmEnabled, let error = error as? LLMError else { return }
+        switch error {
+        case .notInstalled, .notLoggedIn, .usesAPIKey, .limitReached: claudeConnection = ClaudeConnection(error: error)
+        default: break
+        }
+    }
+
+    /// Runs `claude auth status`, which needs no network and uses no account usage.
+    func refreshClaudeConnection() {
+        guard settings.llmEnabled else {
+            claudeConnection = .off
+            return
+        }
+        guard !isCheckingClaude, !show.state.holdsHouseEngine else { return }
+        isCheckingClaude = true
+        if claudeConnection == .off { claudeConnection = .checking }
+        Task {
+            defer { isCheckingClaude = false }
+            _ = try? await claudeAccount()
         }
     }
 
@@ -662,6 +694,7 @@ final class AppModel {
                     let classifier = FileClassifier(runner: try await claudeAccount(), model: model)
                     suggestions = try await classifier.classify(files: facts, categories: categories, upcoming: upcoming)
                 } catch {
+                    noteClaudeFailure(error)
                     note = error.localizedDescription
                 }
             }

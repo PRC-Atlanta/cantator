@@ -162,7 +162,6 @@ private struct PlanningCenterSettings: View {
 
 private struct AISettings: View {
     @Environment(AppModel.self) private var model
-    @State private var accountSummary = "Checking"
 
     private func binding(_ path: WritableKeyPath<AppSettings, String>) -> Binding<String> {
         Binding(get: { model.settings[keyPath: path] }, set: { value in model.updateSettings { $0[keyPath: path] = value } })
@@ -177,9 +176,12 @@ private struct AISettings: View {
                 ))
                 LabeledContent("Claude Account") {
                     HStack {
-                        Text(accountSummary).multilineTextAlignment(.trailing)
-                        Button("Check") { Task { await refresh() } }
+                        ClaudeStatusLabel(connection: model.claudeConnection)
+                        Button("Check") { model.refreshClaudeConnection() }
                     }
+                }
+                if model.claudeConnection != .connected {
+                    Text(model.claudeConnection.detail).foregroundStyle(.secondary)
                 }
             } footer: {
                 Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths, notes or audio, and nothing is applied until you accept it. When Claude is off or signed out, new files are guessed from their names.")
@@ -190,11 +192,7 @@ private struct AISettings: View {
             }
         }
         .formStyle(.grouped)
-        .task { await refresh() }
-    }
-
-    private func refresh() async {
-        accountSummary = await model.claudeAccountSummary()
+        .onAppear { model.refreshClaudeConnection() }
     }
 }
 

@@ -61,7 +61,7 @@ Cantor uses your Claude account, through Claude Code, for two things: filing new
 claude auth login
 ```
 
-**Settings > Claude** shows whether Cantor can see the sign-in. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
+The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantor also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
 
 ### Folders and new files
 

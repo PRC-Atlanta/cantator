@@ -26,6 +26,7 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **"New" means arrived after Cantor started watching that folder**, by the file's added-to-folder date. Otherwise adding a folder, or the first run, would put every existing file in front of the operator.
 - **A loaded service holds all pop-ups**, even between songs. Loading is the signal that the service has started. Claude may still be asked while a service is loaded and idle, so pop-ups are ready the moment it is unloaded.
 - **Accepting a suggested service item confirms the match**: the operator is looking at it and pressing Accept, which is the confirmation the rule requires.
+- **Claude status lives in the sidebar**: always visible while preparing, hidden in Show Mode where it doesn't matter. Amber only when something needs fixing, never green, because green means LIVE. The check is `claude auth status`, which uses no account usage, and it is skipped while a cue is armed or playing.
 - **Copy to ~/Music/Cantor defaults on for Downloads and Desktop**, since those get cleaned out.
 - **Songs default to Needs Playback**: an extra row costs one click, a missed cue costs the moment. A choice is remembered per song.
 - **Scores cap at 0.97 for string and LLM matches**: 100% would read as certainty, and nothing is auto-confirmed anyway.
