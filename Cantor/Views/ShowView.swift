@@ -233,6 +233,17 @@ private struct NextCueLine: View {
                 Spacer()
                 Label(notice, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed).font(.system(size: 14, weight: .medium))
             }
+            if show.showMode, let alert = model.alert {
+                Spacer()
+                Label(alert, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.armed)
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(2)
+                    .help(alert)
+                Button("Dismiss") { model.alert = nil }
+                    .buttonStyle(.borderless)
+                    .focusable(false)
+            }
         }
     }
 }
@@ -245,7 +256,8 @@ private struct TransportButtons: View {
         let enabled = show.showMode
         HStack(spacing: 8) {
             control("Arm", "A", enabled && show.state == .idle) { show.arm() }
-            control("Disarm", "D", isArmedOrHeld) { show.disarm() }
+            // Also clears a mid-track start while idle, like D.
+            control("Disarm", "D", isArmedOrHeld || (enabled && show.resumeSec != nil)) { show.disarm() }
             Spacer().frame(width: 34)
             control("GO", "Space", isArmedOrHeld) { show.go() }
             control("Hold", "P", isLive) { show.hold() }

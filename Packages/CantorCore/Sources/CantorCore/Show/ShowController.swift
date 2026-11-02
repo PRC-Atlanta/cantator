@@ -63,6 +63,10 @@ public final class ShowController {
     @ObservationIgnored private var panicGate = PanicGate()
     @ObservationIgnored private var kernel: PlaybackKernel?
     @ObservationIgnored private var retained: [CueID: Int] = [:]
+    /// The end this run is heading for, kept here so two nudges inside one render buffer both count.
+    @ObservationIgnored private var runEndFrame = 0
+    /// F or panic was sent. The operator is ending the cue, so no nudge or resume may bring it back.
+    @ObservationIgnored private var stopping = false
     @ObservationIgnored private let house: HouseOutput
     @ObservationIgnored private let clock: () -> TimeInterval
     @ObservationIgnored private let log: RunLog?
@@ -101,9 +105,21 @@ public final class ShowController {
     public func refresh(cues: [ShowCue]) -> Bool {
         guard !state.holdsHouseEngine else { return false }
         let pointed = pointedCue?.id
+        // A kept position only means something in the audio it was taken from.
+        for cue in cues where retained[cue.id] != nil {
+            if let old = self.cues.first(where: { $0.id == cue.id }), Self.sameAudio(old, cue) { continue }
+            retained[cue.id] = nil
+        }
+        retained = retained.filter { id, _ in cues.contains { $0.id == id } }
         self.cues = cues
         nextIndex = cues.firstIndex { $0.id == pointed } ?? min(nextIndex, max(cues.count - 1, 0))
         return true
+    }
+
+    private static func sameAudio(_ a: ShowCue, _ b: ShowCue) -> Bool {
+        a.track?.id == b.track?.id && a.track?.contentID == b.track?.contentID
+            && a.track?.files.map(\.path) == b.track?.files.map(\.path)
+            && a.buffer?.frames == b.buffer?.frames && a.buffer?.sampleRate == b.buffer?.sampleRate
     }
 
     /// Where the pointed cue will start if it is not at its start point.
@@ -147,15 +163,26 @@ public final class ShowController {
         guard let uid = routing.houseDeviceUID, deviceAvailable(uid) else { return .noHouseOutput }
 
         var parameters = PlaybackParameters(track: track, sampleRate: buffer.sampleRate, frames: buffer.frames, gainDb: cue.gainDb)
-        if let frame = retained[cue.id] { parameters.startFrame = frame }
+        let runStart = parameters.startFrame
+        if let frame = retained[cue.id] {
+            // A kept position inside the end fade or past the end leaves nothing worth hearing,
+            // so the cue starts from the top instead of becoming impossible to arm.
+            if frame < parameters.endFrame - PlaybackKernel.fadeLeadFrames(parameters, sampleRate: buffer.sampleRate) {
+                parameters.startFrame = max(frame, 0)
+            } else {
+                retained[cue.id] = nil
+            }
+        }
         guard parameters.startFrame < parameters.endFrame else { return .emptyRange(cue.title) }
-        let kernel = PlaybackKernel(buffer: buffer, parameters: parameters)
+        let kernel = PlaybackKernel(buffer: buffer, parameters: parameters, runStartFrame: runStart)
         do {
             try house.start(kernel: kernel, deviceUID: uid, firstChannel: routing.houseFirstChannel)
         } catch {
             return .deviceFailed(error.localizedDescription)
         }
         self.kernel = kernel
+        runEndFrame = kernel.currentEndFrame
+        stopping = false
         apply(.arm(cue.id))
         goGuard.noteArmed(at: clock())
         armedSince = Date()
@@ -164,9 +191,15 @@ public final class ShowController {
         return nil
     }
 
-    /// Also forgets a kept position, so disarm then arm starts the cue from the top.
+    /// Also forgets a kept position, so disarm then arm starts the cue from the top. With nothing
+    /// armed, it clears the mid-track start shown on the cue.
     public func disarm() {
-        if let id = state.cueID, case .armed = state { retained[id] = nil }
+        switch state {
+        case .armed, .idle, .faulted:
+            if let id = (activeCue ?? pointedCue)?.id { retained[id] = nil }
+        default:
+            break
+        }
         apply(.disarm)
     }
 
@@ -195,6 +228,11 @@ public final class ShowController {
 
     public func fadeOut() {
         guard showMode else { return }
+        if case .fading = state, !stopping {
+            // F during the automatic end fade: the operator is ending it now, and `]` must not undo that.
+            startFade()
+            return
+        }
         apply(.fade)
     }
 
@@ -223,10 +261,20 @@ public final class ShowController {
         log?.record("marker", cue: track.title)
     }
 
-    /// Moves the end for this run only. The saved end point is untouched.
+    /// Moves the end for this run only. The saved end point is untouched. Works through the automatic
+    /// end fade, where `]` brings the cue back up, but never after F or panic.
     public func nudgeEnd(seconds: Double) {
-        guard case .live = state, let kernel else { return }
-        kernel.setEnd(toFrame: kernel.currentEndFrame + Int(seconds * kernel.buffer.sampleRate))
+        guard let kernel else { return }
+        switch state {
+        case .live: break
+        case .fading where !stopping: break
+        default: return
+        }
+        let rate = kernel.buffer.sampleRate
+        // The kernel keeps at least a declick of fade; this keeps the next nudge counting from there.
+        let nearest = kernel.positionFrames + PlaybackKernel.declickFrames(sampleRate: rate)
+        runEndFrame = min(max(runEndFrame + Int(seconds * rate), nearest), kernel.buffer.frames)
+        kernel.setEnd(toFrame: runEndFrame)
     }
 
     public func acknowledgeFault() {
@@ -238,11 +286,13 @@ public final class ShowController {
     public func deviceLost() {
         guard state.holdsHouseEngine else { return }
         if let id = state.cueID, let kernel {
-            retained[id] = kernel.positionFrames
+            // During F or panic the operator was stopping the cue, so the next arm starts from the top.
+            retained[id] = stopping ? nil : kernel.positionFrames
         }
+        let lostCue = activeCue
         apply(.deviceLost)
         notice = "House output stopped. Press Return to acknowledge, then re-arm."
-        log?.record("device-lost", cue: nil)
+        log?.record("device-lost", cue: lostCue?.title)
     }
 
     /// Call from a display-rate timer. Reads render-thread telemetry and notices the end of a cue.
@@ -251,13 +301,17 @@ public final class ShowController {
         switch kernel?.phase {
         case .finished: apply(.finished)
         case .fading: apply(.autoFadeStarted)
+        case .playing:
+            if case .fading = state, !stopping { apply(.autoFadeCancelled) }
         default: break
         }
     }
 
     /// Call about once a second and on device changes. This goes to Core Audio, so it stays off the display timer.
+    /// An engine that stopped by itself counts as lost too, even if its device came straight back.
     public func checkDevice() {
-        if let uid = routing.houseDeviceUID, state.holdsHouseEngine, !deviceAvailable(uid) {
+        guard state.holdsHouseEngine, let uid = routing.houseDeviceUID else { return }
+        if !deviceAvailable(uid) || !house.isRunning {
             deviceLost()
         }
     }
@@ -289,9 +343,9 @@ public final class ShowController {
             case .hold:
                 kernel?.hold()
             case .fade:
-                kernel?.fade(seconds: max(activeCue?.track?.fadeOutSec ?? 3, 0.05))
-                log?.record("fade", cue: activeCue?.title)
+                startFade()
             case .panic:
+                stopping = true
                 kernel?.panic(seconds: panicFadeSec)
                 log?.record("panic", cue: activeCue?.title)
             case .hardStop:
@@ -300,6 +354,7 @@ public final class ShowController {
             case .teardown:
                 house.stop()
                 kernel = nil
+                stopping = false
                 goGuard.clear()
                 armedSince = nil
                 positionSec = 0
@@ -313,5 +368,11 @@ public final class ShowController {
                 nextIndex = index + 1
             }
         }
+    }
+
+    private func startFade() {
+        stopping = true
+        kernel?.fade(seconds: max(activeCue?.track?.fadeOutSec ?? 3, 0.05))
+        log?.record("fade", cue: activeCue?.title)
     }
 }

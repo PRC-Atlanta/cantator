@@ -124,7 +124,7 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 | F | End of song: fade with the track's saved fade |
 | P | Hold, then Space to resume |
 | M / Shift-M | Jump to the next or previous marker, while armed or held |
-| `[` / `]` | Move the end point 1 s for this run only |
+| `[` / `]` | Move the end point 1 s for this run only. `]` during the automatic end fade brings the level back and extends the run |
 | H | Preview in headphones: the selected cue, or the next cue while one is armed or playing |
 | D | Disarm. If the cue shows a mid-track start, this clears it |
 | Return | Acknowledge a fault |

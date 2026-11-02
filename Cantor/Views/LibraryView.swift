@@ -249,7 +249,7 @@ private struct TrackInspector: View {
                 Button(model.makingLocal.contains(track.id) ? "Copying" : "Make Local") { model.makeLocal(track) }
                     .disabled(model.makingLocal.contains(track.id))
                     .help("Copy to ~/Music/Cantor. The original stays where it is.")
-                if let plan = model.loadedPlan ?? model.plans.first {
+                if let plan = model.currentPlan {
                     Button("Add to \(plan.dates.isEmpty ? plan.title : plan.dates)") {
                         model.addManualCue(planID: plan.id, track: track)
                     }

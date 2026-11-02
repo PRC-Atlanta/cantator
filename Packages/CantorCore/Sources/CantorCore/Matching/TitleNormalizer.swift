@@ -16,6 +16,25 @@ public enum TitleNormalizer {
         }
     }
 
+    /// Numbers that are part of the title, as in "Psalm 23" or "Hymn 2". `normalize` drops numbers,
+    /// so these are compared separately. Leading track numbers ("01 - Song", "Track 03 Song"), a
+    /// copy suffix ("(1)"), versions, bitrates and years are not part of a title.
+    public static func titleNumbers(_ text: String) -> Set<String> {
+        var value = text
+        if let dot = value.lastIndex(of: "."), FolderScanner.audioExtensions.contains(value[value.index(after: dot)...].lowercased()) {
+            value = String(value[..<dot])
+        }
+        value = value.replacingOccurrences(of: #"\s*\(\d+\)\s*$"#, with: "", options: .regularExpression)
+        let words = tokens(value).drop { $0.allSatisfy(\.isNumber) || noiseTokens.contains($0) }
+        return Set(words.filter { $0.count <= 3 && $0.allSatisfy(\.isNumber) }.map { String(Int($0) ?? 0) })
+    }
+
+    /// Both titles carry numbers and none are shared, as in "Psalm 23" and "Psalm 91".
+    public static func numbersConflict(_ a: String, _ b: String) -> Bool {
+        let left = titleNumbers(a), right = titleNumbers(b)
+        return !left.isEmpty && !right.isEmpty && left.isDisjoint(with: right)
+    }
+
     public static func hints(_ text: String) -> Set<String> {
         Set(tokens(text)).intersection(hintTokens)
     }

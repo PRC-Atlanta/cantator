@@ -4,7 +4,7 @@ import Foundation
 public struct NewFileFacts: Equatable, Sendable {
     public var trackID: UUID
     public var filename: String
-    /// The last two folders above the file, such as "Choir/November".
+    /// At most two folders inside the watched folder, such as "Choir/November". See `folder(of:roots:)`.
     public var folder: String
     public var durationSec: Double
     public var tags: [String: String]
@@ -17,8 +17,34 @@ public struct NewFileFacts: Equatable, Sendable {
         self.tags = tags
     }
 
-    public static func folder(of path: String) -> String {
-        URL(fileURLWithPath: path).deletingLastPathComponent().pathComponents.suffix(2).joined(separator: "/")
+    /// The last two folders above the file, without account or home folder names. Prefer
+    /// `folder(of:roots:)`, which also never reaches above the watched folder.
+    public static func folder(of path: String, home: String = NSHomeDirectory()) -> String {
+        let folders = URL(fileURLWithPath: path).deletingLastPathComponent().pathComponents.suffix(2)
+        return folders.filter { isShareable($0, home: home) }.joined(separator: "/")
+    }
+
+    /// At most two folders, counted from the watched folder that holds the file: its own name, as
+    /// in "Downloads" or "My Drive", and the folders below it. Nothing above it is sent, nor a
+    /// name that looks like an account ("GoogleDrive-…", an email address) or the home folder's.
+    /// A file under no watched folder gets no folder.
+    public static func folder(of path: String, roots: [String], home: String = NSHomeDirectory()) -> String {
+        let root = roots
+            .map { $0.count > 1 && $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            .filter { path.hasPrefix($0 == "/" ? $0 : $0 + "/") }
+            .max { $0.count < $1.count }
+        guard let root else { return "" }
+        let inside = URL(fileURLWithPath: path).deletingLastPathComponent().pathComponents
+            .dropFirst(URL(fileURLWithPath: root).pathComponents.count)
+        let folders = [URL(fileURLWithPath: root).lastPathComponent] + inside
+        return folders.suffix(2).filter { isShareable($0, home: home) }.joined(separator: "/")
+    }
+
+    static func isShareable(_ folder: String, home: String) -> Bool {
+        let lowered = folder.lowercased()
+        let accountPrefixes = ["googledrive-", "onedrive-", "dropbox-", "box-"]
+        return folder != "/" && !folder.contains("@") && !accountPrefixes.contains(where: lowered.hasPrefix)
+            && lowered != "cloudstorage" && folder != URL(fileURLWithPath: home).lastPathComponent && folder != NSUserName()
     }
 }
 
@@ -70,17 +96,32 @@ public struct FileClassifier: Sendable {
         self.model = model
     }
 
+    /// Throws only when no batch was answered. Files in a batch that failed later are left out, so
+    /// the caller falls back for them. `classifyKeepingPartial` also reports that failure.
     public func classify(files: [NewFileFacts], categories: [String], upcoming: [UpcomingItem]) async throws -> [UUID: FileSuggestion] {
+        let (result, error) = await classifyKeepingPartial(files: files, categories: categories, upcoming: upcoming)
+        if let error, result.isEmpty { throw error }
+        return result
+    }
+
+    /// Stops at the first batch that fails, keeping what earlier batches answered.
+    public func classifyKeepingPartial(
+        files: [NewFileFacts], categories: [String], upcoming: [UpcomingItem]
+    ) async -> (suggestions: [UUID: FileSuggestion], error: Error?) {
         var result: [UUID: FileSuggestion] = [:]
         var start = 0
         while start < files.count {
             let batch = Array(files[start..<min(start + Self.batchSize, files.count)])
-            let prompt = try Self.prompt(files: batch, categories: categories, upcoming: upcoming)
-            let output = try await runner.run(system: Self.system, prompt: prompt, schema: Self.schema, model: model)
-            result.merge(try Self.parse(output, files: batch, upcoming: upcoming)) { _, new in new }
+            do {
+                let prompt = try Self.prompt(files: batch, categories: categories, upcoming: upcoming)
+                let output = try await runner.run(system: Self.system, prompt: prompt, schema: Self.schema, model: model)
+                result.merge(try Self.parse(output, files: batch, upcoming: upcoming)) { _, new in new }
+            } catch {
+                return (result, error)
+            }
             start += Self.batchSize
         }
-        return result
+        return (result, nil)
     }
 
     static func prompt(files: [NewFileFacts], categories: [String], upcoming: [UpcomingItem]) throws -> String {
@@ -118,7 +159,7 @@ public struct FileClassifier: Sendable {
                 category: cleanCategory(entry["category"] as? String ?? ""),
                 isPlayback: entry["is_playback"] as? Bool ?? true,
                 serviceItem: item,
-                confidence: min(max(entry["confidence"] as? Double ?? 0, 0), 1),
+                confidence: LLMTiebreaker.confidence(entry["confidence"]),
                 reason: entry["reason"] as? String ?? "",
                 byClaude: true
             )

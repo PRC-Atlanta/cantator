@@ -21,18 +21,23 @@ public enum PCOError: LocalizedError, Equatable {
 public actor PCOClient {
     static let base = "https://api.planningcenteronline.com/services/v2"
     static let maxRetries = 3
+    /// Planning Center allows 100 requests per 20 s. 210 ms apart is at most 96.
+    public static let defaultSpacing: Duration = .milliseconds(210)
 
     private let authorization: String
     private let session: URLSession
     private let spacing: Duration
     private var lastRequest: ContinuousClock.Instant?
 
-    public init(appID: String, secret: String, session: URLSession = .shared, spacing: Duration = .milliseconds(150)) {
+    public init(appID: String, secret: String, session: URLSession = .shared, spacing: Duration = PCOClient.defaultSpacing) {
         authorization = "Basic " + Data("\(appID):\(secret)".utf8).base64EncodedString()
         self.session = session
         self.spacing = spacing
     }
 
+    /// A plan that cannot be fetched (deleted since the list, a server error) comes back with
+    /// `syncFailed` set, so `ServicePlan.applySync` keeps the saved copy. A rejected token, the rate
+    /// limit or a lost connection still fails the whole sync, since every later request would too.
     public func fetchUpcomingPlans(plansPerType: Int = 6, memory: AliasMemory, now: Date = Date()) async throws -> [ServicePlan] {
         var plans: [ServicePlan] = []
         for type in try await getAll("\(Self.base)/service_types?per_page=100") {
@@ -41,10 +46,33 @@ public actor PCOClient {
             let url = "\(Self.base)/service_types/\(typeID)/plans?filter=future&order=sort_date&per_page=\(plansPerType)"
             let (planData, _) = try await getPage(url)
             for plan in planData.prefix(plansPerType) {
-                plans.append(try await fetchPlan(plan, serviceTypeID: typeID, serviceTypeName: typeName, memory: memory, now: now))
+                do {
+                    plans.append(try await fetchPlan(plan, serviceTypeID: typeID, serviceTypeName: typeName, memory: memory, now: now))
+                } catch {
+                    if Self.endsSync(error) { throw error }
+                    guard let planID = plan["id"] as? String else { continue }
+                    let attrs = attributes(plan)
+                    var failed = ServicePlan(
+                        id: planID, serviceTypeID: typeID, serviceTypeName: typeName, title: attrs["title"] as? String ?? "",
+                        dates: attrs["dates"] as? String ?? "", sortDate: Self.date(attrs["sort_date"]), syncedAt: now
+                    )
+                    failed.syncFailed = true
+                    plans.append(failed)
+                }
             }
         }
         return plans.sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
+    }
+
+    /// Errors that every remaining request would hit too.
+    static func endsSync(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let error = error as? PCOError { return error == .unauthorized || error == .rateLimited }
+        if let error = error as? URLError {
+            return [.cancelled, .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost]
+                .contains(error.code)
+        }
+        return false
     }
 
     private func fetchPlan(
@@ -59,11 +87,16 @@ public actor PCOClient {
         )
 
         let root = "\(Self.base)/service_types/\(serviceTypeID)/plans/\(planID)"
-        let times = (try? await getAll("\(root)/plan_times?per_page=25")) ?? []
-        result.serviceTimes = times
-            .filter { attributes($0)["time_type"] as? String == "service" }
-            .compactMap { Self.date(attributes($0)["starts_at"]) }
-            .sorted()
+        do {
+            result.serviceTimes = try await getAll("\(root)/plan_times?per_page=25")
+                .filter { attributes($0)["time_type"] as? String == "service" }
+                .compactMap { Self.date(attributes($0)["starts_at"]) }
+                .sorted()
+        } catch {
+            if Self.endsSync(error) { throw error }
+            // Merging keeps the saved times instead of wiping them.
+            result.serviceTimesUnavailable = true
+        }
 
         var included: [String: [String: Any]] = [:]
         var items: [[String: Any]] = []
@@ -81,8 +114,14 @@ public actor PCOClient {
             guard var cue = cue(from: item, position: index, included: included) else { continue }
             cue.needsPlayback = memory.needsOverride(for: cue) ?? PlaybackDetector.needsPlayback(cue)
             if cue.needsPlayback {
-                let attachments = (try? await getAll("\(root)/items/\(cue.id)/attachments?per_page=25")) ?? []
-                cue.attachmentFilenames = attachments.compactMap { attributes($0)["filename"] as? String }
+                do {
+                    let attachments = try await getAll("\(root)/items/\(cue.id)/attachments?per_page=25")
+                    cue.attachmentFilenames = attachments.compactMap { attributes($0)["filename"] as? String }
+                } catch {
+                    if Self.endsSync(error) { throw error }
+                    // Merging keeps the saved filenames instead of wiping them.
+                    cue.attachmentsUnavailable = true
+                }
             }
             result.cues.append(cue)
         }
@@ -108,6 +147,7 @@ public actor PCOClient {
             id: id, position: attrs["sequence"] as? Int ?? position, title: attrs["title"] as? String ?? "",
             itemType: attrs["item_type"] as? String ?? "item", notes: notes,
             arrangement: arrangement.flatMap { attributes($0)["name"] as? String } ?? "",
+            keyName: attrs["key_name"] as? String ?? "",
             songID: song?["id"] as? String, lengthSec: (length ?? 0) > 0 ? length : nil
         )
     }

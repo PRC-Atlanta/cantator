@@ -58,8 +58,14 @@ final class AppModel {
     @ObservationIgnored private var failedAnalysis = Set<UUID>()
     @ObservationIgnored private var cuesNeedRefresh = false
     @ObservationIgnored private var tickCount = 0
-    @ObservationIgnored private var lastSaveError: String?
+    @ObservationIgnored private var saveErrors: [String: String] = [:]
     @ObservationIgnored private var isCheckingClaude = false
+    /// Asked for while a scan was running or a cue was engaged. Runs once that ends.
+    @ObservationIgnored private var rescanPending = false
+    /// Saves wait while a cue is engaged, so encoding the library never stalls the transport.
+    @ObservationIgnored private var savePending = false
+    @ObservationIgnored private var auditionRequest: UUID?
+    @ObservationIgnored private let runLog = RunLog()
 
     private static func file<T>(_ name: String) -> JSONFile<T> {
         JSONFile(url: AppPaths.support.appendingPathComponent(name))
@@ -81,7 +87,7 @@ final class AppModel {
         plans = plansFile.load(onQuarantine: note) ?? []
         hashCache = cacheFile.load(onQuarantine: note) ?? HashCache()
         inbox = inboxFile.load(onQuarantine: note) ?? NewFileInbox()
-        show = ShowController(house: houseBus, log: RunLog())
+        show = ShowController(house: houseBus, log: runLog)
         houseBus.onLost = { [weak self] in self?.show.deviceLost() }
         show.onPlayed = { [weak self] track in
             self?.library.update(id: track.id) {
@@ -132,10 +138,11 @@ final class AppModel {
     }
 
     func prepareToQuit() {
-        cueBus.stop()
+        stopAudition()
         soundGuard.release()
         sleepGuard.release()
         saveNow()
+        runLog.flush()
     }
 
     private func handleSleep() {
@@ -143,7 +150,7 @@ final class AppModel {
         if show.state.holdsHouseEngine {
             show.deviceLost()
         }
-        cueBus.stop()
+        stopAudition()
     }
 
     private func tick() {
@@ -155,6 +162,11 @@ final class AppModel {
         }
         if tickCount.isMultiple(of: 30 * 300) { refreshClaudeConnection() }
         if cuesNeedRefresh { refreshLoadedCues() }
+        if !show.state.holdsHouseEngine {
+            if savePending { saveNow() }
+            if rescanPending, !isScanning { rescan() }
+            if claudeConnection == .checking, !isCheckingClaude { refreshClaudeConnection() }
+        }
         houseMeter.update(left: show.peakLeft, right: show.peakRight)
         if let kernel = cueBus.kernel {
             let peaks = kernel.takePeaks()
@@ -163,6 +175,8 @@ final class AppModel {
             if kernel.phase == .finished { stopAudition() }
         } else {
             cueMeter.update(left: 0, right: 0)
+            // The cue bus can stop on its own, after a device change.
+            if auditionPositionSec != nil { auditionPositionSec = nil }
         }
     }
 
@@ -183,6 +197,9 @@ final class AppModel {
             return
         }
         systemSoundStuckOnHouse = !soundGuard.engage(houseUID: house, preferredUID: settings.routing.cueDeviceUID)
+        if systemSoundStuckOnHouse, let error = soundGuard.lastError {
+            alert = "macOS sounds were left on the house output: \(error.localizedDescription)"
+        }
     }
 
     func updateSettings(_ change: (inout AppSettings) -> Void) {
@@ -198,7 +215,7 @@ final class AppModel {
         }
         syncSoundGuard()
         markCuesChanged()
-        record { try settingsFile.save(settings) }
+        record("settings") { try settingsFile.save(settings) }
         if previousClaude != (settings.llmEnabled, settings.claudePath) { refreshClaudeConnection() }
         if settings.folders != previousFolders {
             restartWatcher()
@@ -217,29 +234,34 @@ final class AppModel {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            self?.saveNow()
+            guard !Task.isCancelled, let self else { return }
+            if self.show.state.holdsHouseEngine {
+                self.savePending = true
+            } else {
+                self.saveNow()
+            }
         }
     }
 
     func saveNow() {
-        record { try libraryFile.save(library) }
-        record { try memoryFile.save(memory) }
-        record { try plansFile.save(plans) }
-        record { try inboxFile.save(inbox) }
+        savePending = false
+        record("library") { try libraryFile.save(library) }
+        record("aliases") { try memoryFile.save(memory) }
+        record("services") { try plansFile.save(plans) }
+        record("new files") { try inboxFile.save(inbox) }
         try? cacheFile.save(hashCache)
     }
 
-    private func record(_ save: () throws -> Void) {
+    private func record(_ name: String, _ save: () throws -> Void) {
         do {
             try save()
-            lastSaveError = nil
+            saveErrors[name] = nil
         } catch {
-            // Say so once per failure, not on every debounced save.
-            if lastSaveError != error.localizedDescription {
-                alert = "Could not save: \(error.localizedDescription)"
+            // Say so once per failure of each file, not on every debounced save.
+            if saveErrors[name] != error.localizedDescription {
+                alert = "Could not save the \(name): \(error.localizedDescription)"
             }
-            lastSaveError = error.localizedDescription
+            saveErrors[name] = error.localizedDescription
         }
     }
 
@@ -266,8 +288,13 @@ final class AppModel {
         }
     }
 
+    /// Merging a scan runs on the main thread, so it waits while a cue is engaged.
     func rescan() {
-        guard !isScanning else { return }
+        guard !isScanning, !show.state.holdsHouseEngine else {
+            rescanPending = true
+            return
+        }
+        rescanPending = false
         isScanning = true
         let roots = scanRoots
         var cache = hashCache
@@ -278,7 +305,7 @@ final class AppModel {
             }.value
             hashCache = result.1
             let previousIDs = Set(library.tracks.map(\.id))
-            let replaced = library.merge(scan: result.0.files, defaultFadeOutSec: settings.defaultFadeOutSec)
+            let replaced = library.merge(scan: result.0.files, gaps: result.0.gaps, defaultFadeOutSec: settings.defaultFadeOutSec)
             remapCues(replaced)
             if library.excludeStems(protecting: confirmedTrackIDs) { rankAllPlans() }
             noteNewFiles(previousIDs: previousIDs, scan: result.0.files, replaced: replaced)
@@ -307,10 +334,13 @@ final class AppModel {
         markCuesChanged()
     }
 
+    /// Paused while a service is loaded: a finished analysis changes a track's level and start,
+    /// and the show must play what the operator rehearsed. Check reports what is still unanalyzed.
     private func analyzePending() {
-        guard analysisTask == nil else { return }
+        guard analysisTask == nil, loadedPlanID == nil else { return }
         analysisTask = Task { [weak self] in
-            while let self, let track = self.library.tracks.first(where: { self.needsAnalysis($0) }), let file = track.bestFile() {
+            while let self, self.loadedPlanID == nil,
+                  let track = self.library.tracks.first(where: { self.needsAnalysis($0) }), let file = track.bestFile() {
                 self.analyzingCount = self.library.tracks.filter { self.needsAnalysis($0) }.count
                 let id = track.id
                 let url = file.url
@@ -318,6 +348,8 @@ final class AppModel {
                     guard let buffer = try? PCMDecoder.decode(url: url) else { return nil }
                     return TrackAnalyzer.analyze(buffer)
                 }.value
+                // A service loaded during the decode. Analyze this track again after unload.
+                guard self.loadedPlanID == nil else { break }
                 guard let analysis else {
                     // Leave it unanalyzed so Check still reports it.
                     self.failedAnalysis.insert(id)
@@ -411,6 +443,9 @@ final class AppModel {
             alert = "\(track.title) is not on this Mac yet."
             return
         }
+        // Only the latest request may start. Stop, sleep or another preview cancels a decode in progress.
+        let request = UUID()
+        auditionRequest = request
         Task {
             do {
                 var buffer = resident[track.id] ?? auditionCache[track.id]
@@ -419,19 +454,23 @@ final class AppModel {
                     buffer = try await Task.detached(priority: .userInitiated) { try PCMDecoder.decode(url: url) }.value
                     auditionCache = [track.id: buffer!]
                 }
-                guard let buffer else { return }
-                let parameters = PlaybackParameters(track: track, sampleRate: buffer.sampleRate, frames: buffer.frames, gainDb: gainDb(for: track))
+                guard let buffer, auditionRequest == request else { return }
+                // Edits made while it decoded, such as EQ, are heard from the start.
+                let current = library.track(id: track.id) ?? track
+                let parameters = PlaybackParameters(track: current, sampleRate: buffer.sampleRate, frames: buffer.frames, gainDb: gainDb(for: current))
                 try cueBus.audition(
                     trackID: track.id, buffer: buffer, parameters: parameters,
                     from: fromSec.map { Int($0 * buffer.sampleRate) }, routing: settings.routing
                 )
             } catch {
+                guard auditionRequest == request else { return }
                 alert = error.localizedDescription
             }
         }
     }
 
     func stopAudition() {
+        auditionRequest = nil
         cueBus.stop()
         auditionPositionSec = nil
     }
@@ -439,12 +478,22 @@ final class AppModel {
     // MARK: Planning Center
 
     func hasPCOCredentials() -> Bool {
-        Keychain.read(.pcoAppID) != nil && Keychain.read(.pcoSecret) != nil
+        (try? Keychain.lookup(.pcoAppID)) != nil && (try? Keychain.lookup(.pcoSecret)) != nil
     }
 
+    /// Not in Show Mode: a sync can add, remove or reorder the loaded cues.
     func refreshPlans() {
-        guard !isSyncing else { return }
-        guard let appID = Keychain.read(.pcoAppID), let secret = Keychain.read(.pcoSecret) else {
+        guard !isSyncing, !show.showMode, !isLoadingService else { return }
+        let appID: String?
+        let secret: String?
+        do {
+            appID = try Keychain.lookup(.pcoAppID)
+            secret = try Keychain.lookup(.pcoSecret)
+        } catch {
+            alert = "Could not read the Planning Center token from the Keychain: \(error.localizedDescription)"
+            return
+        }
+        guard let appID, let secret else {
             alert = "Add your Planning Center token in Settings."
             return
         }
@@ -455,6 +504,10 @@ final class AppModel {
                 let client = PCOClient(appID: appID, secret: secret)
                 let fresh = try await client.fetchUpcomingPlans(memory: memory)
                 plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
+                let failed = fresh.filter(\.syncFailed).count
+                if failed > 0 {
+                    alert = "\(failed) \(failed == 1 ? "service" : "services") could not be refreshed. Saved copies were kept."
+                }
                 rankAllPlans()
                 markCuesChanged()
                 scheduleSave()
@@ -494,9 +547,11 @@ final class AppModel {
                 let purpose = "Ranking \(cues.count) ambiguous \(cues.count == 1 ? "match" : "matches")"
                 let results = try await usingClaude(purpose) { try await tiebreaker.resolve(cues: cues, tracks: tracks) }
                 guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
-                for cueIndex in plans[index].cues.indices {
+                // The answer can take minutes. Skip cues confirmed since, and tracks excluded or gone since.
+                let current = Set(library.playbackTracks.map(\.id))
+                for cueIndex in plans[index].cues.indices where plans[index].cues[cueIndex].trackID == nil {
                     if let updated = results[plans[index].cues[cueIndex].id] {
-                        plans[index].cues[cueIndex].candidates = updated
+                        plans[index].cues[cueIndex].candidates = updated.filter { current.contains($0.trackID) }
                     }
                 }
                 scheduleSave()
@@ -554,9 +609,9 @@ final class AppModel {
             claudeConnection = .off
             return
         }
+        if claudeConnection == .off { claudeConnection = .checking }
         guard !isCheckingClaude, !show.state.holdsHouseEngine else { return }
         isCheckingClaude = true
-        if claudeConnection == .off { claudeConnection = .checking }
         Task {
             defer { isCheckingClaude = false }
             _ = try? await claudeAccount()
@@ -613,6 +668,12 @@ final class AppModel {
 
     var loadedPlan: ServicePlan? { plans.first { $0.id == loadedPlanID } }
 
+    /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent past ones.
+    var currentPlan: ServicePlan? {
+        let today = Calendar.current.startOfDay(for: Date())
+        return loadedPlan ?? plans.first { ($0.sortDate ?? .distantFuture) >= today } ?? plans.last
+    }
+
     /// Decodes every confirmed cue into RAM, then holds sleep and system sound for the service.
     /// Each file is checked against the audio that was confirmed, in case it changed since the last scan.
     func loadService(planID: String) {
@@ -628,31 +689,40 @@ final class AppModel {
         }
         let existing = resident
         Task {
-            let decoded = await Task.detached(priority: .userInitiated) { () -> ([UUID: PCMBuffer], [String]) in
-                var buffers: [UUID: PCMBuffer] = [:]
-                var failures: [String] = []
-                for (id, url, contentID, title) in files {
-                    do {
-                        if let contentID, try ContentHasher.contentID(url: url) != contentID {
-                            failures.append("\(title) changed on disk since you confirmed it. Rescan and confirm it again.")
-                            continue
-                        }
-                        buffers[id] = try existing[id] ?? PCMDecoder.decode(url: url)
-                    } catch {
-                        failures.append(error.localizedDescription)
-                    }
-                }
-                return (buffers, failures)
-            }.value
+            let decoded = await Task.detached(priority: .userInitiated) { Self.decode(files, existing: existing) }.value
 
+            isLoadingService = false
+            guard plans.contains(where: { $0.id == planID }) else {
+                alert = "That service is no longer in Planning Center, so it was not loaded."
+                return
+            }
             resident = decoded.0
             loadedPlanID = planID
             show.load(cues: showCues())
             sleepGuard.engage()
             syncSoundGuard()
-            isLoadingService = false
             if !decoded.1.isEmpty { alert = decoded.1.joined(separator: "\n") }
         }
+    }
+
+    /// Each file is checked against the audio that was confirmed, in case it changed since the last scan.
+    nonisolated private static func decode(
+        _ files: [(UUID, URL, String?, String)], existing: [UUID: PCMBuffer] = [:]
+    ) -> ([UUID: PCMBuffer], [String]) {
+        var buffers: [UUID: PCMBuffer] = [:]
+        var failures: [String] = []
+        for (id, url, contentID, title) in files {
+            do {
+                if let contentID, try ContentHasher.contentID(url: url) != contentID {
+                    failures.append("\(title) changed on disk since you confirmed it. Rescan and confirm it again.")
+                    continue
+                }
+                buffers[id] = try existing[id] ?? PCMDecoder.decode(url: url)
+            } catch {
+                failures.append(error.localizedDescription)
+            }
+        }
+        return (buffers, failures)
     }
 
     private func showCues() -> [ShowCue] {
@@ -667,7 +737,29 @@ final class AppModel {
     }
 
     private func markCuesChanged() {
-        if loadedPlanID != nil { cuesNeedRefresh = true }
+        guard loadedPlanID != nil else { return }
+        cuesNeedRefresh = true
+        loadMissingBuffers()
+    }
+
+    /// A cue confirmed or added after Load Service is decoded too, so it can be armed.
+    private func loadMissingBuffers() {
+        guard !isLoadingService, let plan = loadedPlan else { return }
+        let files: [(UUID, URL, String?, String)] = Set(plan.playbackCues.compactMap(\.trackID)).compactMap { id in
+            guard resident[id] == nil, let track = library.track(id: id), let file = track.bestFile() else { return nil }
+            return (id, file.url, track.contentID, track.title)
+        }
+        guard !files.isEmpty else { return }
+        isLoadingService = true
+        let planID = plan.id
+        Task {
+            let decoded = await Task.detached(priority: .userInitiated) { Self.decode(files) }.value
+            isLoadingService = false
+            guard loadedPlanID == planID else { return }
+            resident.merge(decoded.0) { old, _ in old }
+            cuesNeedRefresh = true
+            if !decoded.1.isEmpty { alert = decoded.1.joined(separator: "\n") }
+        }
     }
 
     /// Show must play what the operator last saved. Edits wait until no cue is engaged.
@@ -676,7 +768,7 @@ final class AppModel {
     }
 
     func unloadService() {
-        guard !show.state.holdsHouseEngine else { return }
+        guard !show.state.holdsHouseEngine, !isLoadingService else { return }
         show.setShowMode(false)
         show.load(cues: [])
         resident = [:]
@@ -684,6 +776,7 @@ final class AppModel {
         sleepGuard.release()
         syncSoundGuard()
         classifyNewFiles()
+        analyzePending()
     }
 
     // MARK: New files
@@ -710,14 +803,16 @@ final class AppModel {
               InboxGate.canClassify(showState: show.state, showMode: show.showMode)
         else { return }
         isClassifying = true
-        let tracks = inbox.awaitingSuggestion.compactMap { library.track(id: $0.trackID) }
+        // One batch per run. The tick starts the next only while the gate still allows it.
+        let tracks = inbox.awaitingSuggestion.prefix(FileClassifier.batchSize).compactMap { library.track(id: $0.trackID) }
         let upcoming = upcomingItems()
         let categories = PlaybackCategory.all(libraryTags: library.allTags)
         let useClaude = settings.llmEnabled
         let model = settings.llmModel
+        let roots = scanRoots
         Task {
             defer { isClassifying = false }
-            let facts = await Task.detached(priority: .utility) { tracks.map(Self.facts(for:)) }.value
+            let facts = await Task.detached(priority: .utility) { tracks.map { Self.facts(for: $0, roots: roots) } }.value
             var suggestions: [UUID: FileSuggestion] = [:]
             var note: String? = useClaude ? nil : "Claude is turned off in Settings."
             if useClaude {
@@ -741,10 +836,11 @@ final class AppModel {
         }
     }
 
-    nonisolated private static func facts(for track: Track) -> NewFileFacts {
+    /// Folder names only from inside the watched folder, so no account or home folder name reaches Claude.
+    nonisolated private static func facts(for track: Track, roots: [String]) -> NewFileFacts {
         let file = track.bestFile() ?? track.files.first
         return NewFileFacts(
-            trackID: track.id, filename: track.primaryFilename, folder: file.map { NewFileFacts.folder(of: $0.path) } ?? "",
+            trackID: track.id, filename: track.primaryFilename, folder: file.map { NewFileFacts.folder(of: $0.path, roots: roots) } ?? "",
             durationSec: track.durationSec, tags: track.bestFile().map { AudioTags.read(url: $0.url) } ?? [:]
         )
     }
@@ -843,11 +939,12 @@ final class AppModel {
     // MARK: Pre-service check
 
     func checkResults() -> [CheckIssue] {
-        guard let plan = loadedPlan ?? plans.first else { return [] }
+        guard let plan = currentPlan else { return [] }
         let tracks = Dictionary(library.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let defaults = Set([AudioDevices.defaultDeviceUID(system: false), AudioDevices.defaultDeviceUID(system: true)].compactMap { $0 })
         return PreServiceCheck.run(CheckInput(
-            plan: plan, tracks: tracks, residentTrackIDs: Set(resident.keys), routing: settings.routing,
+            plan: plan, tracks: tracks, residentTrackIDs: Set(resident.keys),
+            residentLengths: resident.mapValues { ResidentLength(frames: $0.frames, sampleRate: $0.sampleRate) }, routing: settings.routing,
             availableDeviceUIDs: Set(devices.map(\.uid)), targetLUFS: settings.targetLUFS, defaultOutputUIDs: defaults,
             isOnBattery: PowerStatus.isOnBattery
         ))

@@ -45,6 +45,7 @@ public enum ShowEvent: Equatable, Sendable {
     case panic
     case hardStop
     case autoFadeStarted
+    case autoFadeCancelled
     case finished
     case deviceLost
     case acknowledgeFault
@@ -106,6 +107,12 @@ public struct ShowStateMachine: Sendable {
         case (.live(let id), .autoFadeStarted), (.held(let id), .autoFadeStarted):
             // The kernel reached the fade before the end marker. Nothing to command, only to show.
             state = .fading(id)
+            return []
+
+        case (.fading(let id), .autoFadeCancelled):
+            // `]` moved the end past the automatic fade and the kernel is back at full. The
+            // controller sends this only for the automatic fade, never after F.
+            state = .live(id)
             return []
 
         case (.live, .finished), (.held, .finished), (.fading, .finished), (.panicking, .finished):

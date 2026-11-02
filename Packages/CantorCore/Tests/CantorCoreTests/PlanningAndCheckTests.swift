@@ -389,3 +389,195 @@ final class JSONFileTests: XCTestCase {
         XCTAssertEqual(settings.targetLUFS, -18)
     }
 }
+
+// MARK: Sync failures
+
+extension PCOClientTests {
+    func testDefaultSpacingStaysUnderRateLimit() {
+        let perWindow = Duration.seconds(20) / PCOClient.defaultSpacing
+        XCTAssertLessThan(perWindow, 100)
+    }
+
+    func testReadsItemKey() async throws {
+        StubProtocol.responder = { [self] request in
+            if request.url!.absoluteString.contains("/items") {
+                return (200, [:], json(["data": [["id": "i3", "attributes": ["title": "Be Still", "item_type": "song", "key_name": "Eb"]]]]))
+            }
+            return fixture(request)
+        }
+        let client = PCOClient(appID: "id", secret: "secret", session: StubProtocol.session(), spacing: .zero)
+        let plans = try await client.fetchUpcomingPlans(memory: AliasMemory())
+        XCTAssertEqual(plans.first?.cues.first?.keyName, "Eb")
+    }
+
+    func testFailedTimesAndAttachmentsKeepSavedValues() async throws {
+        StubProtocol.responder = { [self] request in
+            let url = request.url!.absoluteString
+            if url.contains("/plan_times") || url.contains("/attachments") { return (500, [:], Data()) }
+            return fixture(request)
+        }
+        let client = PCOClient(appID: "id", secret: "secret", session: StubProtocol.session(), spacing: .zero)
+        let fresh = try await client.fetchUpcomingPlans(memory: AliasMemory())
+        XCTAssertTrue(fresh[0].serviceTimesUnavailable)
+        XCTAssertTrue(try XCTUnwrap(fresh[0].cues.first { $0.id == "i3" }).attachmentsUnavailable)
+
+        let time = Date(timeIntervalSince1970: 1_800_000_000)
+        var saved = fresh[0]
+        saved.serviceTimes = [time]
+        saved.serviceTimesUnavailable = false
+        for index in saved.cues.indices {
+            saved.cues[index].attachmentFilenames = ["Saved.mp3"]
+            saved.cues[index].attachmentsUnavailable = false
+        }
+        let merged = ServicePlan.applySync(existing: [saved], fresh: fresh, loadedID: nil)
+        XCTAssertEqual(merged[0].serviceTimes, [time])
+        XCTAssertEqual(merged[0].cues.first { $0.id == "i3" }?.attachmentFilenames, ["Saved.mp3"])
+    }
+
+    func testOnePlanFailingKeepsTheOthersAndItsSavedCopy() async throws {
+        StubProtocol.responder = { [self] request in
+            let url = request.url!.absoluteString
+            if url.contains("/plans?") {
+                return (200, [:], json(["data": [
+                    ["id": "p1", "attributes": ["title": "One", "sort_date": "2026-11-08T15:00:00Z"]],
+                    ["id": "p2", "attributes": ["title": "Two", "sort_date": "2026-11-15T15:00:00Z"]],
+                ]]))
+            }
+            if url.contains("/plans/p2/") { return (404, [:], Data()) }
+            return fixture(request)
+        }
+        let client = PCOClient(appID: "id", secret: "secret", session: StubProtocol.session(), spacing: .zero)
+        let fresh = try await client.fetchUpcomingPlans(memory: AliasMemory())
+        XCTAssertEqual(fresh.map(\.id), ["p1", "p2"])
+        XCTAssertFalse(fresh[0].syncFailed)
+        XCTAssertTrue(fresh[1].syncFailed)
+
+        var saved = ServicePlan(id: "p2", serviceTypeID: "st1", serviceTypeName: "T", title: "Two", dates: "", sortDate: nil,
+                                cues: [ServiceCue(id: "c", position: 0, title: "Saved")])
+        saved.cues[0].trackID = nil
+        let result = ServicePlan.applySync(existing: [saved], fresh: fresh, loadedID: nil)
+        XCTAssertEqual(result.first { $0.id == "p2" }, saved, "a plan that failed to fetch keeps its saved copy")
+        XCTAssertEqual(ServicePlan.applySync(existing: [], fresh: fresh, loadedID: nil).map(\.id), ["p1"], "and is not added empty")
+    }
+
+    func testRejectedTokenMidSyncStillFails() async {
+        StubProtocol.responder = { [self] request in
+            request.url!.absoluteString.contains("/items") ? (401, [:], Data()) : fixture(request)
+        }
+        let client = PCOClient(appID: "id", secret: "secret", session: StubProtocol.session(), spacing: .zero)
+        do {
+            _ = try await client.fetchUpcomingPlans(memory: AliasMemory())
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? PCOError, .unauthorized)
+        }
+    }
+}
+
+// MARK: Resync
+
+extension PlanMergeTests {
+    private func confirmed(_ id: String, _ title: String, song: String? = nil, arrangement: String = "", key: String? = nil) -> ServiceCue {
+        var cue = ServiceCue(id: id, position: 0, title: title, arrangement: arrangement, keyName: key, songID: song)
+        cue.trackID = UUID()
+        return cue
+    }
+
+    func testRemovedConfirmedCueStaysFlagged() {
+        let cue = confirmed("1", "Anthem")
+        let merged = plan([cue]).merging(fresh: plan([ServiceCue(id: "2", position: 0, title: "Welcome")]))
+        let kept = try? XCTUnwrap(merged.cues.first { $0.id == "1" })
+        XCTAssertEqual(kept?.trackID, cue.trackID)
+        XCTAssertEqual(kept?.removedInPCO, true)
+
+        // Still gone next time: still kept. Back with the same id: no longer removed.
+        let again = merged.merging(fresh: plan([ServiceCue(id: "2", position: 0, title: "Welcome")]))
+        XCTAssertEqual(again.cues.first { $0.id == "1" }?.removedInPCO, true)
+        let back = again.merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Anthem")]))
+        XCTAssertEqual(back.cues.map(\.id), ["1"])
+        XCTAssertFalse(back.cues[0].removedInPCO)
+        XCTAssertEqual(back.cues[0].trackID, cue.trackID)
+    }
+
+    func testUnconfirmedRemovedCueIsDropped() {
+        let merged = plan([ServiceCue(id: "1", position: 0, title: "Anthem")]).merging(fresh: plan([]))
+        XCTAssertTrue(merged.cues.isEmpty)
+    }
+
+    func testRecreatedItemTakesOverConfirmation() {
+        let bySong = confirmed("1", "Be Still", song: "s9")
+        let byTitle = confirmed("2", "Total Praise")
+        let fresh = plan([
+            ServiceCue(id: "10", position: 0, title: "Be Still (choir)", songID: "s9"),
+            ServiceCue(id: "11", position: 1, title: "total praise!"),
+        ])
+        let merged = plan([bySong, byTitle]).merging(fresh: fresh)
+        XCTAssertEqual(merged.cues.map(\.id), ["10", "11"])
+        XCTAssertEqual(merged.cues[0].trackID, bySong.trackID)
+        XCTAssertEqual(merged.cues[1].trackID, byTitle.trackID)
+        XCTAssertFalse(merged.cues.contains { $0.removedInPCO })
+    }
+
+    func testAmbiguousRecreatedItemDoesNotTakeConfirmation() {
+        let cue = confirmed("1", "Anthem")
+        let fresh = plan([ServiceCue(id: "10", position: 0, title: "Anthem"), ServiceCue(id: "11", position: 1, title: "Anthem")])
+        let merged = plan([cue]).merging(fresh: fresh)
+        XCTAssertNil(merged.cues.first { $0.id == "10" }?.trackID)
+        XCTAssertNil(merged.cues.first { $0.id == "11" }?.trackID)
+        XCTAssertEqual(merged.cues.first { $0.id == "1" }?.removedInPCO, true)
+    }
+
+    func testArrangementAndKeyChangesFlag() {
+        let cue = confirmed("1", "Be Still", arrangement: "SATB", key: "D")
+        let arrangement = plan([cue]).merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Be Still", arrangement: "SAB", keyName: "D")]))
+        XCTAssertTrue(arrangement.cues[0].changedSinceConfirm)
+        let key = plan([cue]).merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Be Still", arrangement: "SATB", keyName: "Eb")]))
+        XCTAssertTrue(key.cues[0].changedSinceConfirm)
+        let same = plan([cue]).merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Be Still", arrangement: "SATB", keyName: "D")]))
+        XCTAssertFalse(same.cues[0].changedSinceConfirm)
+    }
+
+    func testKeySavedBeforeKeysWereReadIsNotAChange() {
+        let cue = confirmed("1", "Be Still", key: nil)
+        let merged = plan([cue]).merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Be Still", keyName: "D")]))
+        XCTAssertFalse(merged.cues[0].changedSinceConfirm)
+        XCTAssertEqual(merged.cues[0].keyName, "D")
+    }
+}
+
+// MARK: Check gaps
+
+extension PreServiceCheckTests {
+    func testStartPastBufferEndBlocks() {
+        var track = goodTrack()
+        track.startSec = 50
+        track.endSec = nil
+        var value = input(track: track)
+        value.residentLengths = [track.id: ResidentLength(frames: 48_000 * 40, sampleRate: 48_000)]
+        let issue = PreServiceCheck.run(value).first { $0.kind == .emptyRange }
+        XCTAssertEqual(issue?.severity, .blocking)
+    }
+
+    func testEndBeforeStartBlocksWithoutBuffer() {
+        var track = goodTrack()
+        track.startSec = 30
+        track.endSec = 20
+        XCTAssertTrue(kinds(input(track: track, resident: false)).contains(.emptyRange))
+        XCTAssertFalse(kinds(input(track: goodTrack())).contains(.emptyRange))
+    }
+
+    func testResidentTrackWithMissingFileOnlyWarns() {
+        var track = goodTrack()
+        track.files = [TrackFile(path: "/gone/a.mp3", locality: .missing)]
+        let issues = PreServiceCheck.run(input(track: track, resident: true))
+        XCTAssertEqual(issues.first { $0.kind == .fileMissing }?.severity, .warning)
+        XCTAssertFalse(issues.contains { $0.severity == .blocking })
+    }
+
+    func testRemovedInPlanningCenterWarns() {
+        let track = goodTrack()
+        var value = input(track: track)
+        value.plan.cues[0].removedInPCO = true
+        XCTAssertEqual(PreServiceCheck.run(value).first { $0.kind == .removedInPCO }?.severity, .warning)
+    }
+}

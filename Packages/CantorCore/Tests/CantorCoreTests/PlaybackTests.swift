@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import CantorCore
 
@@ -366,6 +367,8 @@ final class FakeHouse: HouseOutput {
     var stops = 0
     var kernel: PlaybackKernel?
     var failure: Error?
+    var running = true
+    var isRunning: Bool { kernel != nil && running }
 
     func start(kernel: PlaybackKernel, deviceUID: String, firstChannel: Int) throws {
         if let failure { throw failure }
@@ -640,6 +643,370 @@ final class ShowControllerTests: XCTestCase {
         show.arm()
         show.load(cues: [])
         XCTAssertEqual(show.cues.count, 2)
+    }
+}
+
+extension PlaybackKernelTests {
+    /// Largest step between neighbouring samples. A steady 1.0 source makes any jump in level show up.
+    private func largestStep(_ samples: [Float]) -> Float {
+        zip(samples, samples.dropFirst()).map { abs($1 - $0) }.max() ?? 0
+    }
+
+    func testEndPulledInStillFadesForAtLeastTheDeclick() {
+        let k = kernel(seconds: 10, end: 5, fade: 0.5)
+        k.play()
+        _ = render(k, seconds: 1)
+        k.setEnd(toFrame: 0)
+        let out = render(k, seconds: 0.1)
+        let declick = Int(PlaybackKernel.declickSeconds * rate)
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertGreaterThanOrEqual(k.positionFrames, Int(rate) + declick)
+        XCTAssertGreaterThanOrEqual(out.filter { $0 > 0 }.count, declick - 1, "no one-sample cut")
+        XCTAssertLessThan(largestStep(out), 0.02)
+    }
+
+    func testBracketDuringAutomaticFadeRisesBackAndExtends() {
+        let k = kernel(seconds: 10, end: 8, fade: 3)
+        k.play()
+        let before = render(k, seconds: 5.5)
+        XCTAssertEqual(k.phase, .fading)
+        k.setEnd(toFrame: Int(9 * rate))
+        let rise = render(k, seconds: 0.4)
+        XCTAssertEqual(k.phase, .playing)
+        XCTAssertEqual(rise.last!, 1, accuracy: 1e-5)
+        XCTAssertLessThan(largestStep([before.last!] + rise), 0.01, "rises smoothly from the fade level")
+        let rest = render(k, seconds: 3.5)
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertEqual(k.positionFrames, Int(9 * rate))
+        // The full saved fade still runs before the new end: it starts at 6 s, and rest starts at 5.9 s.
+        XCTAssertEqual(rest[Int(1.6 * rate)], FadeCurve.down(0.5), accuracy: 1e-3)
+    }
+
+    func testBracketLateInAutomaticFadeRefadesFromCurrentLevel() {
+        let k = kernel(seconds: 10, end: 5, fade: 3)
+        k.play()
+        let before = render(k, seconds: 4)
+        k.setEnd(toFrame: Int(6 * rate))
+        let rest = render(k, seconds: 2.5)
+        XCTAssertEqual(k.positionFrames, Int(6 * rate))
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertLessThan(largestStep([before.last!] + rest), 0.01)
+        XCTAssertGreaterThan(rest[Int(1 * rate)], 0.05, "still audible past the old end")
+    }
+
+    func testNudgeNeverUndoesManualFadeOrPanic() {
+        let k = kernel(seconds: 20)
+        k.play()
+        _ = render(k, seconds: 1)
+        k.fade(seconds: 1)
+        k.setEnd(toFrame: Int(15 * rate))
+        _ = render(k, seconds: 1.5)
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertEqual(k.positionFrames, Int(2 * rate), accuracy: 512)
+
+        let p = kernel(seconds: 20)
+        p.play()
+        _ = render(p, seconds: 1)
+        p.panic(seconds: 0.5)
+        p.setEnd(toFrame: Int(15 * rate))
+        _ = render(p, seconds: 1)
+        XCTAssertEqual(p.phase, .finished)
+    }
+
+    func testResumeFromHoldKeepsFullEndFade() {
+        let k = kernel(seconds: 10, fade: 3)
+        k.play()
+        _ = render(k, seconds: 6)
+        k.hold()
+        _ = render(k, seconds: 0.1)
+        let held = k.positionFrames
+        k.play()
+        let out = render(k, seconds: 4.1)
+        let fadeStart = Int(7 * rate) - held
+        XCTAssertEqual(out[fadeStart - 1], 1, accuracy: 1e-5, "the fade does not start early")
+        XCTAssertEqual(out[fadeStart + Int(1.5 * rate)], FadeCurve.down(0.5), accuracy: 1e-3)
+        XCTAssertEqual(k.phase, .finished)
+    }
+
+    func testGoAfterMarkerJumpIntoEndFadeIsAudibleAndLands() {
+        let k = kernel(seconds: 10, fade: 3)
+        k.play()
+        _ = render(k, seconds: 1)
+        k.hold()
+        _ = render(k, seconds: 0.1)
+        k.seek(toFrame: Int(9.5 * rate))
+        _ = render(k, seconds: 0.01)
+        k.play()
+        let out = render(k, seconds: 0.6)
+        XCTAssertGreaterThan(out.max() ?? 0, 0.9)
+        XCTAssertLessThan(largestStep(out), 0.05)
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertEqual(k.positionFrames, Int(10 * rate))
+    }
+
+    func testHoldJustBeforeFadePointStaysAHold() {
+        let k = kernel(seconds: 10, fade: 3)
+        k.play()
+        _ = render(k, seconds: (7 * rate - 100) / rate)
+        k.hold()
+        _ = render(k, seconds: 0.1)
+        XCTAssertEqual(k.phase, .paused, "a Hold is not turned into the end fade")
+        k.play()
+        _ = render(k, seconds: 3.1)
+        XCTAssertEqual(k.phase, .finished)
+        XCTAssertEqual(k.positionFrames, Int(10 * rate))
+    }
+
+    func testPanicDuringFadeInNeverGetsLouder() {
+        let k = kernel(seconds: 10, fadeIn: 2)
+        k.play()
+        let before = render(k, seconds: 0.5)
+        k.panic(seconds: 1)
+        let out = render(k, seconds: 1.1)
+        XCTAssertLessThanOrEqual(out.max() ?? 0, before.last! + 1e-3)
+        XCTAssertEqual(k.phase, .finished)
+    }
+}
+
+extension ShowControllerTests {
+    private func cue(_ id: String, endSec: Double?, fadeOutSec: Double = 3, frames: Int = 480_000) -> ShowCue {
+        var track = Track(title: id)
+        track.endSec = endSec
+        track.fadeOutSec = fadeOutSec
+        return ShowCue(id: id, title: id, track: track, buffer: PCMBuffer(left: [Float](repeating: 0.5, count: frames), right: nil, sampleRate: 48_000))
+    }
+
+    private func loseDevice(_ show: ShowController) {
+        show.deviceLost()
+        show.acknowledgeFault()
+    }
+
+    func testDisarmWhileIdleClearsKeptStart() {
+        let show = controller()
+        armAndGo(show)
+        house.render(seconds: 1)
+        loseDevice(show)
+        XCTAssertNotNil(show.resumeSec)
+        show.disarm()
+        XCTAssertNil(show.resumeSec)
+        XCTAssertNil(show.arm())
+        XCTAssertEqual(house.kernel?.parameters.startFrame, 0)
+    }
+
+    func testKeptPositionInsideEndFadeArmsFromTheTop() {
+        let show = controller(cues: [cue("a", endSec: 5)])
+        armAndGo(show)
+        house.render(seconds: 3)
+        show.deviceLost()
+        show.acknowledgeFault()
+        XCTAssertNil(show.arm())
+        XCTAssertEqual(house.kernel?.parameters.startFrame, 0)
+        XCTAssertNil(show.resumeSec)
+    }
+
+    func testKeptPositionPastAnEditedEndArmsFromTheTop() {
+        let show = controller(cues: [cue("a", endSec: nil)])
+        armAndGo(show)
+        house.render(seconds: 4)
+        loseDevice(show)
+        show.refresh(cues: [cue("a", endSec: 2)])
+        XCTAssertNil(show.arm(), "never refused with emptyRange")
+        XCTAssertEqual(house.kernel?.parameters.startFrame, 0)
+    }
+
+    func testResumeKeepsTheSavedFadeLength() {
+        let show = controller(cues: [cue("a", endSec: nil)])
+        armAndGo(show)
+        house.render(seconds: 5)
+        loseDevice(show)
+        XCTAssertNil(show.arm())
+        let kernel = house.kernel!
+        XCTAssertGreaterThan(kernel.parameters.startFrame, 200_000)
+        time += 1
+        show.go()
+        // From 5 s with 5 s left, a halved lead would start the fade at 7.5 s. The saved 3 s fade starts at 7 s.
+        house.render(seconds: 2.2)
+        show.tick()
+        XCTAssertEqual(show.state, .fading("a"))
+    }
+
+    func testDeviceLostDuringFadeOrPanicDoesNotKeepPosition() {
+        let show = controller()
+        armAndGo(show)
+        house.render(seconds: 1)
+        show.fadeOut()
+        house.render(seconds: 0.1)
+        loseDevice(show)
+        XCTAssertNil(show.resumeSec)
+
+        show.movePointer(by: 1)
+        armAndGo(show)
+        house.render(seconds: 1)
+        show.panicPressed()
+        house.render(seconds: 0.1)
+        loseDevice(show)
+        XCTAssertNil(show.resumeSec)
+    }
+
+    func testRefreshDropsKeptPositionWhenAudioChanges() {
+        let show = controller()
+        armAndGo(show)
+        house.render(seconds: 1)
+        loseDevice(show)
+        var edited = show.cues
+        edited[0].gainDb = -2
+        show.refresh(cues: edited)
+        XCTAssertNotNil(show.resumeSec, "a level change keeps the position")
+
+        edited[0].buffer = PCMBuffer(left: [Float](repeating: 0.5, count: 240_000), right: nil, sampleRate: 48_000)
+        show.refresh(cues: edited)
+        XCTAssertNil(show.resumeSec)
+    }
+
+    func testRefreshDropsKeptPositionWhenTrackChanges() {
+        let show = controller()
+        armAndGo(show)
+        house.render(seconds: 1)
+        loseDevice(show)
+        var edited = show.cues
+        edited[0].track = Track(title: "other")
+        show.refresh(cues: edited)
+        XCTAssertNil(show.resumeSec)
+    }
+
+    func testTwoQuickNudgesBothApply() {
+        let show = controller(cues: [cue("a", endSec: 6)])
+        armAndGo(show)
+        house.render(seconds: 0.1)
+        show.nudgeEnd(seconds: 1)
+        show.nudgeEnd(seconds: 1)
+        house.render(seconds: 0.01)
+        show.tick()
+        XCTAssertEqual(show.endSec, 8, accuracy: 0.001)
+    }
+
+    func testBracketDuringAutomaticFadeReturnsToLive() {
+        let show = controller(cues: [cue("a", endSec: 5)])
+        armAndGo(show)
+        house.render(seconds: 2.5)
+        show.tick()
+        XCTAssertEqual(show.state, .fading("a"))
+        show.nudgeEnd(seconds: 1)
+        house.render(seconds: 0.4)
+        show.tick()
+        XCTAssertEqual(show.state, .live("a"))
+        XCTAssertEqual(show.endSec, 6, accuracy: 0.001)
+        house.render(seconds: 3.7)
+        show.tick()
+        XCTAssertEqual(show.state, .idle)
+    }
+
+    func testBracketAfterFIsIgnored() {
+        let show = controller(cues: [cue("a", endSec: 5)])
+        armAndGo(show)
+        house.render(seconds: 2.5)
+        show.tick()
+        XCTAssertEqual(show.state, .fading("a"))
+        show.fadeOut()
+        show.nudgeEnd(seconds: 1)
+        house.render(seconds: 0.4)
+        show.tick()
+        XCTAssertEqual(show.state, .fading("a"), "F during the automatic fade is final")
+
+        let manual = controller()
+        armAndGo(manual)
+        house.render(seconds: 1)
+        manual.fadeOut()
+        manual.nudgeEnd(seconds: 5)
+        house.render(seconds: 3.2)
+        manual.tick()
+        XCTAssertEqual(manual.state, .idle)
+    }
+
+    func testEngineThatStoppedByItselfFaults() {
+        let show = controller()
+        armAndGo(show)
+        house.running = false
+        show.checkDevice()
+        XCTAssertEqual(show.state, .faulted("a"))
+    }
+
+    func testMissingChannelPairRefusesWithReadableReason() {
+        let show = controller()
+        show.setShowMode(true)
+        house.failure = OutputError.channelPairMissing(firstChannel: 4, deviceChannels: 2)
+        guard case .deviceFailed(let reason) = show.arm() else { return XCTFail("expected a device refusal") }
+        XCTAssertTrue(reason.contains("Outputs 5-6"), reason)
+        XCTAssertEqual(show.state, .idle)
+    }
+
+    func testDeviceLostLogNamesTheCue() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("runlog.jsonl")
+        let log = RunLog(url: url)
+        time = 100
+        house = FakeHouse()
+        let show = ShowController(house: house, log: log, clock: { [unowned self] in time }, deviceAvailable: { _ in true })
+        show.routing = OutputRouting(houseDeviceUID: "house", cueDeviceUID: "cue")
+        show.load(cues: [cue("Anthem", endSec: nil)])
+        armAndGo(show)
+        show.deviceLost()
+        log.flush()
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+        let lost = try XCTUnwrap(lines.compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] }
+            .first { $0["event"] == "device-lost" })
+        XCTAssertEqual(lost["cue"], "Anthem")
+    }
+}
+
+final class OutputPairTests: XCTestCase {
+    func testPairMustExistOnTheDevice() {
+        XCTAssertNoThrow(try OutputEngine.validatePair(firstChannel: 0, deviceChannels: 2))
+        XCTAssertNoThrow(try OutputEngine.validatePair(firstChannel: 0, deviceChannels: 1))
+        XCTAssertNoThrow(try OutputEngine.validatePair(firstChannel: 2, deviceChannels: 8))
+        XCTAssertNoThrow(try OutputEngine.validatePair(firstChannel: 6, deviceChannels: 8))
+        XCTAssertThrowsError(try OutputEngine.validatePair(firstChannel: 2, deviceChannels: 2))
+        XCTAssertThrowsError(try OutputEngine.validatePair(firstChannel: 7, deviceChannels: 8))
+        XCTAssertThrowsError(try OutputEngine.validatePair(firstChannel: 8, deviceChannels: 8))
+        XCTAssertThrowsError(try OutputEngine.validatePair(firstChannel: -2, deviceChannels: 8))
+        XCTAssertThrowsError(try OutputEngine.validatePair(firstChannel: 4, deviceChannels: 4)) { error in
+            XCTAssertEqual(error as? OutputError, .channelPairMissing(firstChannel: 4, deviceChannels: 4))
+        }
+    }
+}
+
+final class PCMDecoderTests: XCTestCase {
+    private func writeWAV(frames: Int) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("t.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))
+        buffer.frameLength = AVAudioFrameCount(frames)
+        for n in 0..<frames {
+            buffer.floatChannelData![0][n] = Float(n % 1000) / 1000
+            buffer.floatChannelData![1][n] = -Float(n % 1000) / 1000
+        }
+        try file.write(from: buffer)
+        return url
+    }
+
+    func testReadsEveryChunkToTheEnd() throws {
+        let url = try writeWAV(frames: 10_000)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let buffer = try PCMDecoder.decode(url: url, chunkFrames: 4096)
+        XCTAssertEqual(buffer.frames, 10_000)
+        XCTAssertEqual(buffer.left[9_999], 0.999, accuracy: 1e-4)
+        XCTAssertEqual(buffer.right[4_500], -0.5, accuracy: 1e-4)
+    }
+
+    func testExactLengthDecodeIsUnchanged() throws {
+        let url = try writeWAV(frames: 48_000)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let buffer = try PCMDecoder.decode(url: url)
+        XCTAssertEqual(buffer.frames, 48_000)
+        XCTAssertEqual(buffer.sampleRate, 48_000)
+        XCTAssertEqual(buffer.left[47_999], 0.999, accuracy: 1e-4)
     }
 }
 

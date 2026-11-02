@@ -20,12 +20,27 @@ public struct ClaudeAccountStatus: Equatable, Sendable {
 /// no tools, no settings and no MCP servers, from an empty folder.
 public struct ClaudeCLI: ClaudeRunner {
     public static let timeout: TimeInterval = 120
-    static let apiVariables = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+    /// After SIGTERM, how long Claude Code gets to exit before SIGKILL.
+    static let killGraceSec: TimeInterval = 3
+    /// After the process exits, how long to wait for the rest of its output. A child process it
+    /// left behind can hold the pipe open, so the wait is bounded.
+    static let drainGraceSec: TimeInterval = 2
+    /// Every ANTHROPIC_ variable is removed (keys, tokens, base URL, model, headers), plus these,
+    /// which send requests through another provider instead of the Claude account.
+    static let apiVariables: Set<String> = [
+        "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "CLAUDE_CODE_SKIP_VERTEX_AUTH", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH", "AWS_BEARER_TOKEN_BEDROCK", "CLOUD_ML_REGION",
+    ]
+    /// Phrases Claude Code uses when the account's usage limit is reached. A bare "limit" would
+    /// also catch context and token limits, which waiting does not fix.
+    static let usageLimitPhrases = ["usage limit", "rate limit", "hit your limit", "weekly limit", "hour limit", "session limit"]
 
     public var path: String
+    public var timeout: TimeInterval
 
-    public init(path: String) {
+    public init(path: String, timeout: TimeInterval = ClaudeCLI.timeout) {
         self.path = path
+        self.timeout = timeout
     }
 
     /// A GUI app does not inherit the shell's PATH, so the usual install locations are checked.
@@ -45,7 +60,7 @@ public struct ClaudeCLI: ClaudeRunner {
     }
 
     static func environment(from base: [String: String]) -> [String: String] {
-        base.filter { !apiVariables.contains($0.key) }
+        base.filter { !$0.key.hasPrefix("ANTHROPIC_") && !apiVariables.contains($0.key) }
     }
 
     public func run(system: String, prompt: String, schema: String, model: String) async throws -> Data {
@@ -60,47 +75,79 @@ public struct ClaudeCLI: ClaudeRunner {
         )
     }
 
+    /// Runs on a plain dispatch thread, since it blocks while Claude Code works. It always returns:
+    /// a hung process gets SIGTERM at the timeout and SIGKILL shortly after.
     private func execute(arguments: [String], input: String) async throws -> Data {
-        let path = self.path
-        return try await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = arguments
-            process.environment = Self.environment(from: ProcessInfo.processInfo.environment)
-            process.currentDirectoryURL = try Self.emptyDirectory()
-
-            let stdin = Pipe(), stdout = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = stdout
-            process.standardError = FileHandle.nullDevice
-            // If the process exits early, a write must fail rather than raise SIGPIPE in the app.
-            _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-
-            do {
-                try process.run()
-            } catch {
-                throw LLMError.notInstalled
+        let path = self.path, timeout = self.timeout
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try Self.runBlocking(path: path, arguments: arguments, input: input, timeout: timeout) })
             }
+        }
+    }
 
-            let timedOut = Mutex(false)
-            DispatchQueue.global().asyncAfter(deadline: .now() + Self.timeout) {
-                guard process.isRunning else { return }
-                timedOut.withLock { $0 = true }
-                process.terminate()
+    private static func runBlocking(path: String, arguments: [String], input: String, timeout: TimeInterval) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.environment = environment(from: ProcessInfo.processInfo.environment)
+        process.currentDirectoryURL = try emptyDirectory()
+
+        let stdin = Pipe(), stdout = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        // If the process exits early, a write must fail rather than raise SIGPIPE in the app.
+        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+
+        // Output is collected as it arrives, so nothing waits on a pipe another process may hold open.
+        let output = Mutex(Data())
+        let ended = DispatchSemaphore(value: 0)
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                ended.signal()
+            } else {
+                output.withLock { $0.append(chunk) }
             }
+        }
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
 
-            try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
-            try? stdin.fileHandleForWriting.close()
-            let output = (try? stdout.fileHandleForReading.readToEnd()) ?? Data()
-            process.waitUntilExit()
+        do {
+            try process.run()
+        } catch {
+            stdout.fileHandleForReading.readabilityHandler = nil
+            throw LLMError.notInstalled
+        }
 
-            if timedOut.withLock({ $0 }) { throw LLMError.timedOut }
-            // A failed request still prints a JSON result with the reason, so that is what gets read.
-            if output.isEmpty, process.terminationStatus != 0 {
-                throw LLMError.failed("Claude Code exited with status \(process.terminationStatus).")
+        // A process that never reads stdin must not block this thread either.
+        let writer = stdin.fileHandleForWriting
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? writer.write(contentsOf: Data(input.utf8))
+            try? writer.close()
+        }
+
+        var timedOut = false
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            timedOut = true
+            process.terminate()
+            if exited.wait(timeout: .now() + killGraceSec) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + killGraceSec)
             }
-            return output
-        }.value
+        }
+        _ = ended.wait(timeout: .now() + drainGraceSec)
+        stdout.fileHandleForReading.readabilityHandler = nil
+        let data = output.withLock { $0 }
+
+        if timedOut || process.isRunning { throw LLMError.timedOut }
+        // A failed request still prints a JSON result with the reason, so that is what gets read.
+        if data.isEmpty, process.terminationStatus != 0 {
+            throw LLMError.failed("Claude Code exited with status \(process.terminationStatus).")
+        }
+        return data
     }
 
     /// Reads Claude Code's JSON result. A failed request reports `is_error` with a reason in `result`.
@@ -110,7 +157,10 @@ public struct ClaudeCLI: ClaudeRunner {
             let message = root["result"] as? String ?? ""
             let lowered = message.lowercased()
             if lowered.contains("not logged in") || lowered.contains("/login") { throw LLMError.notLoggedIn }
-            if lowered.contains("limit") { throw LLMError.limitReached }
+            if usageLimitPhrases.contains(where: lowered.contains) || (lowered.contains("limit reached") && !lowered.contains("context")
+                && !lowered.contains("token")) {
+                throw LLMError.limitReached
+            }
             throw LLMError.failed(message)
         }
         if let structured = root["structured_output"] as? [String: Any] { return structured }

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 public enum FileLocalityProbe {
     private static let datalessFlag: UInt32 = 0x4000_0000 // SF_DATALESS
@@ -53,11 +54,32 @@ public struct HashCache: Codable, Sendable {
     public init() {}
 }
 
+/// Paths a scan could not see. Their tracks keep the state they had, rather than turning missing
+/// because a download was unsettled, a file would not decode or a folder could not be listed.
+public struct ScanGaps: Equatable, Sendable {
+    public var paths: Set<String>
+    /// Roots or subfolders that failed to enumerate. Everything under them is unknown.
+    public var folders: [String]
+
+    public init(paths: Set<String> = [], folders: [String] = []) {
+        self.paths = paths
+        self.folders = folders
+    }
+
+    public var isEmpty: Bool { paths.isEmpty && folders.isEmpty }
+
+    public func contains(_ path: String) -> Bool {
+        paths.contains(path) || folders.contains { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }
+    }
+}
+
 public struct ScanResult: Sendable {
     public var files: [ScannedFile]
     /// A file was still being written, so another scan should follow shortly.
     public var hasUnsettledFiles: Bool
     public var unreadable: [String]
+    /// What the scan skipped, for `Library.merge`.
+    public var gaps: ScanGaps = ScanGaps()
 }
 
 public enum FolderScanner {
@@ -68,23 +90,55 @@ public enum FolderScanner {
         var files: [ScannedFile] = []
         var unsettled = false
         var unreadable: [String] = []
+        var gaps = ScanGaps()
         var seen = Set<String>()
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .addedToDirectoryDateKey, .creationDateKey]
+        let keys: [URLResourceKey] = [
+            .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .addedToDirectoryDateKey, .creationDateKey,
+        ]
 
         for root in roots {
+            // Called for the root itself (no permission, Drive not running) and for any subfolder.
+            let failed = Mutex([String]())
             guard let walker = FileManager.default.enumerator(
                 at: URL(fileURLWithPath: root), includingPropertiesForKeys: keys,
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
+                options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                errorHandler: { url, _ in
+                    failed.withLock { $0.append(url.path) }
+                    return true
+                }
+            ) else {
+                gaps.folders.append(root)
+                // Listed paths have symlinks resolved, as in /private/var.
+                if let resolved = realpath(root, nil) {
+                    gaps.folders.append(String(cString: resolved))
+                    free(resolved)
+                }
+                continue
+            }
 
             for case let url as URL in walker {
                 guard audioExtensions.contains(url.pathExtension.lowercased()) else { continue }
                 let path = url.path
                 guard seen.insert(path).inserted else { continue }
-                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
-
+                guard var values = try? url.resourceValues(forKeys: Set(keys)) else {
+                    gaps.paths.insert(path)
+                    continue
+                }
                 let added = values.addedToDirectoryDate ?? values.creationDate
-                let locality = FileLocalityProbe.locality(path: path)
+
+                // A linked file is read through its target but listed where the link is.
+                var target = url
+                if values.isSymbolicLink == true {
+                    target = url.resolvingSymlinksInPath()
+                    guard let resolved = try? target.resourceValues(forKeys: Set(keys)) else {
+                        gaps.paths.insert(path)
+                        continue
+                    }
+                    values = resolved
+                }
+                guard values.isRegularFile == true else { continue }
+
+                let locality = FileLocalityProbe.locality(path: target.path)
                 if locality != .local {
                     files.append(ScannedFile(path: path, locality: locality, contentID: nil, addedDate: added))
                     continue
@@ -103,11 +157,13 @@ public enum FolderScanner {
                 // AirDrop and Drive write in pieces. Wait until the file has stopped changing.
                 if now.timeIntervalSince1970 - mtime < settleSeconds {
                     unsettled = true
+                    gaps.paths.insert(path)
                     continue
                 }
 
-                guard let contentID = try? ContentHasher.contentID(url: url), let info = PCMDecoder.info(url: url) else {
+                guard let contentID = try? ContentHasher.contentID(url: target), let info = PCMDecoder.info(url: target) else {
                     unreadable.append(path)
+                    gaps.paths.insert(path)
                     continue
                 }
                 cache.entries[path] = HashCache.Entry(
@@ -119,7 +175,8 @@ public enum FolderScanner {
                     sampleRate: info.sampleRate, channels: info.channels, addedDate: added
                 ))
             }
+            gaps.folders += failed.withLock { $0 }
         }
-        return ScanResult(files: files, hasUnsettledFiles: unsettled, unreadable: unreadable)
+        return ScanResult(files: files, hasUnsettledFiles: unsettled, unreadable: unreadable, gaps: gaps)
     }
 }

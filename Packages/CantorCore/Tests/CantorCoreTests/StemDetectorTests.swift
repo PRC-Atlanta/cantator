@@ -26,6 +26,19 @@ final class StemDetectorTests: XCTestCase {
         XCTAssertNil(reasons[distant.id])
     }
 
+    func testMultiTracksIsAStemWordHoweverItIsWritten() {
+        let camel = track("/Music/Choir/Way Maker MultiTracks/Bass.wav", 210)
+        let spaced = track("/Music/Choir/Multi Tracks/Way Maker/Keys.wav", 220)
+        let file = track("/Music/Choir/Way Maker - MultiTracks.wav", 230)
+        let plain = track("/Music/Choir/Multitracks/Organ.wav", 240)
+        let reasons = StemDetector.detect(tracks: [camel, spaced, file, plain])
+        XCTAssertEqual(reasons[camel.id], "In a folder named Way Maker MultiTracks")
+        XCTAssertEqual(reasons[spaced.id], "In a folder named Multi Tracks")
+        XCTAssertEqual(reasons[file.id], "Name says Multitracks")
+        XCTAssertEqual(reasons[plain.id], "In a folder named Multitracks")
+        XCTAssertTrue(StemDetector.detect(tracks: [track("/Music/Choir/Multiply Track Joy.wav")]).isEmpty)
+    }
+
     func testWeakWordsNeedASameLengthSet() {
         // A hymn title with "Guide" and a piano accompaniment on their own stay in.
         let hymn = track("/Music/Special/Guide Me O Thou Great Jehovah.wav", 180)

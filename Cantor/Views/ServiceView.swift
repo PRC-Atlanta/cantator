@@ -113,7 +113,9 @@ private struct StateChip: View {
 
     var body: some View {
         if cue.trackID != nil {
-            if cue.changedSinceConfirm {
+            if cue.removedInPCO {
+                Label("Removed in Planning Center", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
+            } else if cue.changedSinceConfirm {
                 Label("Changed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
             } else {
                 Label("Confirmed", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.live)

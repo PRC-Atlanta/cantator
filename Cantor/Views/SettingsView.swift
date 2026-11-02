@@ -49,7 +49,8 @@ private struct OutputsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .disabled(model.show.state.holdsHouseEngine)
+        // The next arm uses these, so they are part of the show.
+        .disabled(model.show.showMode || model.show.state.holdsHouseEngine)
     }
 
     private func devicePicker(_ title: String, selection: String?, set: @escaping (String?) -> Void) -> some View {
@@ -89,10 +90,15 @@ private struct PlaybackSettings: View {
                 Stepper("Panic fade: \(String(format: "%.1f", model.settings.panicFadeSec)) s", value: binding(\.panicFadeSec), in: 0.2...5, step: 0.1)
                 Stepper("Default end fade: \(String(format: "%.1f", model.settings.defaultFadeOutSec)) s", value: binding(\.defaultFadeOutSec), in: 0...15, step: 0.5)
             }
+            .disabled(model.show.showMode)
             Section("Level") {
                 Toggle("Match track loudness", isOn: binding(\.normalize))
                 Stepper("Target: \(String(format: "%.0f", model.settings.targetLUFS)) LUFS", value: binding(\.targetLUFS), in: -30 ... -10, step: 1)
                     .disabled(!model.settings.normalize)
+            }
+            .disabled(model.show.showMode)
+            if model.show.showMode {
+                Text("Fades and levels are locked in Show Mode.").foregroundStyle(.secondary)
             }
             Section("Appearance") {
                 Picker("Appearance", selection: binding(\.appearance)) {
@@ -122,7 +128,7 @@ private struct SecretField: View {
                     do {
                         try Keychain.write(value, for: key)
                         value = ""
-                        isSaved = Keychain.read(key) != nil
+                        isSaved = (try? Keychain.lookup(key)) != nil
                         failure = nil
                     } catch {
                         failure = error.localizedDescription
@@ -130,13 +136,26 @@ private struct SecretField: View {
                 }
                 .disabled(value.isEmpty)
                 Button("Clear") {
-                    try? Keychain.write("", for: key)
-                    isSaved = false
+                    do {
+                        try Keychain.write("", for: key)
+                        isSaved = false
+                        failure = nil
+                    } catch {
+                        failure = error.localizedDescription
+                    }
                 }
                 .disabled(!isSaved)
             }
         }
-        .onAppear { isSaved = Keychain.read(key) != nil }
+        .onAppear {
+            do {
+                isSaved = try Keychain.lookup(key) != nil
+            } catch {
+                // Denied access is not the same as no token.
+                isSaved = true
+                failure = error.localizedDescription
+            }
+        }
         if let failure { Text(failure).foregroundStyle(Theme.danger) }
     }
 }
@@ -153,7 +172,9 @@ private struct PlanningCenterSettings: View {
                 Text("Create a Personal Access Token at api.planningcenteronline.com/oauth/applications.")
             }
             Section {
-                Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing)
+                Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing || model.show.showMode)
+            } footer: {
+                if model.show.showMode { Text("Sync is off in Show Mode, because it can change the loaded cues.") }
             }
         }
         .formStyle(.grouped)
@@ -246,6 +267,8 @@ private struct FolderSettings: View {
                 Spacer()
                 Button("Rescan") { model.rescan() }.disabled(model.isScanning)
             }
+            // Adding a folder starts a full scan, and its panel takes the keys.
+            .disabled(model.show.showMode)
             Text("Cantor watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear in the New File pop-up, once no service is loaded and nothing is playing.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

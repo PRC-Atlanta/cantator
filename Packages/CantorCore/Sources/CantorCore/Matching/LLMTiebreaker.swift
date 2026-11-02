@@ -68,7 +68,9 @@ public struct LLMTiebreaker: Sendable {
         let verdicts = try Self.parse(output)
         var result: [CueID: [MatchCandidate]] = [:]
         for cue in cues {
-            guard let verdict = verdicts.first(where: { $0.cueID == cue.id }) else { continue }
+            guard let verdict = verdicts.first(where: { $0.cueID == cue.id }),
+                  verdict.chosenIndex.map(cue.candidates.indices.contains) ?? true
+            else { continue }
             result[cue.id] = Self.blend(candidates: cue.candidates, verdict: verdict)
         }
         return result
@@ -96,18 +98,29 @@ public struct LLMTiebreaker: Sendable {
         return results.compactMap { entry in
             guard let id = entry["item_id"] as? String else { return nil }
             return Verdict(
-                cueID: id, chosenIndex: entry["chosen_index"] as? Int, confidence: entry["confidence"] as? Double ?? 0,
+                cueID: id, chosenIndex: entry["chosen_index"] as? Int, confidence: confidence(entry["confidence"]),
                 reason: entry["reason"] as? String ?? ""
             )
         }
     }
 
+    /// The model is asked for 0 to 1, but a reply from 10 to 100 means a percentage. A small
+    /// number over 1 could be any scale, so it is clamped, like anything else out of range.
+    static func confidence(_ value: Any?) -> Double {
+        guard let number = (value as? NSNumber)?.doubleValue, number.isFinite else { return 0 }
+        if number >= 10, number <= 100 { return number / 100 }
+        return min(max(number, 0), 1)
+    }
+
     /// 0.6 string score, 0.4 model score. The model can move a candidate, not confirm it.
     static func blend(candidates: [MatchCandidate], verdict: Verdict) -> [MatchCandidate] {
+        // An index it was not given is no verdict at all.
+        if let chosen = verdict.chosenIndex, !candidates.indices.contains(chosen) { return candidates }
+        let confidence = min(max(verdict.confidence, 0), 1)
         var updated = candidates
         for index in updated.indices {
             let chosen = verdict.chosenIndex == index
-            let llmScore = chosen ? verdict.confidence : (verdict.chosenIndex == nil ? 0 : (1 - verdict.confidence) * 0.5)
+            let llmScore = chosen ? confidence : (verdict.chosenIndex == nil ? 0 : (1 - confidence) * 0.5)
             updated[index].score = min(max(stringWeight * updated[index].score + llmWeight * llmScore, 0), 0.97)
             if chosen {
                 updated[index].source = .llm

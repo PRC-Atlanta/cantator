@@ -4,6 +4,11 @@ public enum FileLocality: String, Codable, Sendable {
     case local
     case cloudOnly
     case missing
+
+    /// A value from a later version reads as missing, so nothing tries to play a file it cannot place.
+    public init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .missing
+    }
 }
 
 public struct TrackFile: Codable, Equatable, Hashable, Sendable {
@@ -117,7 +122,7 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
     /// The file to play: managed copy first, then any local file.
     public func bestFile(managedRoot: String = ManagedFolder.path) -> TrackFile? {
         let local = files.filter { $0.locality == .local }
-        return local.first { $0.path.hasPrefix(managedRoot) } ?? local.first
+        return local.first { $0.path.hasPrefix(managedRoot + "/") } ?? local.first
     }
 
     public var isLocal: Bool { bestFile() != nil }
@@ -161,6 +166,72 @@ extension Track {
     }
 }
 
+// The same for the types saved inside a track, a plan or the settings: a missing field takes its
+// default, so one addition cannot make the whole file unreadable. Encoding is unchanged.
+extension TrackFile {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            path: try c.decodeIfPresent(String.self, forKey: .path) ?? "",
+            locality: try c.decodeIfPresent(FileLocality.self, forKey: .locality) ?? .missing
+        )
+    }
+}
+
+extension Marker {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID(),
+            name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+            seconds: try c.decodeIfPresent(Double.self, forKey: .seconds) ?? 0
+        )
+    }
+}
+
+extension Exclusion {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            reason: try c.decodeIfPresent(String.self, forKey: .reason) ?? "",
+            byOperator: try c.decodeIfPresent(Bool.self, forKey: .byOperator) ?? false
+        )
+    }
+}
+
+// EQ types live in Equalizer.swift. Their keys are spelled out here because synthesized
+// CodingKeys are private to that file.
+extension EQBand {
+    private enum Keys: String, CodingKey { case shape, isOn, frequency, q, gainDb }
+
+    /// A shape from a later version decodes as a bell that is off, so the track plays unchanged.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        let shape = (try c.decodeIfPresent(String.self, forKey: .shape)).flatMap(EQShape.init(rawValue:))
+        let isOn = try c.decodeIfPresent(Bool.self, forKey: .isOn) ?? true
+        self.init(
+            shape: shape ?? .bell,
+            isOn: shape != nil && isOn,
+            frequency: try c.decodeIfPresent(Double.self, forKey: .frequency) ?? 1000,
+            q: try c.decodeIfPresent(Double.self, forKey: .q) ?? 0.71,
+            gainDb: try c.decodeIfPresent(Double.self, forKey: .gainDb) ?? 0
+        )
+    }
+}
+
+extension TrackEQ {
+    private enum Keys: String, CodingKey { case isOn, bands, outputDb }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        self.init(
+            isOn: try c.decodeIfPresent(Bool.self, forKey: .isOn) ?? true,
+            bands: try c.decodeIfPresent([EQBand].self, forKey: .bands) ?? TrackEQ.defaultBands,
+            outputDb: try c.decodeIfPresent(Double.self, forKey: .outputDb) ?? 0
+        )
+    }
+}
+
 public enum ManagedFolder {
     public static var url: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music/Cantor", isDirectory: true)
@@ -170,6 +241,10 @@ public enum ManagedFolder {
 
 public enum MatchSource: String, Codable, Sendable {
     case remembered, attachment, string, llm
+
+    public init(from decoder: Decoder) throws {
+        self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .string
+    }
 }
 
 public struct MatchCandidate: Codable, Equatable, Identifiable, Sendable {
@@ -187,6 +262,17 @@ public struct MatchCandidate: Codable, Equatable, Identifiable, Sendable {
         self.source = source
         self.reason = reason
         self.durationMismatch = durationMismatch
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            trackID: try c.decode(UUID.self, forKey: .trackID),
+            score: try c.decodeIfPresent(Double.self, forKey: .score) ?? 0,
+            source: try c.decodeIfPresent(MatchSource.self, forKey: .source) ?? .string,
+            reason: try c.decodeIfPresent(String.self, forKey: .reason) ?? "",
+            durationMismatch: try c.decodeIfPresent(Bool.self, forKey: .durationMismatch) ?? false
+        )
     }
 }
 
@@ -216,6 +302,8 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     public var itemType: String
     public var notes: String
     public var arrangement: String
+    /// The item's key in Planning Center. Nil when it was saved before Cantor read keys.
+    public var keyName: String?
     public var songID: String?
     public var lengthSec: Double?
     public var attachmentFilenames: [String]
@@ -225,11 +313,15 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     public var trackID: UUID?
     public var changedSinceConfirm: Bool
     public var isManual: Bool
+    /// A confirmed item that is no longer in Planning Center. Kept so the operator sees it go.
+    public var removedInPCO: Bool
+    /// Set by a sync whose attachment request failed, so merging keeps the saved filenames. Not saved.
+    public var attachmentsUnavailable = false
 
     public init(
         id: CueID, position: Int, title: String, itemType: String = "item", notes: String = "", arrangement: String = "",
-        songID: String? = nil, lengthSec: Double? = nil, attachmentFilenames: [String] = [], needsPlayback: Bool = true,
-        isManual: Bool = false
+        keyName: String? = nil, songID: String? = nil, lengthSec: Double? = nil, attachmentFilenames: [String] = [],
+        needsPlayback: Bool = true, isManual: Bool = false
     ) {
         self.id = id
         self.position = position
@@ -237,6 +329,7 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
         self.itemType = itemType
         self.notes = notes
         self.arrangement = arrangement
+        self.keyName = keyName
         self.songID = songID
         self.lengthSec = lengthSec
         self.attachmentFilenames = attachmentFilenames
@@ -245,6 +338,51 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
         trackID = nil
         changedSinceConfirm = false
         self.isManual = isManual
+        removedInPCO = false
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, position, title, itemType, notes, arrangement, keyName, songID, lengthSec, attachmentFilenames
+        case needsPlayback, candidates, trackID, changedSinceConfirm, isManual, removedInPCO
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decode(CueID.self, forKey: .id),
+            position: try c.decodeIfPresent(Int.self, forKey: .position) ?? 0,
+            title: try c.decodeIfPresent(String.self, forKey: .title) ?? "",
+            itemType: try c.decodeIfPresent(String.self, forKey: .itemType) ?? "item",
+            notes: try c.decodeIfPresent(String.self, forKey: .notes) ?? "",
+            arrangement: try c.decodeIfPresent(String.self, forKey: .arrangement) ?? "",
+            keyName: try c.decodeIfPresent(String.self, forKey: .keyName),
+            songID: try c.decodeIfPresent(String.self, forKey: .songID),
+            lengthSec: try c.decodeIfPresent(Double.self, forKey: .lengthSec),
+            attachmentFilenames: try c.decodeIfPresent([String].self, forKey: .attachmentFilenames) ?? [],
+            needsPlayback: try c.decodeIfPresent(Bool.self, forKey: .needsPlayback) ?? true,
+            isManual: try c.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
+        )
+        candidates = try c.decodeIfPresent([MatchCandidate].self, forKey: .candidates) ?? []
+        trackID = try c.decodeIfPresent(UUID.self, forKey: .trackID)
+        changedSinceConfirm = try c.decodeIfPresent(Bool.self, forKey: .changedSinceConfirm) ?? false
+        removedInPCO = try c.decodeIfPresent(Bool.self, forKey: .removedInPCO) ?? false
+    }
+
+    /// Something the operator chose the track for has changed. A key saved before Cantor read keys
+    /// is unknown, not changed.
+    func differsForPlayback(from fresh: ServiceCue) -> Bool {
+        title != fresh.title || songID != fresh.songID || arrangement != fresh.arrangement
+            || (keyName != nil && keyName != fresh.keyName)
+    }
+
+    /// The same song added back as a new item: same song, or the same title once case and punctuation are ignored.
+    func isSameSong(as other: ServiceCue) -> Bool {
+        if let song = songID, song == other.songID { return true }
+        let simple = { (text: String) in
+            text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let mine = simple(title)
+        return !mine.isEmpty && mine == simple(other.title)
     }
 }
 
@@ -258,6 +396,10 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     public var serviceTimes: [Date]
     public var syncedAt: Date
     public var cues: [ServiceCue]
+    /// Set by a sync whose plan_times request failed, so merging keeps the saved times. Not saved.
+    public var serviceTimesUnavailable = false
+    /// Set by a sync that could not fetch this plan, so the saved copy is kept as it was. Not saved.
+    public var syncFailed = false
 
     public init(
         id: String, serviceTypeID: String, serviceTypeName: String, title: String, dates: String, sortDate: Date?,
@@ -274,6 +416,26 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         self.cues = cues
     }
 
+    enum CodingKeys: String, CodingKey {
+        case id, serviceTypeID, serviceTypeName, title, dates, sortDate, serviceTimes, syncedAt, cues
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try c.decode(String.self, forKey: .id),
+            serviceTypeID: try c.decodeIfPresent(String.self, forKey: .serviceTypeID) ?? "",
+            serviceTypeName: try c.decodeIfPresent(String.self, forKey: .serviceTypeName) ?? "",
+            title: try c.decodeIfPresent(String.self, forKey: .title) ?? "",
+            dates: try c.decodeIfPresent(String.self, forKey: .dates) ?? "",
+            sortDate: try c.decodeIfPresent(Date.self, forKey: .sortDate),
+            serviceTimes: try c.decodeIfPresent([Date].self, forKey: .serviceTimes) ?? [],
+            // Unknown sync time reads as long ago, so Check asks for a refresh.
+            syncedAt: try c.decodeIfPresent(Date.self, forKey: .syncedAt) ?? .distantPast,
+            cues: try c.decodeIfPresent([ServiceCue].self, forKey: .cues) ?? []
+        )
+    }
+
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
 
     public var hasOperatorWork: Bool { cues.contains { $0.trackID != nil || $0.isManual } }
@@ -282,7 +444,9 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     /// and is under two weeks old: Planning Center stops listing a plan as future once it starts.
     public static func applySync(existing: [ServicePlan], fresh: [ServicePlan], loadedID: String?, now: Date = Date()) -> [ServicePlan] {
         let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let synced = fresh.map { byID[$0.id]?.merging(fresh: $0) ?? $0 }
+        let synced = fresh.compactMap { plan in
+            plan.syncFailed ? byID[plan.id] : byID[plan.id]?.merging(fresh: plan) ?? plan
+        }
         let freshIDs = Set(fresh.map(\.id))
         let cutoff = now.addingTimeInterval(-14 * 24 * 3600)
         let kept = existing.filter { plan in
@@ -292,21 +456,42 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         return (synced + kept).sorted { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
     }
 
-    /// Applies a fresh sync, keeping operator work on items that still exist.
+    /// Applies a fresh sync, keeping operator work. A confirmed item that is gone moves to a new item
+    /// for the same song when exactly one matches; otherwise it stays, marked removed in Planning Center.
     public func merging(fresh: ServicePlan) -> ServicePlan {
         var result = fresh
+        if fresh.serviceTimesUnavailable { result.serviceTimes = serviceTimes }
         let previous = Dictionary(cues.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let freshIDs = Set(fresh.cues.map(\.id))
+        let orphans = cues.filter { !$0.isManual && $0.trackID != nil && !freshIDs.contains($0.id) }
+        let newcomers = fresh.cues.filter { previous[$0.id] == nil }
+        var adopted: [CueID: ServiceCue] = [:]
+        for orphan in orphans {
+            let claims = newcomers.filter { $0.isSameSong(as: orphan) }
+            guard claims.count == 1, let claim = claims.first,
+                  orphans.filter({ claim.isSameSong(as: $0) }).count == 1
+            else { continue }
+            adopted[claim.id] = orphan
+        }
+
         result.cues = fresh.cues.map { incoming in
-            guard let old = previous[incoming.id] else { return incoming }
+            guard let old = previous[incoming.id] ?? adopted[incoming.id] else { return incoming }
             var merged = incoming
             merged.trackID = old.trackID
             merged.candidates = old.candidates
             merged.needsPlayback = old.needsPlayback
             merged.changedSinceConfirm = old.changedSinceConfirm
-            if old.trackID != nil, old.title != incoming.title || old.songID != incoming.songID {
+            if incoming.attachmentsUnavailable { merged.attachmentFilenames = old.attachmentFilenames }
+            if old.trackID != nil, old.differsForPlayback(from: incoming) {
                 merged.changedSinceConfirm = true
             }
             return merged
+        }
+        let adoptedIDs = Set(adopted.values.map(\.id))
+        result.cues += orphans.filter { !adoptedIDs.contains($0.id) }.map { orphan in
+            var removed = orphan
+            removed.removedInPCO = true
+            return removed
         }
         result.cues += cues.filter(\.isManual)
         return result
@@ -320,6 +505,12 @@ public struct AliasMemory: Codable, Equatable, Sendable {
     public var needsOverrides: [String: Bool] = [:]
 
     public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        confirmed = try c.decodeIfPresent([String: String].self, forKey: .confirmed) ?? [:]
+        needsOverrides = try c.decodeIfPresent([String: Bool].self, forKey: .needsOverrides) ?? [:]
+    }
 
     public static func keys(for cue: ServiceCue) -> [String] {
         var keys: [String] = []
@@ -357,6 +548,16 @@ public struct OutputRouting: Codable, Equatable, Sendable {
         self.houseFirstChannel = houseFirstChannel
         self.cueDeviceUID = cueDeviceUID
         self.cueFirstChannel = cueFirstChannel
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            houseDeviceUID: try c.decodeIfPresent(String.self, forKey: .houseDeviceUID),
+            houseFirstChannel: try c.decodeIfPresent(Int.self, forKey: .houseFirstChannel) ?? 0,
+            cueDeviceUID: try c.decodeIfPresent(String.self, forKey: .cueDeviceUID),
+            cueFirstChannel: try c.decodeIfPresent(Int.self, forKey: .cueFirstChannel) ?? 0
+        )
     }
 
     public var isSameDevice: Bool { houseDeviceUID != nil && houseDeviceUID == cueDeviceUID }

@@ -41,7 +41,7 @@ public enum StemDetector {
         }
         for (folder, members) in Dictionary(grouping: located, by: \.folder) {
             for set in sameLength(members.map(\.track)) where set.count >= minimumSet {
-                let words = set.map { Set(TitleNormalizer.tokens($0.primaryFilename)) }
+                let words = set.map { nameWords(in: $0.primaryFilename) }
                 let stemCount = words.filter { !$0.isDisjoint(with: strongWords.union(weakWords)) && $0.isDisjoint(with: keepWords) }.count
                 let folderName = URL(fileURLWithPath: folder).lastPathComponent
                 for (index, track) in set.enumerated() where eligible.contains(track.id) && reasons[track.id] == nil {
@@ -59,17 +59,29 @@ public enum StemDetector {
 
     private static func reasonFromName(_ track: Track) -> String? {
         guard let file = track.bestFile() ?? track.files.first else { return nil }
-        let words = Set(TitleNormalizer.tokens(file.filename))
+        let words = nameWords(in: file.filename)
         guard words.isDisjoint(with: keepWords) else { return nil }
         if let word = words.intersection(strongWords).sorted().first {
             return "Name says \(word.capitalized)"
         }
         // Only the folder the file is in and the one above it, as in Stems/Song or Song/Stems.
         let folders = file.url.deletingLastPathComponent().pathComponents.suffix(2)
-        if let folder = folders.last(where: { !Set(TitleNormalizer.tokens($0)).isDisjoint(with: folderWords) }) {
+        if let folder = folders.last(where: { !nameWords(in: $0).isDisjoint(with: folderWords) }) {
             return "In a folder named \(folder)"
         }
         return nil
+    }
+
+    /// Tokens, plus pairs run back together when that makes a stem word, since "MultiTracks" and
+    /// "Multi Tracks" tokenize as "multi" and "tracks".
+    static func nameWords(in text: String) -> Set<String> {
+        let tokens = TitleNormalizer.tokens(text)
+        var words = Set(tokens)
+        for (first, second) in zip(tokens, tokens.dropFirst()) {
+            let joined = first + second
+            if strongWords.contains(joined) || folderWords.contains(joined) { words.insert(joined) }
+        }
+        return words
     }
 
     /// Runs of tracks whose lengths are each within the tolerance of the next.

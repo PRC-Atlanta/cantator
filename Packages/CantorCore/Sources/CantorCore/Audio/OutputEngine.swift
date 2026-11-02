@@ -6,18 +6,23 @@ public enum OutputError: LocalizedError, Equatable {
     case deviceUnavailable(String)
     case audioUnit(OSStatus)
     case engine(String)
+    /// Zero-based first channel of the pair, and how many outputs the device has.
+    case channelPairMissing(firstChannel: Int, deviceChannels: Int)
 
     public var errorDescription: String? {
         switch self {
         case .deviceUnavailable(let uid): "Output device is not connected (\(uid))."
         case .audioUnit(let status): "Could not configure the output device (error \(status))."
         case .engine(let message): "Audio engine failed to start: \(message)"
+        case .channelPairMissing(let first, let channels):
+            "Outputs \(first + 1)-\(first + 2) are not on this device, which has \(channels) output\(channels == 1 ? "" : "s"). Choose another pair in Settings > Outputs."
         }
     }
 }
 
 /// One AVAudioEngine bound to one device. A new engine is built for every start, so nothing carries
 /// over from a previous device, and a stopped engine cannot produce sound.
+@MainActor
 final class OutputEngine {
     private var engine: AVAudioEngine?
     private var observer: NSObjectProtocol?
@@ -27,9 +32,20 @@ final class OutputEngine {
         self.onConfigurationChange = onConfigurationChange
     }
 
+    /// False once the engine has stopped by itself, for example after its device dropped out and came back.
+    var isRunning: Bool { engine?.isRunning ?? false }
+
+    /// The pair must exist as configured. Moving to another pair would put the cue on a console
+    /// channel nobody is watching. A device with two outputs or fewer only has the pair 1-2.
+    nonisolated static func validatePair(firstChannel: Int, deviceChannels: Int) throws {
+        let fits = deviceChannels <= 2 ? firstChannel == 0 : firstChannel >= 0 && firstChannel + 1 < deviceChannels
+        guard fits else { throw OutputError.channelPairMissing(firstChannel: firstChannel, deviceChannels: deviceChannels) }
+    }
+
     func start(kernel: PlaybackKernel, deviceUID: String, firstChannel: Int) throws {
         stop()
         guard let device = AudioDevices.device(uid: deviceUID) else { throw OutputError.deviceUnavailable(deviceUID) }
+        try Self.validatePair(firstChannel: firstChannel, deviceChannels: device.outputChannels)
 
         let engine = AVAudioEngine()
         let output = engine.outputNode
@@ -48,7 +64,35 @@ final class OutputEngine {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: kernel.buffer.sampleRate, channels: 2) else {
             throw OutputError.engine("unsupported sample rate")
         }
-        let source = AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
+        let source = Self.makeSource(kernel: kernel, format: format)
+        engine.attach(source)
+        engine.connect(source, to: engine.mainMixerNode, format: format)
+        engine.prepare()
+
+        // Observe before starting, so a change during start is not missed. A notification can still
+        // arrive late from an engine already replaced, so only the current engine counts, and only
+        // once it has actually stopped: Core Audio stops the engine before it posts a real change.
+        self.engine = engine
+        let handler = onConfigurationChange
+        observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self, weak engine] _ in
+            MainActor.assumeIsolated {
+                guard let self, let engine, self.engine === engine, !engine.isRunning else { return }
+                handler()
+            }
+        }
+        do {
+            try engine.start()
+        } catch {
+            stop()
+            throw OutputError.engine(error.localizedDescription)
+        }
+    }
+
+    /// Nonisolated, so the render block never inherits the main actor: it runs on the audio thread.
+    nonisolated private static func makeSource(kernel: PlaybackKernel, format: AVAudioFormat) -> AVAudioSourceNode {
+        AVAudioSourceNode(format: format) { _, _, frameCount, bufferList in
             let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
             guard buffers.count >= 2,
                   let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
@@ -56,22 +100,6 @@ final class OutputEngine {
             else { return noErr }
             kernel.render(frames: Int(frameCount), left: left, right: right)
             return noErr
-        }
-        engine.attach(source)
-        engine.connect(source, to: engine.mainMixerNode, format: format)
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            throw OutputError.engine(error.localizedDescription)
-        }
-        self.engine = engine
-
-        let handler = onConfigurationChange
-        observer = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { handler() }
         }
     }
 
@@ -84,10 +112,10 @@ final class OutputEngine {
 
     private func applyChannelMap(unit: AudioUnit, deviceChannels: Int, firstChannel: Int) throws {
         // One entry per device channel: which source channel feeds it, or -1 for silence.
+        // validatePair has already checked that the pair is on the device.
         var map = [Int32](repeating: -1, count: deviceChannels)
-        let first = min(max(firstChannel, 0), deviceChannels - 2)
-        map[first] = 0
-        map[first + 1] = 1
+        map[firstChannel] = 0
+        map[firstChannel + 1] = 1
         let status = AudioUnitSetProperty(
             unit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Output, 0, &map,
             UInt32(map.count * MemoryLayout<Int32>.size)
@@ -101,6 +129,12 @@ final class OutputEngine {
 public protocol HouseOutput: AnyObject {
     func start(kernel: PlaybackKernel, deviceUID: String, firstChannel: Int) throws
     func stop()
+    /// False once a started engine has stopped by itself. ShowController treats that as device loss.
+    var isRunning: Bool { get }
+}
+
+extension HouseOutput {
+    public var isRunning: Bool { true }
 }
 
 /// The house engine. Only ShowController holds one.
@@ -116,6 +150,8 @@ public final class HouseBus: HouseOutput {
     }
 
     public func stop() { output.stop() }
+
+    public var isRunning: Bool { output.isRunning }
 }
 
 /// The audition engine. It shares nothing with HouseBus and refuses the house device.

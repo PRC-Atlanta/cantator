@@ -27,14 +27,18 @@ public struct Library: Codable, Equatable, Sendable {
     }
 
     /// Folds a scan into the library. Originals on disk are never touched. A track with no file
-    /// left stays, with its files marked missing, because its cue points are worth keeping.
+    /// left stays, with its files marked missing, because its cue points are worth keeping. Files
+    /// in `gaps` were not seen by the scan, so they keep the state they had.
     /// Returns tracks replaced by another, so cues pointing at them can follow.
     @discardableResult
-    public mutating func merge(scan: [ScannedFile], defaultFadeOutSec: Double = 3) -> [UUID: UUID] {
+    public mutating func merge(scan: [ScannedFile], gaps: ScanGaps = ScanGaps(), defaultFadeOutSec: Double = 3) -> [UUID: UUID] {
         var replaced: [UUID: UUID] = [:]
         let scannedPaths = Set(scan.map(\.path))
+        followMovedPlaceholders(scan: scan, scannedPaths: scannedPaths, gaps: gaps)
         for index in tracks.indices {
-            for fileIndex in tracks[index].files.indices where !scannedPaths.contains(tracks[index].files[fileIndex].path) {
+            for fileIndex in tracks[index].files.indices {
+                let path = tracks[index].files[fileIndex].path
+                guard !scannedPaths.contains(path), !gaps.contains(path) else { continue }
                 tracks[index].files[fileIndex].locality = .missing
             }
         }
@@ -90,6 +94,30 @@ public struct Library: Codable, Equatable, Sendable {
         }
     }
 
+    /// A cloud-only file has no content ID, so a move would otherwise leave its old track behind
+    /// and make a ghost one, offered as a new file. When exactly one placeholder with a name went
+    /// away and exactly one unknown placeholder with that name appeared in the same scan, the old
+    /// track follows it. A rename cannot be told apart from a different file, so it is left alone.
+    private mutating func followMovedPlaceholders(scan: [ScannedFile], scannedPaths: Set<String>, gaps: ScanGaps) {
+        let known = Set(tracks.flatMap { $0.files.map(\.path) })
+        let appeared = Dictionary(grouping: scan.filter { $0.contentID == nil && $0.locality == .cloudOnly && !known.contains($0.path) }) {
+            URL(fileURLWithPath: $0.path).lastPathComponent
+        }
+        guard !appeared.isEmpty else { return }
+        var vanished: [String: [(track: Int, file: Int)]] = [:]
+        for index in tracks.indices {
+            for fileIndex in tracks[index].files.indices {
+                let file = tracks[index].files[fileIndex]
+                guard file.locality == .cloudOnly, !scannedPaths.contains(file.path), !gaps.contains(file.path) else { continue }
+                vanished[file.filename, default: []].append((index, fileIndex))
+            }
+        }
+        for (name, arrivals) in appeared where arrivals.count == 1 {
+            guard let gone = vanished[name], gone.count == 1 else { continue }
+            tracks[gone[0].track].files[gone[0].file].path = arrivals[0].path
+        }
+    }
+
     private mutating func detach(path: String, exceptContentID contentID: String) {
         for index in tracks.indices where tracks[index].contentID != contentID {
             tracks[index].files.removeAll { $0.path == path }
@@ -134,8 +162,9 @@ public struct Library: Codable, Equatable, Sendable {
             .filter { $0.files.count > 1 }
             .map { DuplicateGroup(id: "same-\($0.id)", kind: .sameAudio, trackIDs: [$0.id]) }
 
+        // Numbers are part of the key, so "Psalm 23" and "Psalm 91" are not offered as duplicates.
         let byTitle = Dictionary(grouping: tracks.filter { $0.durationSec > 0 }) {
-            TitleNormalizer.normalize($0.title).joined(separator: " ")
+            (TitleNormalizer.normalize($0.title) + TitleNormalizer.titleNumbers($0.title).sorted()).joined(separator: " ")
         }
         for (title, members) in byTitle where members.count > 1 && !title.isEmpty {
             let sorted = members.sorted { $0.durationSec < $1.durationSec }

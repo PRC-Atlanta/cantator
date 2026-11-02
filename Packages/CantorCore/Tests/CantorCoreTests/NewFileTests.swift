@@ -28,6 +28,16 @@ final class NewFileDetectorTests: XCTestCase {
         XCTAssertTrue(ids.isEmpty)
     }
 
+    func testMovedPlaceholderIsNotNew() {
+        var existing = Library()
+        let old = ScannedFile(path: "/Drive/Choir/A/Song.mp3", locality: .cloudOnly, contentID: nil, addedDate: watchStart.addingTimeInterval(-10))
+        existing.merge(scan: [old])
+        let moved = ScannedFile(path: "/Drive/Choir/B/Song.mp3", locality: .cloudOnly, contentID: nil, addedDate: watchStart.addingTimeInterval(500))
+        let (library, ids) = detect([moved], existing: existing)
+        XCTAssertTrue(ids.isEmpty)
+        XCTAssertEqual(library.tracks.count, 1)
+    }
+
     func testFileFoundAfterRelaunchIsStillNew() {
         // Arrived while the app was closed: the library has never seen it, and it came after the watch began.
         var existing = Library()
@@ -160,6 +170,62 @@ final class FileClassifierTests: XCTestCase {
 
     func testFolderIsLastTwoComponents() {
         XCTAssertEqual(NewFileFacts.folder(of: "/Users/me/Library/CloudStorage/Drive/Choir/Nov/song.mp3"), "Choir/Nov")
+        // Without roots, account and home folder names are still left out.
+        XCTAssertEqual(NewFileFacts.folder(of: "/Users/me/Library/CloudStorage/GoogleDrive-me@example.com/My Drive/a.mp3", home: "/Users/me"), "My Drive")
+        XCTAssertEqual(NewFileFacts.folder(of: "/Users/me/Downloads/a.mp3", home: "/Users/me"), "Downloads")
+    }
+
+    func testFolderStaysInsideTheWatchedFolder() {
+        let drive = "/Users/me/Library/CloudStorage/GoogleDrive-me@example.com/My Drive"
+        let roots = [drive, "/Users/me/Downloads", "/Users/me/Library/CloudStorage/GoogleDrive-me@example.com", "/Users/me"]
+        func folder(_ path: String) -> String { NewFileFacts.folder(of: path, roots: roots, home: "/Users/me") }
+
+        XCTAssertEqual(folder("\(drive)/song.mp3"), "My Drive")
+        XCTAssertEqual(folder("/Users/me/Downloads/song.mp3"), "Downloads")
+        XCTAssertEqual(folder("\(drive)/Choir/song.mp3"), "My Drive/Choir")
+        XCTAssertEqual(folder("\(drive)/Choir/2026/Nov/song.mp3"), "2026/Nov")
+        // The account folder or home folder as a root is not sent, and neither is an email address below it.
+        XCTAssertEqual(folder("/Users/me/Library/CloudStorage/GoogleDrive-me@example.com/Shared/song.mp3"), "Shared")
+        XCTAssertEqual(folder("/Users/me/song.mp3"), "")
+        XCTAssertEqual(folder("\(drive)/from pat@example.com/song.mp3"), "My Drive")
+        XCTAssertEqual(folder("/Elsewhere/Choir/song.mp3"), "")
+        XCTAssertEqual(NewFileFacts.folder(of: "/Users/me/Downloads2/a.mp3", roots: ["/Users/me/Downloads"], home: "/Users/me"), "")
+
+        for path in ["\(drive)/song.mp3", "/Users/me/Downloads/song.mp3", "\(drive)/Choir/2026/Nov/song.mp3"] {
+            XCTAssertFalse(folder(path).contains("@"))
+            XCTAssertFalse(folder(path).contains("GoogleDrive"))
+            XCTAssertFalse(folder(path).split(separator: "/").contains("me"))
+        }
+    }
+
+    func testFailedBatchKeepsEarlierAnswers() async throws {
+        final class FailingSecondRunner: ClaudeRunner, @unchecked Sendable {
+            var calls = 0
+            func run(system: String, prompt: String, schema: String, model: String) async throws -> Data {
+                calls += 1
+                guard calls == 1 else { throw LLMError.limitReached }
+                let results = (0..<FileClassifier.batchSize).map {
+                    #"{"file_id":"f\#($0)","is_playback":true,"title":"T","category":"choir","service_item_id":null,"confidence":0.5,"reason":""}"#
+                }
+                return Data(#"{"structured_output":{"results":[\#(results.joined(separator: ","))]}}"#.utf8)
+            }
+        }
+        let files = (0..<(FileClassifier.batchSize + 3)).map { NewFileFacts(trackID: UUID(), filename: "\($0).mp3", folder: "", durationSec: 0) }
+        let (partial, error) = await FileClassifier(runner: FailingSecondRunner()).classifyKeepingPartial(files: files, categories: [], upcoming: [])
+        XCTAssertEqual(partial.count, FileClassifier.batchSize)
+        XCTAssertEqual(error as? LLMError, .limitReached)
+        let kept = try await FileClassifier(runner: FailingSecondRunner()).classify(files: files, categories: [], upcoming: [])
+        XCTAssertEqual(kept.count, FileClassifier.batchSize)
+
+        final class AlwaysFailing: ClaudeRunner {
+            func run(system: String, prompt: String, schema: String, model: String) async throws -> Data { throw LLMError.timedOut }
+        }
+        do {
+            _ = try await FileClassifier(runner: AlwaysFailing()).classify(files: files, categories: [], upcoming: [])
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? LLMError, .timedOut)
+        }
     }
 
     func testParseMapsIdsBack() async throws {

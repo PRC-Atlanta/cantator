@@ -72,6 +72,9 @@ public enum Matcher {
     public static let rememberedScore = 0.98
     public static let attachmentScore = 0.95
     public static let floorScore = 0.30
+    /// Taken off when both names carry different numbers, so "Psalm 91" is at best a question for
+    /// "Psalm 23", never a likely match.
+    public static let numberConflictPenalty = 0.4
 
     /// Ranks library tracks for one cue. Never assigns a track: that is the operator's job.
     public static func rank(cue: ServiceCue, tracks: [Track], memory: AliasMemory) -> [MatchCandidate] {
@@ -106,7 +109,8 @@ public enum Matcher {
             var matched = track.primaryFilename
             for name in haystacks {
                 let tokens = TitleNormalizer.normalize(name)
-                let value = cueVariants.map { StringSimilarity.score($0, tokens) }.max() ?? 0
+                var value = cueVariants.map { StringSimilarity.score($0, tokens) }.max() ?? 0
+                if TitleNormalizer.numbersConflict(cue.title, name) { value -= numberConflictPenalty }
                 if value > score {
                     score = value
                     matched = name

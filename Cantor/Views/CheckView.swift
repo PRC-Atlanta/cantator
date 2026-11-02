@@ -5,7 +5,7 @@ struct CheckView: View {
     @Environment(AppModel.self) private var model
     @State private var issues: [CheckIssue] = []
 
-    private var plan: ServicePlan? { model.loadedPlan ?? model.plans.first }
+    private var plan: ServicePlan? { model.currentPlan }
 
     var body: some View {
         List {
@@ -32,7 +32,7 @@ struct CheckView: View {
                     Label("Run Check", systemImage: "arrow.clockwise")
                 }
                 if let plan, plan.cues.contains(where: { cue in
-                    cue.trackID.flatMap { model.library.track(id: $0) }.map { !$0.isLocal || $0.bestFile()?.path.hasPrefix(ManagedFolder.path) == false } ?? false
+                    cue.trackID.flatMap { model.library.track(id: $0) }.map { !$0.isLocal || $0.bestFile()?.path.hasPrefix(ManagedFolder.path + "/") == false } ?? false
                 }) {
                     Button("Make All Local") {
                         plan.playbackCues.compactMap { $0.trackID.flatMap { model.library.track(id: $0) } }.forEach(model.makeLocal)
@@ -45,6 +45,9 @@ struct CheckView: View {
         .onChange(of: model.devices) { refresh() }
         .onChange(of: model.resident.count) { refresh() }
         .onChange(of: model.library) { refresh() }
+        .onChange(of: model.settings.routing) { refresh() }
+        .onChange(of: model.plans) { refresh() }
+        .onChange(of: model.loadedPlanID) { refresh() }
     }
 
     private func refresh() { issues = model.checkResults() }

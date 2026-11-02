@@ -52,6 +52,8 @@ public enum KernelPhase: UInt8, Sendable {
 /// drive it offline and inspect every sample.
 public final class PlaybackKernel: @unchecked Sendable {
     public static let declickSeconds = 0.005
+    /// How long `]` takes to bring an automatic end fade back up to full level.
+    static let recoverSeconds = 0.25
 
     enum Command {
         case play
@@ -72,6 +74,10 @@ public final class PlaybackKernel: @unchecked Sendable {
     public let buffer: PCMBuffer
     public let parameters: PlaybackParameters
     private let declickFrames: Int
+    private let recoverFrames: Int
+    /// Where the automatic end fade begins, counted back from the end. Fixed when armed, so Hold and
+    /// marker jumps cannot shorten it.
+    private let fadeLead: Int
 
     // Single-producer, single-consumer command ring.
     private let ring: UnsafeMutablePointer<Command>
@@ -103,16 +109,29 @@ public final class PlaybackKernel: @unchecked Sendable {
     private var rampPosition = 0
     private var rampLength = 0
     private var rampAction = RampAction.none
+    // The rise at each GO, multiplied with the envelope so a run that starts inside its end fade
+    // is still heard.
+    private var entryActive = false
+    private var entryPosition = 0
+    private var entryLength = 0
     private var isFadingOut = false
+    /// F or panic: the operator is ending the cue, so nothing may bring it back up.
+    private var isStopping = false
     private var didFadeIn = false
-    private var playStart = 0
 
-    public init(buffer: PCMBuffer, parameters: PlaybackParameters) {
+    /// `runStartFrame` is where the run would begin from the top. A resume passes the cue's own start
+    /// point, so the end fade keeps its saved length. Defaults to `parameters.startFrame`.
+    public init(buffer: PCMBuffer, parameters: PlaybackParameters, runStartFrame: Int? = nil) {
         self.buffer = buffer
         self.parameters = parameters
-        declickFrames = max(Int(buffer.sampleRate * Self.declickSeconds), 1)
+        declickFrames = Self.declickFrames(sampleRate: buffer.sampleRate)
+        recoverFrames = max(Int(buffer.sampleRate * Self.recoverSeconds), declickFrames)
         endFrame = max(min(parameters.endFrame, buffer.frames), 0)
         position = min(max(parameters.startFrame, 0), endFrame)
+        fadeLead = Self.fadeLeadFrames(
+            fadeOutFrames: parameters.fadeOutFrames, declickFrames: declickFrames,
+            run: endFrame - min(max(runStartFrame ?? parameters.startFrame, 0), endFrame)
+        )
         ring = .allocate(capacity: Self.ringCapacity)
         ring.initialize(repeating: .stop, count: Self.ringCapacity)
         eqCoefficients = .allocate(capacity: EQCoefficients.capacity * EQCoefficients.stride)
@@ -131,6 +150,23 @@ public final class PlaybackKernel: @unchecked Sendable {
         ring.deallocate()
         eqCoefficients.deallocate()
         eqState.deallocate()
+    }
+
+    static func declickFrames(sampleRate: Double) -> Int {
+        max(Int(sampleRate * declickSeconds), 1)
+    }
+
+    /// A run shorter than its fade would otherwise never get above silence, so it fades over its second half.
+    static func fadeLeadFrames(fadeOutFrames: Int, declickFrames: Int, run: Int) -> Int {
+        min(max(fadeOutFrames, declickFrames), max(run / 2, 1))
+    }
+
+    /// The fade lead for a run from `parameters.startFrame`, as the kernel would use it.
+    static func fadeLeadFrames(_ parameters: PlaybackParameters, sampleRate: Double) -> Int {
+        fadeLeadFrames(
+            fadeOutFrames: parameters.fadeOutFrames, declickFrames: declickFrames(sampleRate: sampleRate),
+            run: parameters.endFrame - parameters.startFrame
+        )
     }
 
     // MARK: Control thread
@@ -181,13 +217,10 @@ public final class PlaybackKernel: @unchecked Sendable {
                 finishNow()
                 break
             }
-            if !isFadingOut {
-                // A run shorter than its fade would otherwise never get above silence.
-                let lead = min(max(parameters.fadeOutFrames, declickFrames), max((endFrame - playStart) / 2, 1))
-                if position >= endFrame - lead {
-                    beginRamp(.down, length: endFrame - position, action: .finish)
-                    isFadingOut = true
-                }
+            // A Hold, or the rise back up after `]`, finishes before the end fade can begin.
+            if !isFadingOut, !rampActive, position >= endFrame - fadeLead {
+                beginRamp(.down, length: endFrame - position, action: .finish)
+                isFadingOut = true
             }
 
             let sampleGain = nextEnvelope() * gain
@@ -205,6 +238,9 @@ public final class PlaybackKernel: @unchecked Sendable {
 
             if rampActive, rampPosition >= rampLength {
                 completeRamp()
+            }
+            if entryActive, entryPosition >= entryLength {
+                entryActive = false
             }
         }
 
@@ -237,19 +273,27 @@ public final class PlaybackKernel: @unchecked Sendable {
                 return
             }
             playing = true
-            playStart = position
+            // The envelope is at full and the entry ramp brings the sound in. An end fade that
+            // starts at once then fades from the level the entry ramp reaches, not from silence.
+            envelope = 1
+            rampActive = false
             let wantsFadeIn = !didFadeIn && parameters.fadeInFrames > declickFrames
             didFadeIn = true
-            beginRamp(.up, length: wantsFadeIn ? parameters.fadeInFrames : declickFrames, action: .none)
+            entryLength = wantsFadeIn ? parameters.fadeInFrames : declickFrames
+            entryPosition = 0
+            entryActive = true
 
         case .hold:
             guard playing, !isFadingOut else { return }
+            foldEntry()
             beginRamp(.down, length: declickFrames, action: .pause)
 
         case .fade(let requested):
             guard playing else { return }
+            isStopping = true
             let length = max(min(requested, endFrame - position), 1)
             if isFadingOut, rampActive, length >= rampLength - rampPosition { return }
+            foldEntry()
             beginRamp(.down, length: length, action: .finish)
             isFadingOut = true
 
@@ -258,8 +302,10 @@ public final class PlaybackKernel: @unchecked Sendable {
                 finishNow()
                 return
             }
+            isStopping = true
             let length = max(requested, 1)
             if isFadingOut, rampActive, length >= rampLength - rampPosition { return }
+            foldEntry()
             beginRamp(.down, length: length, action: .finish)
             isFadingOut = true
             // Panic may run past the marker; it must always be able to complete.
@@ -277,8 +323,22 @@ public final class PlaybackKernel: @unchecked Sendable {
             clearEQState()
 
         case .setEnd(let frame):
-            guard !isFadingOut else { return }
-            endFrame = min(max(frame, position + 1), buffer.frames)
+            // F and panic are the operator ending the cue. A nudge never undoes them.
+            guard !isStopping else { return }
+            // Never so close that the end fade would be shorter than the declick.
+            endFrame = min(max(frame, position + declickFrames), buffer.frames)
+            // Otherwise the render loop starts the end fade where the new end needs it.
+            guard isFadingOut || (rampActive && rampKind == .up) else { return }
+            // Inside the automatic end fade: rise back to full when there is room before the new
+            // fade point, or else fade again from the current level to land on the new end.
+            let room = endFrame - fadeLead - position
+            if room >= declickFrames {
+                isFadingOut = false
+                beginRamp(.up, length: min(room, recoverFrames), action: .none)
+            } else {
+                beginRamp(.down, length: endFrame - position, action: .finish)
+                isFadingOut = true
+            }
 
         case .setEQ(let eq):
             // Sections keep their history while a knob moves. A band turned on or off shifts the
@@ -324,18 +384,30 @@ public final class PlaybackKernel: @unchecked Sendable {
         rampActive = true
     }
 
+    /// Bakes the entry ramp's current level into the envelope, so an operator's Hold, F or panic
+    /// only ever goes down from what is playing now.
+    private func foldEntry() {
+        guard entryActive else { return }
+        envelope *= FadeCurve.up(Double(entryPosition) / Double(entryLength))
+        entryActive = false
+    }
+
     @inline(__always)
     private func nextEnvelope() -> Float {
-        guard rampActive else { return envelope }
-        let progress = Double(rampPosition) / Double(rampLength)
-        rampPosition += 1
-        switch rampKind {
-        case .down:
-            envelope = rampFrom * FadeCurve.down(progress)
-        case .up:
-            envelope = rampFrom + (1 - rampFrom) * FadeCurve.up(progress)
+        if rampActive {
+            let progress = Double(rampPosition) / Double(rampLength)
+            rampPosition += 1
+            switch rampKind {
+            case .down:
+                envelope = rampFrom * FadeCurve.down(progress)
+            case .up:
+                envelope = rampFrom + (1 - rampFrom) * FadeCurve.up(progress)
+            }
         }
-        return envelope
+        guard entryActive else { return envelope }
+        let entry = FadeCurve.up(Double(entryPosition) / Double(entryLength))
+        entryPosition += 1
+        return envelope * entry
     }
 
     private func completeRamp() {
@@ -346,7 +418,9 @@ public final class PlaybackKernel: @unchecked Sendable {
         }
         switch rampAction {
         case .none: break
-        case .pause: playing = false
+        case .pause:
+            playing = false
+            entryActive = false
         case .finish: finishNow()
         }
     }
@@ -355,6 +429,7 @@ public final class PlaybackKernel: @unchecked Sendable {
         playing = false
         finished = true
         rampActive = false
+        entryActive = false
         envelope = 0
     }
 

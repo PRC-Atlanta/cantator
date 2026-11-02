@@ -48,6 +48,30 @@ final class ContentHasherTests: XCTestCase {
         XCTAssertNotEqual(ContentHasher.contentID(data: tagged, isMP3: false), ContentHasher.contentID(data: audio, isMP3: false))
     }
 
+    func testStreamedHashIsUnchanged() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        // Known SHA-256 of these bytes, so saved hash caches stay valid.
+        let wav = folder.appendingPathComponent("a.wav")
+        try audio.write(to: wav)
+        XCTAssertEqual(try ContentHasher.contentID(url: wav), "d67c656e01756650d77717b0839985a056ec28ffe174601d690fc407a2ceffca")
+
+        var footer = Data("APETAGEX".utf8) + Data([0xD0, 0x07, 0, 0, 40, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]) + Data(repeating: 0, count: 8)
+        footer = Data(repeating: 0x55, count: 8) + footer
+        let trailer = Data("TAG".utf8) + Data(repeating: 0x20, count: 125)
+        let mp3 = folder.appendingPathComponent("a.mp3")
+        try (id3v2(payloadSize: 20) + id3v2(payloadSize: 9000) + audio + footer + trailer).write(to: mp3)
+        XCTAssertEqual(try ContentHasher.contentID(url: mp3), ContentHasher.contentID(data: audio, isMP3: true))
+
+        // Larger than one read, so the chunks have to join up.
+        let big = Data((0..<3_000_000).map { UInt8($0 * 7 % 256) })
+        let bigURL = folder.appendingPathComponent("big.mp3")
+        try (id3v2(payloadSize: 100) + big).write(to: bigURL)
+        XCTAssertEqual(try ContentHasher.contentID(url: bigURL), "0a5d49e5dd9cc7aa647824dc6f29fbbbffe477e210f5668eed4420c51c381521")
+    }
+
     func testDataSliceWithNonZeroIndexIsHandled() {
         let padded = Data([1, 2, 3]) + id3v2(payloadSize: 40) + audio
         let slice = padded[3...]
@@ -164,6 +188,79 @@ final class LibraryMergeTests: XCTestCase {
         XCTAssertEqual(near[0].trackIDs.count, 2)
     }
 
+    func testFilesTheScanCouldNotSeeKeepTheirState() {
+        var library = Library()
+        library.merge(scan: [file("/a/Unsettled.mp3", id: "x"), file("/a/Broken.mp3", id: "y"), file("/drive/Song.mp3", id: "z")])
+        let gaps = ScanGaps(paths: ["/a/Unsettled.mp3", "/a/Broken.mp3"], folders: ["/drive"])
+        library.merge(scan: [], gaps: gaps)
+        XCTAssertTrue(library.tracks.allSatisfy { $0.files[0].locality == .local })
+        library.merge(scan: [])
+        XCTAssertTrue(library.tracks.allSatisfy { $0.files[0].locality == .missing })
+    }
+
+    func testFailedFolderDoesNotCoverASiblingWithTheSamePrefix() {
+        XCTAssertTrue(ScanGaps(folders: ["/drive"]).contains("/drive/a.mp3"))
+        XCTAssertFalse(ScanGaps(folders: ["/drive"]).contains("/drive2/a.mp3"))
+    }
+
+    func testMovedPlaceholderKeepsItsTrack() {
+        var library = Library()
+        library.merge(scan: [file("/drive/A/Song.mp3", id: nil, locality: .cloudOnly, duration: 0)])
+        let id = library.tracks[0].id
+        library.update(id: id) { $0.endSec = 120 }
+        library.merge(scan: [file("/drive/B/Song.mp3", id: nil, locality: .cloudOnly, duration: 0)])
+        XCTAssertEqual(library.tracks.count, 1)
+        XCTAssertEqual(library.tracks[0].id, id)
+        XCTAssertEqual(library.tracks[0].endSec, 120)
+        XCTAssertEqual(library.tracks[0].files, [TrackFile(path: "/drive/B/Song.mp3", locality: .cloudOnly)])
+    }
+
+    func testPlaceholderMoveIsOnlyFollowedWhenUnambiguous() {
+        var library = Library()
+        library.merge(scan: [
+            file("/drive/A/Song.mp3", id: nil, locality: .cloudOnly, duration: 0),
+            file("/drive/B/Song.mp3", id: nil, locality: .cloudOnly, duration: 0),
+            file("/drive/A/Other.mp3", id: nil, locality: .cloudOnly, duration: 0),
+        ])
+        // Two of the same name went away, and Other was renamed, so none can be told apart.
+        library.merge(scan: [
+            file("/drive/C/Song.mp3", id: nil, locality: .cloudOnly, duration: 0),
+            file("/drive/A/Renamed.mp3", id: nil, locality: .cloudOnly, duration: 0),
+        ])
+        XCTAssertEqual(library.tracks.count, 5)
+        XCTAssertEqual(library.tracks.filter { $0.files.allSatisfy { $0.locality == .missing } }.count, 3)
+    }
+
+    func testPlaceholderInAFailedFolderIsNotTreatedAsMoved() {
+        var library = Library()
+        library.merge(scan: [file("/drive/A/Song.mp3", id: nil, locality: .cloudOnly, duration: 0)])
+        library.merge(scan: [file("/other/Song.mp3", id: nil, locality: .cloudOnly, duration: 0)], gaps: ScanGaps(folders: ["/drive"]))
+        XCTAssertEqual(library.tracks.count, 2)
+        XCTAssertEqual(library.tracks[0].files[0].path, "/drive/A/Song.mp3")
+        XCTAssertEqual(library.tracks[0].files[0].locality, .cloudOnly)
+    }
+
+    func testNumberedTitlesAreNotDuplicates() {
+        var library = Library()
+        library.merge(scan: [file("/a/Psalm 23.mp3", id: "1"), file("/a/Psalm 91.mp3", id: "2")])
+        XCTAssertTrue(library.duplicateGroups.isEmpty)
+    }
+
+    func testManagedNamesStayUnderTheLimit() {
+        let track = Track(contentID: "abcdef1234", title: String(repeating: "é", count: 300))
+        let name = Materializer.managedFilename(track: track, sourceExtension: "mp3")
+        XCTAssertLessThanOrEqual(name.utf8.count, 255)
+        XCTAssertTrue(name.hasSuffix(" abcdef12.mp3"))
+        XCTAssertFalse(Materializer.managedFilename(track: Track(contentID: "x", title: ".hidden"), sourceExtension: "mp3").hasPrefix("."))
+    }
+
+    func testManagedCopyNeedsTheFolderItself() {
+        let sibling = Track(contentID: "x", files: [TrackFile(path: "/Music/Cantor Old/a.mp3", locality: .local)], title: "a")
+        XCTAssertNil(Materializer.managedCopy(of: sibling, managedPath: "/Music/Cantor"))
+        let inside = Track(contentID: "x", files: [TrackFile(path: "/Music/Cantor/a.mp3", locality: .local)], title: "a")
+        XCTAssertEqual(Materializer.managedCopy(of: inside, managedPath: "/Music/Cantor")?.path, "/Music/Cantor/a.mp3")
+    }
+
     func testDefaultFadeAppliedToNewTracks() {
         var library = Library()
         library.merge(scan: [file("/a/x.mp3", id: "x")], defaultFadeOutSec: 5)
@@ -194,6 +291,12 @@ final class FolderScannerTests: XCTestCase {
         let url = root.appendingPathComponent(name)
         try data.write(to: url)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: url.path)
+    }
+
+    private func realPath(_ url: URL) -> String {
+        guard let resolved = realpath(url.path, nil) else { return url.path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     func testFindsAudioRecursivelyAndDedupes() throws {
@@ -229,6 +332,66 @@ final class FolderScannerTests: XCTestCase {
         var cache = HashCache()
         let result = FolderScanner.scan(roots: [root.path], cache: &cache)
         XCTAssertEqual(result.unreadable.count, 1)
+    }
+
+    func testSkippedFilesAndFailedFoldersAreReportedAsGaps() throws {
+        try writeWAV("fresh.wav")
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: root.appendingPathComponent("fresh.wav").path)
+        let broken = root.appendingPathComponent("broken.mp3")
+        try Data("junk".utf8).write(to: broken)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: broken.path)
+        let missingRoot = root.appendingPathComponent("not-there").path
+
+        var cache = HashCache()
+        let result = FolderScanner.scan(roots: [root.path, missingRoot], cache: &cache)
+        // The scan reports paths with symlinks resolved, as in /private/var.
+        let listed = URL(fileURLWithPath: realPath(root))
+        XCTAssertTrue(result.gaps.contains(listed.appendingPathComponent("fresh.wav").path))
+        XCTAssertTrue(result.gaps.contains(listed.appendingPathComponent("broken.mp3").path))
+        XCTAssertTrue(result.gaps.contains(missingRoot + "/Song.mp3"))
+        XCTAssertFalse(result.gaps.contains(listed.appendingPathComponent("gone.wav").path))
+    }
+
+    func testUnreadableSubfolderIsAGap() throws {
+        let locked = root.appendingPathComponent("sub")
+        try writeWAV("sub/one.wav")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        var cache = HashCache()
+        let result = FolderScanner.scan(roots: [root.path], cache: &cache)
+        XCTAssertTrue(result.files.isEmpty)
+        XCTAssertTrue(result.gaps.contains(realPath(locked) + "/one.wav"))
+    }
+
+    func testSymlinkedAudioIsReadThroughItsTarget() throws {
+        try writeWAV("sub/one.wav")
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appendingPathComponent("link.wav").path, withDestinationPath: root.appendingPathComponent("sub/one.wav").path
+        )
+        var cache = HashCache()
+        let result = FolderScanner.scan(roots: [root.path], cache: &cache)
+        let link = try XCTUnwrap(result.files.first { $0.path.hasSuffix("/link.wav") })
+        XCTAssertEqual(link.locality, .local)
+        XCTAssertEqual(link.contentID, result.files.first { $0.path.hasSuffix("/one.wav") }?.contentID)
+        XCTAssertEqual(link.sampleRate, 48_000)
+    }
+
+    func testMakeLocalCopyIsVerifiedAndSwappedIntoPlace() throws {
+        try writeWAV("one.wav")
+        let destination = root.appendingPathComponent("managed/One abc.wav")
+        let file = try Materializer.copyAndVerify(from: root.appendingPathComponent("one.wav"), to: destination)
+        XCTAssertEqual(file.path, destination.path)
+        // A second copy replaces the first, and no partial file is left behind.
+        _ = try Materializer.copyAndVerify(from: root.appendingPathComponent("one.wav"), to: destination)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.deletingLastPathComponent().path), ["One abc.wav"])
+    }
+
+    func testMakeLocalRemovesACopyThatDoesNotVerify() throws {
+        let junk = root.appendingPathComponent("junk.mp3")
+        try Data(repeating: 0x55, count: 5000).write(to: junk)
+        let destination = root.appendingPathComponent("managed/Junk abc.mp3")
+        XCTAssertThrowsError(try Materializer.copyAndVerify(from: junk, to: destination))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.deletingLastPathComponent().path), [])
     }
 
     func testCacheAvoidsRehash() throws {
@@ -267,6 +430,16 @@ final class NormalizerTests: XCTestCase {
 
     func testDiacriticsAndPunctuation() {
         XCTAssertEqual(TitleNormalizer.normalize("Bénédiction: Lord's Prayer"), ["benediction", "lords", "prayer"])
+    }
+
+    func testTitleNumbersSkipTrackNumbersVersionsAndBitrates() {
+        XCTAssertEqual(TitleNormalizer.titleNumbers("Psalm 23"), ["23"])
+        XCTAssertEqual(TitleNormalizer.titleNumbers("01 - Psalm 23 v2 128k (1).mp3"), ["23"])
+        XCTAssertEqual(TitleNormalizer.titleNumbers("Track 03 Way Maker 2019.mp3"), [])
+        XCTAssertEqual(TitleNormalizer.titleNumbers("03 Way Maker.mp3"), [])
+        XCTAssertTrue(TitleNormalizer.numbersConflict("Psalm 23", "Psalm 91.mp3"))
+        XCTAssertFalse(TitleNormalizer.numbersConflict("Psalm 23", "02 Psalm 023.mp3"))
+        XCTAssertFalse(TitleNormalizer.numbersConflict("Way Maker", "03 Way Maker.mp3"))
     }
 
     func testDisplayTitle() {
@@ -326,6 +499,26 @@ final class MatcherTests: XCTestCase {
         let cue = ServiceCue(id: "1", position: 0, title: "Holy Holy Holy")
         let ranked = Matcher.rank(cue: cue, tracks: [track("Amazing Grace.mp3")], memory: AliasMemory())
         XCTAssertNotEqual(MatchBand(candidates: ranked), .proposed)
+    }
+
+    func testNumberedTitlesDoNotMatchEachOther() {
+        let psalm91 = track("Psalm 91.mp3"), psalm23 = track("01 - Psalm 23 choir 320k.mp3")
+        let ranked = Matcher.rank(cue: ServiceCue(id: "1", position: 0, title: "Psalm 23"), tracks: [psalm91, psalm23], memory: AliasMemory())
+        XCTAssertEqual(ranked.first?.trackID, psalm23.id)
+        XCTAssertEqual(MatchBand(candidates: ranked), .proposed)
+        let other = ranked.first { $0.trackID == psalm91.id }?.score ?? 0
+        XCTAssertLessThan(other, 0.85)
+
+        let hymn2 = track("Hymn 2.mp3")
+        let alone = Matcher.rank(cue: ServiceCue(id: "2", position: 0, title: "Hymn 1"), tracks: [hymn2], memory: AliasMemory())
+        XCTAssertNotEqual(MatchBand(candidates: alone), .proposed)
+        XCTAssertLessThan(alone.first?.score ?? 0, 0.85)
+    }
+
+    func testLeadingTrackNumberStillMatches() {
+        let tracks = [track("03 Way Maker.mp3")]
+        let ranked = Matcher.rank(cue: ServiceCue(id: "1", position: 0, title: "Way Maker"), tracks: tracks, memory: AliasMemory())
+        XCTAssertEqual(ranked.first?.score ?? 0, 0.97, accuracy: 0.001)
     }
 
     func testRememberedConfirmationBeatsString() {
@@ -471,6 +664,39 @@ final class LLMTiebreakerTests: XCTestCase {
         XCTAssertLessThan(blended.first?.score ?? 1, 0.98)
     }
 
+    func testConfidenceIsReadAsPercentOrClamped() {
+        XCTAssertEqual(LLMTiebreaker.confidence(85), 0.85, accuracy: 1e-9)
+        XCTAssertEqual(LLMTiebreaker.confidence(0.4), 0.4, accuracy: 1e-9)
+        XCTAssertEqual(LLMTiebreaker.confidence(1.2), 1)
+        XCTAssertEqual(LLMTiebreaker.confidence(3), 1)
+        XCTAssertEqual(LLMTiebreaker.confidence(500), 1)
+        XCTAssertEqual(LLMTiebreaker.confidence(-3), 0)
+        XCTAssertEqual(LLMTiebreaker.confidence(nil), 0)
+        let output = #"{"is_error":false,"structured_output":{"results":[{"item_id":"9","chosen_index":1,"confidence":85,"reason":"x"}]}}"#
+        XCTAssertEqual(try LLMTiebreaker.parse(Data(output.utf8)).first?.confidence ?? 0, 0.85, accuracy: 1e-9)
+    }
+
+    func testOutOfRangeChoiceLeavesCandidatesAlone() async throws {
+        let (cue, tracks) = cue()
+        let output = #"{"is_error":false,"structured_output":{"results":[{"item_id":"9","chosen_index":7,"confidence":0.9,"reason":"x"}]}}"#
+        let result = try await LLMTiebreaker(runner: FakeRunner(output: output)).resolve(cues: [cue], tracks: tracks)
+        XCTAssertNil(result["9"])
+        XCTAssertEqual(LLMTiebreaker.blend(candidates: cue.candidates, verdict: .init(cueID: "9", chosenIndex: -1, confidence: 1, reason: "")), cue.candidates)
+    }
+
+    func testOnlyUsageLimitsCountAsLimitReached() {
+        func error(_ message: String) -> LLMError? {
+            let output = try! JSONSerialization.data(withJSONObject: ["is_error": true, "result": message])
+            do { _ = try LLMTiebreaker.parse(output) } catch { return error as? LLMError }
+            return nil
+        }
+        XCTAssertEqual(error("Claude AI usage limit reached|1700000000"), .limitReached)
+        XCTAssertEqual(error("5-hour limit reached \u{2219} resets 3pm"), .limitReached)
+        XCTAssertEqual(error("Weekly limit reached"), .limitReached)
+        XCTAssertEqual(error("Output token limit exceeded"), .failed("Output token limit exceeded"))
+        XCTAssertEqual(error("Context limit reached"), .failed("Context limit reached"))
+    }
+
     func testNullVerdictLowersEverything() {
         let (cue, _) = cue()
         let blended = LLMTiebreaker.blend(candidates: cue.candidates, verdict: .init(cueID: "9", chosenIndex: nil, confidence: 0.9, reason: ""))
@@ -512,6 +738,27 @@ final class ClaudeCLITests: XCTestCase {
     func testAPICredentialsAreRemoved() {
         let environment = ClaudeCLI.environment(from: ["ANTHROPIC_API_KEY": "x", "ANTHROPIC_AUTH_TOKEN": "y", "ANTHROPIC_BASE_URL": "z", "HOME": "/h"])
         XCTAssertEqual(environment, ["HOME": "/h"])
+    }
+
+    func testOtherProvidersAreRemoved() {
+        let environment = ClaudeCLI.environment(from: [
+            "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1", "ANTHROPIC_CUSTOM_HEADERS": "x", "ANTHROPIC_MODEL": "m",
+            "ANTHROPIC_SMALL_FAST_MODEL": "m", "AWS_BEARER_TOKEN_BEDROCK": "t", "PATH": "/bin",
+        ])
+        XCTAssertEqual(environment, ["PATH": "/bin"])
+    }
+
+    func testHungProcessIsKilledAndTheCallReturns() async throws {
+        // Ignores SIGTERM, and leaves a child holding stdout open after it is killed.
+        let path = try script("trap '' TERM; sleep 30 & sleep 30")
+        let started = Date()
+        do {
+            _ = try await ClaudeCLI(path: path, timeout: 1).run(system: "s", prompt: "", schema: "{}", model: "")
+            XCTFail("expected a timeout")
+        } catch {
+            XCTAssertEqual(error as? LLMError, .timedOut)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1 + ClaudeCLI.killGraceSec + ClaudeCLI.drainGraceSec + 3)
     }
 
     func testRunsProcessWithPromptOnStdin() async throws {

@@ -7,6 +7,7 @@ public enum CheckSeverity: Int, Comparable, Sendable {
 
 public enum CheckKind: String, Sendable {
     case unmatched, fileMissing, notDownloaded, notInMemory, noEndPoint, notAnalyzed, gainCapped, cueChanged
+    case emptyRange, removedInPCO
     case noHouseOutput, houseOutputMissing, noCueOutput, cueOutputMissing, sameOutput
     case systemSoundOnHouse, staleSync, onBattery, focusReminder, noCues
 }
@@ -20,10 +21,23 @@ public struct CheckIssue: Identifiable, Equatable, Sendable {
     public var action: String
 }
 
+/// A loaded buffer's length, so Check sees the same range Arm will play.
+public struct ResidentLength: Equatable, Sendable {
+    public var frames: Int
+    public var sampleRate: Double
+
+    public init(frames: Int, sampleRate: Double) {
+        self.frames = frames
+        self.sampleRate = sampleRate
+    }
+}
+
 public struct CheckInput: Sendable {
     public var plan: ServicePlan
     public var tracks: [UUID: Track]
     public var residentTrackIDs: Set<UUID>
+    /// Lengths of the loaded buffers. A track missing here is checked against its saved duration.
+    public var residentLengths: [UUID: ResidentLength]
     public var routing: OutputRouting
     public var availableDeviceUIDs: Set<String>
     public var targetLUFS: Double
@@ -32,13 +46,14 @@ public struct CheckInput: Sendable {
     public var now: Date
 
     public init(
-        plan: ServicePlan, tracks: [UUID: Track], residentTrackIDs: Set<UUID>, routing: OutputRouting,
-        availableDeviceUIDs: Set<String>, targetLUFS: Double = -18, defaultOutputUIDs: Set<String> = [],
+        plan: ServicePlan, tracks: [UUID: Track], residentTrackIDs: Set<UUID>, residentLengths: [UUID: ResidentLength] = [:],
+        routing: OutputRouting, availableDeviceUIDs: Set<String>, targetLUFS: Double = -18, defaultOutputUIDs: Set<String> = [],
         isOnBattery: Bool = false, now: Date = Date()
     ) {
         self.plan = plan
         self.tracks = tracks
         self.residentTrackIDs = residentTrackIDs
+        self.residentLengths = residentLengths
         self.routing = routing
         self.availableDeviceUIDs = availableDeviceUIDs
         self.targetLUFS = targetLUFS
@@ -68,17 +83,27 @@ public enum PreServiceCheck {
                 add(.blocking, .unmatched, cue, "\(name): no file confirmed", "Confirm a match in Service.")
                 continue
             }
-            if cue.changedSinceConfirm {
+            if cue.removedInPCO {
+                add(.warning, .removedInPCO, cue, "\(name): removed in Planning Center", "Check the order with the worship leader, or unconfirm it in Service.")
+            } else if cue.changedSinceConfirm {
                 add(.warning, .cueChanged, cue, "\(name): changed in Planning Center after you confirmed", "Review the match in Service.")
             }
+            let resident = input.residentTrackIDs.contains(trackID)
             if !track.isLocal {
-                if track.hasCloudOnlyCopy {
+                // A track already in memory still plays. The file only matters for the next load.
+                if resident {
+                    let kind: CheckKind = track.hasCloudOnlyCopy ? .notDownloaded : .fileMissing
+                    add(.warning, kind, cue, "\(name): file is gone, but the loaded copy will play", "Find the file before the next Load Service.")
+                } else if track.hasCloudOnlyCopy {
                     add(.blocking, .notDownloaded, cue, "\(name): not downloaded", "Use Make Local to copy it to this Mac.")
                 } else {
                     add(.blocking, .fileMissing, cue, "\(name): file is missing", "Find the file or choose another in Service.")
                 }
-            } else if !input.residentTrackIDs.contains(trackID) {
+            } else if !resident {
                 add(.blocking, .notInMemory, cue, "\(name): not loaded", "Use Load Service to load it into memory.")
+            }
+            if isEmptyRange(track, length: input.residentLengths[trackID]) {
+                add(.blocking, .emptyRange, cue, "\(name): nothing to play between start and end", "Fix the start and end points in Library.")
             }
             if track.endSec == nil {
                 add(.warning, .noEndPoint, cue, "\(name): no end point set", "Set or accept an end point in Library.")
@@ -123,5 +148,16 @@ public enum PreServiceCheck {
         add(.ok, .focusReminder, nil, "Turn on Do Not Disturb", "macOS does not let apps set a Focus. Turn it on in Control Center.")
 
         return issues.sorted { $0.severity > $1.severity }
+    }
+
+    /// The same test Arm makes. Without a loaded buffer, the saved duration stands in for its length.
+    static func isEmptyRange(_ track: Track, length: ResidentLength?) -> Bool {
+        let measured = length ?? (track.durationSec > 0 && track.sampleRate > 0
+            ? ResidentLength(frames: Int((track.durationSec * track.sampleRate).rounded()), sampleRate: track.sampleRate) : nil)
+        guard let measured, measured.sampleRate > 0 else {
+            return track.endSec.map { $0 <= track.startSec } ?? false
+        }
+        let parameters = PlaybackParameters(track: track, sampleRate: measured.sampleRate, frames: measured.frames, gainDb: 0)
+        return parameters.startFrame >= parameters.endFrame
     }
 }

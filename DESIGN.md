@@ -86,7 +86,7 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 | F | End of song: fade with the track's saved fade |
 | P | Hold (GO resumes) |
 | M | Jump to next marker while armed or held; Shift-M previous |
-| `[` / `]` | Move the end point -1 s / +1 s for this run |
+| `[` / `]` | Move the end point -1 s / +1 s for this run. During the automatic end fade (not after F or Esc), `]` rises back to full and returns to LIVE |
 | H | Audition on the cue output (toggle): the pointed cue, or the next one while a cue is engaged |
 | Return | Acknowledge a fault |
 | D | Disarm |
@@ -128,8 +128,11 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 | --- | --- |
 | Drive file not downloaded | Flagged in Library and Check. Make Local copies it to `~/Music/Cantor` and proves the file decodes. |
 | Internet drops | Nothing in Show depends on it. Check displays sync age. |
-| House interface unplugged | Instant stop, FAULT with the reason, position kept. Re-arm is manual and shows where it will start. Arm then Disarm clears it to start from the top. |
+| House interface unplugged | Instant stop, FAULT with the reason, position kept. Re-arm is manual and shows where it will start. D clears it to start from the top. A loss during F or a panic keeps nothing, and a kept position inside the end fade is dropped at arm. |
 | Cue interface unplugged | Audition stops. Show continues. |
+| House output pair missing | Arm refuses and names the pair and the device's output count. Audio is never moved to another pair. |
+| Alert while in Show Mode | Shown in the Show view with Dismiss, never as a sheet, so the transport keys keep working. |
+| Service item removed in Planning Center | A confirmed cue is kept and marked removed, or moves to the one re-added item for the same song. |
 | Sample-rate change | Treated as device loss. |
 | Sleep | Power assertions while a service is loaded. Wake always returns idle. Check warns about battery power and lid close. |
 | Crash | Audio stops with the process. System sound output is restored on next launch from a saved record. |
