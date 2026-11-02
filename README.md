@@ -53,19 +53,26 @@ While a service is loaded, Cantor moves macOS alert sounds and the default outpu
 
 Both values are stored only in the macOS Keychain.
 
-### AI matching (optional)
+### Claude (optional)
 
-Matching works without AI. To have Claude rank ambiguous matches, install [Claude Code](https://code.claude.com/docs) and sign in with your Claude account, then choose **Resolve Ambiguous** in the Service view:
+Cantor uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
 
 ```bash
 claude auth login
 ```
 
-**Settings > AI Matching** shows whether Cantor can see the sign-in. No API key is involved, and requests count toward your Claude account's usage. Cantor sends item titles, arrangement names, filenames and durations only, which can include a soloist's name if it's in the title or filename. You confirm every match either way.
+**Settings > Claude** shows whether Cantor can see the sign-in. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths, notes or audio, and nothing it suggests is applied until you accept it. Without Claude, new files are guessed from their names and matching works by name.
 
-### Folders
+### Folders and new files
 
 Cantor watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
+
+When a new audio file arrives in a watched folder, Cantor asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match.
+
+- The pop-up never appears while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
+- Files that arrive while Cantor is closed show up the next time it starts.
+- Files already in a folder when you add it are not treated as new.
+- Claude gets the filename, the two folders above it, the duration, embedded tags, the category names and the titles of upcoming items that still need a file.
 
 Cantor never moves, renames or deletes your files. **Make Local** copies a track to `~/Music/Cantor`, which also downloads it if it's only in Drive.
 

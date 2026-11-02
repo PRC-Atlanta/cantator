@@ -103,6 +103,24 @@ public struct ClaudeCLI: ClaudeRunner {
         }.value
     }
 
+    /// Reads Claude Code's JSON result. A failed request reports `is_error` with a reason in `result`.
+    public static func structuredOutput(_ data: Data) throws -> [String: Any] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LLMError.malformed }
+        if root["is_error"] as? Bool == true {
+            let message = root["result"] as? String ?? ""
+            let lowered = message.lowercased()
+            if lowered.contains("not logged in") || lowered.contains("/login") { throw LLMError.notLoggedIn }
+            if lowered.contains("limit") { throw LLMError.limitReached }
+            throw LLMError.failed(message)
+        }
+        if let structured = root["structured_output"] as? [String: Any] { return structured }
+        if let text = root["result"] as? String,
+           let structured = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
+            return structured
+        }
+        throw LLMError.malformed
+    }
+
     private static func emptyDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("cantor-claude", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

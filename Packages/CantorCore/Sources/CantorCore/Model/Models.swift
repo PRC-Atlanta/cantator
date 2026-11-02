@@ -351,6 +351,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var llmEnabled = true
     public var isolateSystemSound = true
     public var appearance = "dark"
+    /// When Cantor started watching each folder. Only files that arrive later count as new.
+    public var watchedSince: [String: Date] = [:]
 
     public init() {}
 
@@ -367,6 +369,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
         llmEnabled = try c.decodeIfPresent(Bool.self, forKey: .llmEnabled) ?? llmEnabled
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
+        watchedSince = try c.decodeIfPresent([String: Date].self, forKey: .watchedSince) ?? watchedSince
+    }
+
+    /// Starts the clock for folders not yet watched, and forgets removed ones so adding a folder
+    /// back does not count everything in it as new.
+    public mutating func stampWatchedFolders(now: Date = Date()) {
+        for folder in folders where watchedSince[folder] == nil { watchedSince[folder] = now }
+        for folder in watchedSince.keys where !folders.contains(folder) { watchedSince[folder] = nil }
     }
 
     public static func defaultFolders() -> [String] {

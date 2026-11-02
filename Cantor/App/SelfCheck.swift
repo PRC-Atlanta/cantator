@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import AVFoundation
 import CantorCore
 
 /// Debug-only end-to-end run, started with CANTOR_SELF_CHECK=<directory>. It walks the real flow
@@ -51,6 +52,14 @@ enum SelfCheck {
         await snapshot("check-after", directory)
         for issue in model.checkResults() { note("  check \(issue.severity) \(issue.kind.rawValue)") }
 
+        // A file arriving during a service waits: Cantor files it, but the pop-up must not appear.
+        if let folder = model.settings.folders.first {
+            writeTone(to: URL(fileURLWithPath: folder).appendingPathComponent("Sanctuary Choir - Joyful Joyful (practice mix).wav"))
+        }
+        await waitUntil(timeout: 40) { !model.inbox.ready.isEmpty }
+        note("new files during service: \(model.inbox.items.count), suggestion \(model.inbox.ready.first?.suggestion.map { "\($0.title) / \($0.category) / claude \($0.byClaude) / \($0.note ?? "")" } ?? "none")")
+        note("pop-up during service: \(model.newFileToPresent == nil ? "held" : "SHOWN")")
+
         model.selection = .show
         show.go()
         note("GO with nothing armed: \(show.state)")
@@ -100,6 +109,18 @@ enum SelfCheck {
         show.arm()
         await snapshot("show-armed-light", directory)
         show.disarm()
+
+        model.updateSettings { $0.appearance = "dark" }
+        model.unloadService()
+        model.selection = .library(.all)
+        await waitUntil { model.newFileToPresent != nil }
+        note("pop-up after unload: \(model.newFileToPresent == nil ? "held" : "shown")")
+        await snapshotSheet("new-file", directory)
+        if let item = model.newFileToPresent, let suggestion = item.suggestion {
+            model.acceptNewFile(item.trackID, title: suggestion.title, category: suggestion.category, serviceItem: nil, copyToCantor: false)
+            let track = model.library.track(id: item.trackID)
+            note("accepted: \(track?.title ?? "?") tags \(track?.tags ?? []), inbox \(model.inbox.items.count)")
+        }
         finish(log, directory)
     }
 
@@ -113,6 +134,35 @@ enum SelfCheck {
         while !condition(), Date() < deadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    private static func writeTone(to url: URL) {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        let frames = AVAudioFrameCount(44_100 * 20)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return }
+        buffer.frameLength = frames
+        for channel in 0..<2 {
+            let samples = buffer.floatChannelData![channel]
+            for n in 0..<Int(frames) { samples[n] = 0.2 * sinf(2 * .pi * 349.2 * Float(n) / 44_100) }
+        }
+        let partial = url.deletingLastPathComponent().appendingPathComponent(".incoming.wav")
+        do {
+            let file = try AVAudioFile(forWriting: partial, settings: format.settings)
+            try file.write(from: buffer)
+        } catch {
+            return
+        }
+        try? FileManager.default.moveItem(at: partial, to: url)
+    }
+
+    private static func snapshotSheet(_ name: String, _ directory: URL) async {
+        try? await Task.sleep(for: .milliseconds(800))
+        guard let sheet = NSApp.windows.first(where: { $0.attachedSheet != nil })?.attachedSheet,
+              let view = sheet.contentView?.superview,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("\(name).png"))
     }
 
     private static func snapshot(_ name: String, _ directory: URL) async {

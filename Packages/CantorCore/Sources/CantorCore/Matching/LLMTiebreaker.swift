@@ -91,21 +91,8 @@ public struct LLMTiebreaker: Sendable {
         return String(decoding: json, as: UTF8.self)
     }
 
-    /// Reads Claude Code's JSON result. A failed request reports `is_error` with a reason in `result`.
     static func parse(_ data: Data) throws -> [Verdict] {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LLMError.malformed }
-        if root["is_error"] as? Bool == true {
-            let message = root["result"] as? String ?? ""
-            let lowered = message.lowercased()
-            if lowered.contains("not logged in") || lowered.contains("/login") { throw LLMError.notLoggedIn }
-            if lowered.contains("limit") { throw LLMError.limitReached }
-            throw LLMError.failed(message)
-        }
-        var structured = root["structured_output"] as? [String: Any]
-        if structured == nil, let text = root["result"] as? String {
-            structured = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
-        }
-        guard let results = structured?["results"] as? [[String: Any]] else { throw LLMError.malformed }
+        guard let results = try ClaudeCLI.structuredOutput(data)["results"] as? [[String: Any]] else { throw LLMError.malformed }
         return results.compactMap { entry in
             guard let id = entry["item_id"] as? String else { return nil }
             return Verdict(

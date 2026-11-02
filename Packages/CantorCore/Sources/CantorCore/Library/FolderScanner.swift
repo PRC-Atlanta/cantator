@@ -22,14 +22,20 @@ public struct ScannedFile: Equatable, Sendable {
     public var durationSec: Double
     public var sampleRate: Double
     public var channels: Int
+    /// When the file arrived in its folder. Decides whether it counts as new.
+    public var addedDate: Date?
 
-    public init(path: String, locality: FileLocality, contentID: String?, durationSec: Double = 0, sampleRate: Double = 0, channels: Int = 0) {
+    public init(
+        path: String, locality: FileLocality, contentID: String?, durationSec: Double = 0, sampleRate: Double = 0, channels: Int = 0,
+        addedDate: Date? = nil
+    ) {
         self.path = path
         self.locality = locality
         self.contentID = contentID
         self.durationSec = durationSec
         self.sampleRate = sampleRate
         self.channels = channels
+        self.addedDate = addedDate
     }
 }
 
@@ -63,7 +69,7 @@ public enum FolderScanner {
         var unsettled = false
         var unreadable: [String] = []
         var seen = Set<String>()
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .addedToDirectoryDateKey, .creationDateKey]
 
         for root in roots {
             guard let walker = FileManager.default.enumerator(
@@ -77,9 +83,10 @@ public enum FolderScanner {
                 guard seen.insert(path).inserted else { continue }
                 guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
 
+                let added = values.addedToDirectoryDate ?? values.creationDate
                 let locality = FileLocalityProbe.locality(path: path)
                 if locality != .local {
-                    files.append(ScannedFile(path: path, locality: locality, contentID: nil))
+                    files.append(ScannedFile(path: path, locality: locality, contentID: nil, addedDate: added))
                     continue
                 }
 
@@ -88,7 +95,7 @@ public enum FolderScanner {
                 if let entry = cache.entries[path], entry.size == size, entry.mtime == mtime {
                     files.append(ScannedFile(
                         path: path, locality: .local, contentID: entry.contentID,
-                        durationSec: entry.durationSec, sampleRate: entry.sampleRate, channels: entry.channels
+                        durationSec: entry.durationSec, sampleRate: entry.sampleRate, channels: entry.channels, addedDate: added
                     ))
                     continue
                 }
@@ -109,7 +116,7 @@ public enum FolderScanner {
                 )
                 files.append(ScannedFile(
                     path: path, locality: .local, contentID: contentID, durationSec: info.durationSec,
-                    sampleRate: info.sampleRate, channels: info.channels
+                    sampleRate: info.sampleRate, channels: info.channels, addedDate: added
                 ))
             }
         }

@@ -21,6 +21,12 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **This is for the owner's own use**: Anthropic's terms say products built for other people should use API keys and may not route requests through subscription credentials on users' behalf. If Cantor is ever given to anyone else, this part has to change.
 - **Claude Code call**: no tools, no settings, no MCP servers, no saved session, low effort, from an empty folder, with the prompt on stdin. `--bare` is not used because it skips the account login.
 - **Model**: blank uses the account's default, changeable in Settings.
+- **Cantor watches the folders, Claude only reads names**: Claude gets no file system access. Cantor sends it filenames, two folder names, durations and tags, which is all a classifier could use anyway since it cannot hear the audio.
+- **Categories are library tags**: the pop-up's category is the same tag that makes a library sidebar section, so there is one way to group tracks. Defaults are choir, special, offertory, prelude, postlude, children and walk-in, plus any tag already in use.
+- **"New" means arrived after Cantor started watching that folder**, by the file's added-to-folder date. Otherwise adding a folder, or the first run, would put every existing file in front of the operator.
+- **A loaded service holds all pop-ups**, even between songs. Loading is the signal that the service has started. Claude may still be asked while a service is loaded and idle, so pop-ups are ready the moment it is unloaded.
+- **Accepting a suggested service item confirms the match**: the operator is looking at it and pressing Accept, which is the confirmation the rule requires.
+- **Copy to ~/Music/Cantor defaults on for Downloads and Desktop**, since those get cleaned out.
 - **Songs default to Needs Playback**: an extra row costs one click, a missed cue costs the moment. A choice is remembered per song.
 - **Scores cap at 0.97 for string and LLM matches**: 100% would read as certainty, and nothing is auto-confirmed anyway.
 - **Hardware tests are opt-in and use virtual devices only**: `swift test` alone never opens an audio device.

@@ -111,6 +111,13 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 3. Match each cue: remembered aliases first (0.98), PCO attachment filename, then a string-similarity blend (token Jaccard, Jaro-Winkler, normalized Levenshtein) with a duration check.
 4. On request, items in the ambiguous band (top 0.45 to 0.85, or a margin under 0.08) go to Claude in one batch: item titles, arrangement names, candidate filenames and durations only. No paths, no notes, no audio. The call runs the operator's installed Claude Code headlessly, using its signed-in Claude account, with no tools, settings or MCP servers. The result blends 0.6 string, 0.4 Claude.
 5. Everything needs operator confirmation. Nothing is auto-confirmed, at any confidence.
+
+## New files
+
+1. FSEvents triggers a rescan. Each scanned file carries its added-to-folder date. A track created by the scan counts as new when one of its files arrived after Cantor started watching that folder (`AppSettings.watchedSince`, stamped when a folder is first seen and cleared when it is removed). So a launch catches files that arrived while the app was closed, and adding a folder does not flood the inbox. Another copy of audio already in the library is not new.
+2. New tracks go into `new-files.json`, so they survive quitting.
+3. While no cue is armed or playing, waiting files go to Claude in batches of 25: filename, the two folders above it, duration, embedded tags, category names and upcoming unmatched item titles. Claude returns a title, one category, whether it is a playback at all, an optional item id from the list, a confidence and a reason. Ids it was not given are ignored. If Claude is off, signed out or fails, the category is guessed from keywords and the item from the name matcher at 0.75 or above, and the pop-up says why.
+4. The pop-up shows only when no service is loaded, the show is idle, Show Mode is off, no preview is playing and nothing is loading. Accept writes the title and category tag, confirms the service item if one is chosen and still empty, and can copy the file to `~/Music/Cantor`.
 6. Everything is snapshotted to disk. The Show view reads only snapshots and RAM. A resync that changes a confirmed item flags it rather than dropping it.
 
 ## Failure handling

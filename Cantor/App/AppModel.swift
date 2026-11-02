@@ -26,6 +26,10 @@ final class AppModel {
     var makingLocal: Set<UUID> = []
     var unreadableFiles: [String] = []
     var systemSoundStuckOnHouse = false
+    var inbox: NewFileInbox
+    var isClassifying = false
+    /// Set by Later. Cleared when another new file arrives or the app starts again.
+    var newFilesSnoozed = false
 
     var houseMeter = MeterState()
     var cueMeter = MeterState()
@@ -60,6 +64,7 @@ final class AppModel {
     private let memoryFile: JSONFile<AliasMemory> = AppModel.file("aliases.json")
     private let plansFile: JSONFile<[ServicePlan]> = AppModel.file("services.json")
     private let cacheFile: JSONFile<HashCache> = AppModel.file("hash-cache.json")
+    private let inboxFile: JSONFile<NewFileInbox> = AppModel.file("new-files.json")
 
     init() {
         var setAside: [String] = []
@@ -69,6 +74,7 @@ final class AppModel {
         memory = memoryFile.load(onQuarantine: note) ?? AliasMemory()
         plans = plansFile.load(onQuarantine: note) ?? []
         hashCache = cacheFile.load(onQuarantine: note) ?? HashCache()
+        inbox = inboxFile.load(onQuarantine: note) ?? NewFileInbox()
         show = ShowController(house: houseBus, log: RunLog())
         houseBus.onLost = { [weak self] in self?.show.deviceLost() }
         show.onPlayed = { [weak self] track in
@@ -78,6 +84,8 @@ final class AppModel {
             }
             self?.scheduleSave()
         }
+        settings.stampWatchedFolders()
+        try? settingsFile.save(settings)
         applySettingsToShow()
         if !setAside.isEmpty {
             alert = "Some saved data could not be read and was set aside: \(setAside.joined(separator: ", "))"
@@ -130,7 +138,10 @@ final class AppModel {
     private func tick() {
         show.tick()
         tickCount += 1
-        if tickCount.isMultiple(of: 30) { show.checkDevice() }
+        if tickCount.isMultiple(of: 30) {
+            show.checkDevice()
+            classifyNewFiles()
+        }
         if cuesNeedRefresh { refreshLoadedCues() }
         houseMeter.update(left: show.peakLeft, right: show.peakRight)
         if let kernel = cueBus.kernel {
@@ -166,6 +177,7 @@ final class AppModel {
         let previousFolders = settings.folders
         let previousRouting = settings.routing
         change(&settings)
+        settings.stampWatchedFolders()
         applySettingsToShow()
         if settings.routing != previousRouting {
             // An audition already playing could be on the device that just became the house.
@@ -200,6 +212,7 @@ final class AppModel {
         record { try libraryFile.save(library) }
         record { try memoryFile.save(memory) }
         record { try plansFile.save(plans) }
+        record { try inboxFile.save(inbox) }
         try? cacheFile.save(hashCache)
     }
 
@@ -250,8 +263,10 @@ final class AppModel {
                 return (result, cache)
             }.value
             hashCache = result.1
+            let previousIDs = Set(library.tracks.map(\.id))
             let replaced = library.merge(scan: result.0.files, defaultFadeOutSec: settings.defaultFadeOutSec)
             remapCues(replaced)
+            noteNewFiles(previousIDs: previousIDs, scan: result.0.files, replaced: replaced)
             unreadableFiles = result.0.unreadable
             isScanning = false
             scheduleSave()
@@ -439,10 +454,6 @@ final class AppModel {
             alert = "AI matching is turned off in Settings. Matching by name still works."
             return
         }
-        guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
-            alert = LLMError.notInstalled.localizedDescription
-            return
-        }
         guard let planIndex = plans.firstIndex(where: { $0.id == planID }), !isMatching else { return }
         let cues = plans[planIndex].cues.filter { $0.needsPlayback && $0.trackID == nil && Matcher.needsTiebreak($0.candidates) }
         guard !cues.isEmpty else {
@@ -451,14 +462,11 @@ final class AppModel {
         }
         isMatching = true
         let tracks = Dictionary(library.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let cli = ClaudeCLI(path: path)
-        let tiebreaker = LLMTiebreaker(runner: cli, model: settings.llmModel)
+        let model = settings.llmModel
         Task {
             defer { isMatching = false }
             do {
-                let account = try await cli.accountStatus()
-                guard account.isLoggedIn else { throw LLMError.notLoggedIn }
-                guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
+                let tiebreaker = LLMTiebreaker(runner: try await claudeAccount(), model: model)
                 let results = try await tiebreaker.resolve(cues: cues, tracks: tracks)
                 guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
                 for cueIndex in plans[index].cues.indices {
@@ -473,15 +481,20 @@ final class AppModel {
         }
     }
 
-    /// One line for Settings saying whether AI matching can use the Claude account.
+    /// Claude Code, checked to be signed in to a Claude account rather than set up with an API key.
+    private func claudeAccount() async throws -> ClaudeCLI {
+        guard let path = ClaudeCLI.locate(override: settings.claudePath) else { throw LLMError.notInstalled }
+        let cli = ClaudeCLI(path: path)
+        let account = try await cli.accountStatus()
+        guard account.isLoggedIn else { throw LLMError.notLoggedIn }
+        guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
+        return cli
+    }
+
+    /// One line for Settings saying whether Cantor can use the Claude account.
     func claudeAccountSummary() async -> String {
-        guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
-            return LLMError.notInstalled.localizedDescription
-        }
         do {
-            let account = try await ClaudeCLI(path: path).accountStatus()
-            if !account.isLoggedIn { return LLMError.notLoggedIn.localizedDescription }
-            if account.usesAPIKey { return LLMError.usesAPIKey.localizedDescription }
+            _ = try await claudeAccount()
             return "Signed in to your Claude account."
         } catch {
             return error.localizedDescription
@@ -608,6 +621,146 @@ final class AppModel {
         loadedPlanID = nil
         sleepGuard.release()
         syncSoundGuard()
+        classifyNewFiles()
+    }
+
+    // MARK: New files
+
+    private func noteNewFiles(previousIDs: Set<UUID>, scan: [ScannedFile], replaced: [UUID: UUID]) {
+        let before = inbox
+        inbox.reconcile(replaced: replaced, existing: Set(library.tracks.map(\.id)))
+        let found = NewFileDetector.newTrackIDs(
+            previousIDs: previousIDs, tracks: library.tracks, scan: scan, watchedSince: settings.watchedSince
+        )
+        inbox.add(found)
+        if !found.isEmpty { newFilesSnoozed = false }
+        if inbox != before {
+            scheduleSave()
+            classifyNewFiles()
+        }
+    }
+
+    /// Fills in suggestions for new files: Claude when it is on and signed in, otherwise a guess
+    /// from the filename. Waits while a cue is armed or playing.
+    func classifyNewFiles() {
+        guard !isClassifying, !inbox.awaitingSuggestion.isEmpty,
+              InboxGate.canClassify(showState: show.state, showMode: show.showMode)
+        else { return }
+        isClassifying = true
+        let tracks = inbox.awaitingSuggestion.compactMap { library.track(id: $0.trackID) }
+        let upcoming = upcomingItems()
+        let categories = PlaybackCategory.all(libraryTags: library.allTags)
+        let useClaude = settings.llmEnabled
+        let model = settings.llmModel
+        Task {
+            defer { isClassifying = false }
+            let facts = await Task.detached(priority: .utility) { tracks.map(Self.facts(for:)) }.value
+            var suggestions: [UUID: FileSuggestion] = [:]
+            var note: String? = useClaude ? nil : "Claude is turned off in Settings."
+            if useClaude {
+                do {
+                    let classifier = FileClassifier(runner: try await claudeAccount(), model: model)
+                    suggestions = try await classifier.classify(files: facts, categories: categories, upcoming: upcoming)
+                } catch {
+                    note = error.localizedDescription
+                }
+            }
+            for fact in facts {
+                let suggestion = suggestions[fact.trackID]
+                    ?? FileClassifier.fallback(fact, serviceItem: bestUpcomingItem(for: fact.trackID, among: upcoming), note: note ?? "Claude did not answer for this file.")
+                inbox.setSuggestion(suggestion, for: fact.trackID)
+            }
+            scheduleSave()
+        }
+    }
+
+    nonisolated private static func facts(for track: Track) -> NewFileFacts {
+        let file = track.bestFile() ?? track.files.first
+        return NewFileFacts(
+            trackID: track.id, filename: track.primaryFilename, folder: file.map { NewFileFacts.folder(of: $0.path) } ?? "",
+            durationSec: track.durationSec, tags: track.bestFile().map { AudioTags.read(url: $0.url) } ?? [:]
+        )
+    }
+
+    /// Items in the next few services that still need a file.
+    private func upcomingItems() -> [UpcomingItem] {
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        return plans
+            .filter { ($0.sortDate ?? .distantFuture) >= cutoff }
+            .prefix(4)
+            .flatMap { plan in
+                plan.playbackCues.filter { $0.trackID == nil }.map { cue in
+                    UpcomingItem(
+                        ref: ServiceItemRef(planID: plan.id, cueID: cue.id), service: plan.dates.isEmpty ? plan.title : plan.dates,
+                        title: cue.title, arrangement: cue.arrangement
+                    )
+                }
+            }
+    }
+
+    /// Without Claude, the name matcher picks an item only when it is fairly sure.
+    private func bestUpcomingItem(for trackID: UUID, among items: [UpcomingItem]) -> ServiceItemRef? {
+        guard let track = library.track(id: trackID) else { return nil }
+        let scored = items.compactMap { item -> (ServiceItemRef, Double)? in
+            guard let cue = serviceCue(item.ref), let top = Matcher.rank(cue: cue, tracks: [track], memory: memory).first else { return nil }
+            return (item.ref, top.score)
+        }
+        return scored.filter { $0.1 >= 0.75 }.max { $0.1 < $1.1 }?.0
+    }
+
+    func serviceCue(_ ref: ServiceItemRef) -> ServiceCue? {
+        plans.first { $0.id == ref.planID }?.cues.first { $0.id == ref.cueID }
+    }
+
+    func serviceItemLabel(_ ref: ServiceItemRef) -> String? {
+        guard let plan = plans.first(where: { $0.id == ref.planID }), let cue = serviceCue(ref) else { return nil }
+        return "\(plan.dates.isEmpty ? plan.title : plan.dates) · \(cue.title)"
+    }
+
+    var upcomingItemsForPicker: [UpcomingItem] { upcomingItems() }
+
+    var newFilesCanAppear: Bool {
+        InboxGate.canPresent(
+            serviceLoaded: loadedPlanID != nil, showState: show.state, showMode: show.showMode,
+            auditioning: auditionPositionSec != nil || cueBus.isPlaying, loadingService: isLoadingService
+        )
+    }
+
+    /// The file the pop-up shows now, if it may show at all.
+    var newFileToPresent: NewFileItem? {
+        guard !newFilesSnoozed, alert == nil, newFilesCanAppear else { return nil }
+        return inbox.ready.first
+    }
+
+    func reviewNewFiles() {
+        newFilesSnoozed = false
+    }
+
+    func snoozeNewFiles() {
+        newFilesSnoozed = true
+    }
+
+    /// The operator's answer from the pop-up. Matching a service item here is the operator confirming it.
+    func acceptNewFile(_ id: UUID, title: String, category: String, serviceItem: ServiceItemRef?, copyToCantor: Bool) {
+        guard newFilesCanAppear else { return }
+        let category = FileClassifier.cleanCategory(category)
+        library.update(id: id) { track in
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { track.title = trimmed }
+            if !category.isEmpty, !track.tags.contains(category) { track.tags.append(category) }
+        }
+        if let ref = serviceItem, let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: id) {
+            confirm(planID: ref.planID, cue: cue, track: track)
+        }
+        if copyToCantor, let track = library.track(id: id) { makeLocal(track) }
+        inbox.remove(id)
+        rankAllPlans()
+        scheduleSave()
+    }
+
+    func skipNewFile(_ id: UUID) {
+        inbox.remove(id)
+        scheduleSave()
     }
 
     // MARK: Pre-service check

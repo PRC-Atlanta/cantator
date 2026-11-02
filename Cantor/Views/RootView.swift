@@ -37,6 +37,15 @@ struct RootView: View {
                 columns = .all
             }
         }
+        .sheet(item: Binding(
+            get: { model.newFileToPresent },
+            set: { value in
+                // Esc or a close counts as Later. A sheet closed because playback started is not a choice.
+                if value == nil, model.newFileToPresent != nil { model.snoozeNewFiles() }
+            }
+        )) { item in
+            NewFileSheet(item: item)
+        }
         .alert("Cantor", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -82,6 +91,16 @@ private struct SidebarView: View {
                 row("All Tracks", "music.note.list", .all, library.tracks.count)
                 ForEach(library.allTags, id: \.self) { tag in
                     row(tag.capitalized, "tag", .tag(tag), library.tracks.filter { $0.tags.contains(tag) }.count)
+                }
+                if !model.inbox.items.isEmpty {
+                    Button {
+                        model.reviewNewFiles()
+                    } label: {
+                        Label("New Files", systemImage: "tray.and.arrow.down").badge(model.inbox.items.count)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!model.newFilesCanAppear)
+                    .help(model.newFilesCanAppear ? "Review new files" : "New files wait until no service is loaded")
                 }
                 row("Needs Attention", "exclamationmark.triangle", .attention, library.tracks.filter(LibraryView.needsAttention).count)
                 row("Not Downloaded", "icloud", .notDownloaded, library.tracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)

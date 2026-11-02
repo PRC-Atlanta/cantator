@@ -8,7 +8,7 @@ struct SettingsView: View {
             OutputsSettings().tabItem { Label("Outputs", systemImage: "hifispeaker.2") }
             PlaybackSettings().tabItem { Label("Playback", systemImage: "slider.horizontal.3") }
             PlanningCenterSettings().tabItem { Label("Planning Center", systemImage: "calendar") }
-            AISettings().tabItem { Label("AI Matching", systemImage: "sparkle.magnifyingglass") }
+            AISettings().tabItem { Label("Claude", systemImage: "sparkle.magnifyingglass") }
             FolderSettings().tabItem { Label("Folders", systemImage: "folder") }
         }
         .frame(width: 560, height: 420)
@@ -171,7 +171,7 @@ private struct AISettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Use Claude to rank ambiguous matches", isOn: Binding(
+                Toggle("Use Claude to file new files and rank ambiguous matches", isOn: Binding(
                     get: { model.settings.llmEnabled },
                     set: { value in model.updateSettings { $0.llmEnabled = value } }
                 ))
@@ -182,7 +182,7 @@ private struct AISettings: View {
                     }
                 }
             } footer: {
-                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Sends item titles, arrangement names, filenames and durations only. Every match still needs your confirmation.")
+                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths, notes or audio, and nothing is applied until you accept it. When Claude is off or signed out, new files are guessed from their names.")
             }
             Section {
                 TextField("Model", text: binding(\.llmModel), prompt: Text("Account default"))
@@ -218,6 +218,9 @@ private struct FolderSettings: View {
                 Spacer()
                 Button("Rescan") { model.rescan() }.disabled(model.isScanning)
             }
+            Text("Cantor watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear in the New File pop-up, once no service is loaded and nothing is playing.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             if !model.unreadableFiles.isEmpty {
                 Text("\(model.unreadableFiles.count) files could not be read as audio.").foregroundStyle(.secondary)
             }
