@@ -48,6 +48,15 @@ struct RootView: View {
         )) { item in
             NewFileSheet(item: item)
         }
+        .alert("Not a Playback?", isPresented: Binding(
+            get: { model.pendingExclusion != nil },
+            set: { if !$0 { model.pendingExclusion = nil } }
+        ), presenting: model.pendingExclusion) { pending in
+            Button("Remove and Exclude", role: .destructive) { model.confirmExclusion(pending) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.message)
+        }
         // An alert is a sheet, which would take the transport keys. Show Mode puts it in the Show view instead.
         .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode }, set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}

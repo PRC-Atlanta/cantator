@@ -29,6 +29,8 @@ final class AppModel {
     var isMatching = false
     var analyzingCount = 0
     var alert: String?
+    /// Not a Playback for tracks that services use, waiting on the operator's OK.
+    var pendingExclusion: PendingExclusion?
     var status: String?
     var makingLocal: Set<UUID> = []
     var unreadableFiles: [String] = []
@@ -1104,21 +1106,56 @@ final class AppModel {
 
     // MARK: Actions on several tracks
 
-    /// Not a Playback for each track. A track confirmed for a service stays in, because a cue plays it.
+    /// Not a Playback for each track. When a service uses one of them, the operator is asked first,
+    /// since excluding takes it out of those services.
     func excludeTracks(_ ids: Set<UUID>) {
-        guard !show.showMode else { return }
+        guard !show.showMode, !ids.isEmpty else { return }
         let inUse = ids.intersection(confirmedTrackIDs)
-        for id in ids.subtracting(inUse) {
+        guard inUse.isEmpty else {
+            pendingExclusion = PendingExclusion(trackIDs: ids, message: exclusionWarning(inUse))
+            return
+        }
+        exclude(ids)
+    }
+
+    /// Takes the tracks out of every service, then excludes them. Items added by hand, and removed
+    /// items kept only for their file, go; Planning Center's items stay, unmatched.
+    func confirmExclusion(_ pending: PendingExclusion) {
+        pendingExclusion = nil
+        guard !show.showMode else { return }
+        if show.state.holdsHouseEngine, let id = show.activeCue?.track?.id, pending.trackIDs.contains(id) {
+            alert = "That track is armed or playing. Stop it, then mark it Not a Playback."
+            return
+        }
+        let uses = { (cue: ServiceCue) in cue.trackID.map(pending.trackIDs.contains) ?? false }
+        for planIndex in plans.indices {
+            plans[planIndex].cues.removeAll { uses($0) && ($0.isManual || $0.removedInPCO) }
+            for cueIndex in plans[planIndex].cues.indices where uses(plans[planIndex].cues[cueIndex]) {
+                plans[planIndex].cues[cueIndex].trackID = nil
+                plans[planIndex].cues[cueIndex].changedSinceConfirm = false
+            }
+        }
+        markCuesChanged()
+        exclude(pending.trackIDs)
+    }
+
+    private func exclude(_ ids: Set<UUID>) {
+        for id in ids {
             library.exclude(id: id)
             inbox.remove(id)
         }
-        if !inUse.isEmpty {
-            alert = inUse.count == 1
-                ? "One track is confirmed for a service, so it stays in. Choose another file for that item first."
-                : "\(inUse.count) tracks are confirmed for a service, so they stay in. Choose other files for those items first."
-        }
         rankAllPlans()
         scheduleSave()
+    }
+
+    private func exclusionWarning(_ inUse: Set<UUID>) -> String {
+        let services = plans.filter { $0.cues.contains { $0.trackID.map(inUse.contains) ?? false } }
+            .map { "\($0.dates.isEmpty ? $0.title : $0.dates) (\($0.serviceTypeName))" }
+        let names = services.joined(separator: ", ")
+        if inUse.count == 1, let title = inUse.first.flatMap({ library.track(id: $0)?.title }) {
+            return "“\(title)” is used in \(names). Marking it Not a Playback takes it out of \(services.count == 1 ? "that service" : "those services")."
+        }
+        return "\(inUse.count) of these tracks are used in \(names). Marking them Not a Playback takes them out of \(services.count == 1 ? "that service" : "those services")."
     }
 
     func keepTracks(_ ids: Set<UUID>) {
@@ -1173,4 +1210,11 @@ struct MeterState {
         if left < 0.0001 { left = 0 }
         if right < 0.0001 { right = 0 }
     }
+}
+
+/// Tracks to mark Not a Playback once the operator agrees to take them out of their services.
+struct PendingExclusion: Identifiable {
+    let id = UUID()
+    let trackIDs: Set<UUID>
+    let message: String
 }
