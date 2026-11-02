@@ -252,4 +252,60 @@ final class ImporterTests: XCTestCase {
         XCTAssertEqual(arguments[arguments.firstIndex(of: "-i")! + 1], "file:/tmp/concat:a.mkv")
         XCTAssertEqual(arguments.last, "file:/tmp/out.flac")
     }
+
+    // MARK: Progress
+
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [Double] = []
+        var values: [Double] { lock.withLock { stored } }
+        func record(_ value: Double) { lock.withLock { stored.append(value) } }
+    }
+
+    private func assertSteadyProgress(_ values: [Double], file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(values.last, 1, file: file, line: line)
+        XCTAssertEqual(values, values.sorted(), "never goes backwards", file: file, line: line)
+        XCTAssertEqual(values.count, Set(values).count, "no repeats", file: file, line: line)
+        XCTAssertGreaterThan(values.filter { $0 > 0 && $0 < 1 }.count, 5, "moves through the middle", file: file, line: line)
+    }
+
+    func testConversionReportsProgress() throws {
+        let source = try writeTone("Long.wav", seconds: 20)
+        let recorder = Recorder()
+        _ = try Importer.importFile(source, into: managed, progress: recorder.record)
+        assertSteadyProgress(recorder.values)
+    }
+
+    func testCopyReportsDone() throws {
+        let first = try Importer.importFile(try writeTone("Short.wav"), into: managed)
+        let recorder = Recorder()
+        _ = try Importer.importFile(first, into: managed, progress: recorder.record)
+        XCTAssertEqual(recorder.values, [1])
+    }
+
+    func testFFmpegImportReportsBothHalves() throws {
+        try requireFFmpeg()
+        let movie = try ffmpegMake("Long.mkv", ["-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-c:a", "libopus"])
+        let recorder = Recorder()
+        _ = try Importer.importFile(movie, into: managed, progress: recorder.record)
+        let values = recorder.values
+        assertSteadyProgress(values)
+        XCTAssertTrue(values.contains { $0 > 0 && $0 <= 0.5 }, "FFmpeg's half")
+        XCTAssertTrue(values.contains { $0 > 0.5 && $0 < 1 }, "the encoder's half")
+    }
+
+    func testDurationFromFFmpegLog() {
+        XCTAssertEqual(FFmpeg.duration(inLog: "[info] Input #0\n[info]   Duration: 01:02:03.50, start: 0.000000, bitrate: 132 kb/s"), 3723.5)
+        XCTAssertNil(FFmpeg.duration(inLog: "[info]   Duration: N/A, start: 0.000000"))
+        XCTAssertNil(FFmpeg.duration(inLog: "[info] Input #0"))
+    }
+
+    func testFFmpegErrorIsReportedWithoutItsLevel() throws {
+        try requireFFmpeg()
+        let source = folder.appendingPathComponent("Corrupt.mkv")
+        try Data(repeating: 7, count: 4096).write(to: source)
+        XCTAssertThrowsError(try Importer.importFile(source, into: managed)) { error in
+            XCTAssertFalse(error.localizedDescription.contains("[error]"), error.localizedDescription)
+        }
+    }
 }

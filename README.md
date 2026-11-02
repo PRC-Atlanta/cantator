@@ -114,6 +114,8 @@ From a movie (MOV, MP4 or M4V), only the audio is imported: the first audio trac
 
 Some file types, such as MKV, AVI, WebM, OGG and WMA, need FFmpeg. When FFmpeg is installed, Cantator uses it for those files; when it isn't, Import says FFmpeg is needed for that file. Cantator runs FFmpeg with no network access, writing only to a temporary folder of its own.
 
+While it converts, the Import button and the Library's subtitle show the file and how far it has got, such as "Importing 2 of 5 · 43%". Files are converted one at a time; files chosen while others convert are added to the end.
+
 Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import is off in Show Mode and while a cue is armed or playing.
 
 ## EQ

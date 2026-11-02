@@ -146,6 +146,7 @@ struct LibraryView: View {
 
     private var subtitle: String {
         if !selection.isEmpty { return "\(selection.count) of \(tracks.count) selected" }
+        if let status = model.importStatus { return "Importing \(status.filename) · \(status.percent)%" }
         if model.isScanning { return "Scanning" }
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
         if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
@@ -161,10 +162,20 @@ struct ImportButton: View {
         Button {
             Self.choose(model)
         } label: {
-            Label(model.importingCount > 0 ? "Importing \(model.importingCount)" : "Import…", systemImage: "square.and.arrow.down")
+            if let status = model.importStatus {
+                Label {
+                    Text(status.total > 1 ? "Importing \(status.number) of \(status.total) · \(status.percent)%" : "Importing \(status.percent)%")
+                        .monospacedDigit()
+                } icon: {
+                    ProgressView(value: status.fraction).progressViewStyle(.circular).controlSize(.small)
+                }
+            } else {
+                Label("Import…", systemImage: "square.and.arrow.down")
+            }
         }
         .disabled(!model.canImport)
-        .help("Convert audio files, or the audio from movies, to m4a in ~/Music/Cantor and add them to the library")
+        .help(model.importStatus.map { "Converting \($0.filename). Choose more files to add them after it." }
+            ?? "Convert audio files, or the audio from movies, to m4a in ~/Music/Cantor and add them to the library")
     }
 
     static func choose(_ model: AppModel) {

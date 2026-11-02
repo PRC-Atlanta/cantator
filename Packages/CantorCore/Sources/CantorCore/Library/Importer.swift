@@ -1,6 +1,7 @@
 import AVFoundation
 import Darwin
 import Foundation
+import Synchronization
 
 public enum ImportError: LocalizedError {
     case unsupported(String)
@@ -34,11 +35,28 @@ public enum Importer {
     /// The AAC encoder takes up to 48 kHz. Higher rates are resampled down to this.
     static let maxSampleRate = 48_000.0
 
+    /// How far one file has got, from 0 to 1. Called on the importing thread.
+    public typealias Progress = @Sendable (Double) -> Void
+
     /// Imports one file and returns where it landed. Blocks while it encodes, so call it off the main thread.
     /// `ffmpeg` is the FFmpeg to use for formats macOS can't read, or nil for none.
-    public static func importFile(_ source: URL, into folder: URL = ManagedFolder.url, ffmpeg: String? = FFmpeg.locate()) throws -> URL {
+    public static func importFile(
+        _ source: URL, into folder: URL = ManagedFolder.url, ffmpeg: String? = FFmpeg.locate(), progress: Progress? = nil
+    ) throws -> URL {
         let name = source.lastPathComponent
         let manager = FileManager.default
+        // The steps below each report their share. This keeps the whole moving forward, with no repeats.
+        let progress = progress.map { report -> Progress in
+            let last = Mutex(-1.0)
+            return { value in
+                let isNew = last.withLock { last in
+                    guard value > last else { return false }
+                    last = value
+                    return true
+                }
+                if isNew { report(value) }
+            }
+        }
         do {
             try manager.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
@@ -54,6 +72,7 @@ public enum Importer {
             } catch {
                 throw ImportError.failed(name, error.localizedDescription)
             }
+            progress?(1)
             return destination
         }
 
@@ -61,13 +80,14 @@ public enum Importer {
         let partial = folder.appendingPathComponent(".\(UUID().uuidString).m4a")
         do {
             do {
-                try encode(source, to: partial)
+                try encode(source, to: partial, progress: progress)
             } catch ImportError.unsupported {
                 guard let ffmpeg else { throw ImportError.needsFFmpeg(name) }
                 // FFmpeg decodes to a lossless file Apple's encoder can take, so the audio is only encoded once.
-                let extracted = try FFmpeg.extractAudio(from: source, ffmpeg: ffmpeg)
+                // Each step counts for half.
+                let extracted = try FFmpeg.extractAudio(from: source, ffmpeg: ffmpeg, progress: progress.map { report in { report($0 / 2) } })
                 defer { try? manager.removeItem(at: extracted.deletingLastPathComponent()) }
-                try encode(extracted, to: partial, name: name)
+                try encode(extracted, to: partial, name: name, progress: progress.map { report in { report(0.5 + $0 / 2) } })
             }
             try Materializer.verify(partial, name: name)
         } catch {
@@ -80,6 +100,7 @@ public enum Importer {
             try? manager.removeItem(at: partial)
             throw ImportError.failed(name, reason)
         }
+        progress?(1)
         return destination
     }
 
@@ -100,7 +121,7 @@ public enum Importer {
     /// Decodes with AVAssetReader and encodes with AVAssetWriter, carrying the source's tags over
     /// so the title, artist and comments still help filing and matching. AAC that already fits,
     /// such as a movie's soundtrack, is copied across without being decoded.
-    static func encode(_ source: URL, to destination: URL, name: String? = nil) throws {
+    static func encode(_ source: URL, to destination: URL, name: String? = nil, progress: Progress? = nil) throws {
         let name = name ?? source.lastPathComponent
         let asset = AVURLAsset(url: source)
         let loaded: Loaded
@@ -160,6 +181,7 @@ public enum Importer {
         }
         writer.startSession(atSourceTime: .zero)
 
+        var reporter = ProgressThrottle()
         // Feeds the encoder on this thread. A writer that is not ready yet gets a moment.
         while reader.status == .reading {
             guard input.isReadyForMoreMediaData else {
@@ -168,6 +190,10 @@ public enum Importer {
             }
             guard let buffer = output.copyNextSampleBuffer() else { break }
             guard input.append(buffer) else { break }
+            if let progress, loaded.durationSec > 0 {
+                let end = CMSampleBufferGetPresentationTimeStamp(buffer) + CMSampleBufferGetDuration(buffer)
+                if end.isNumeric { reporter.report(end.seconds / loaded.durationSec, to: progress) }
+            }
         }
         input.markAsFinished()
 
@@ -208,6 +234,7 @@ public enum Importer {
         var track: AVAssetTrack
         var format: CMAudioFormatDescription
         var metadata: [AVMetadataItem]
+        var durationSec: Double
     }
 
     private enum Loading {
@@ -231,10 +258,23 @@ public enum Importer {
                 return
             }
             let metadata = (try? await asset.load(.commonMetadata)) ?? []
-            result.value = .audio(Loaded(track: track, format: format, metadata: metadata))
+            let duration = (try? await asset.load(.duration)).map(\.seconds) ?? 0
+            result.value = .audio(Loaded(track: track, format: format, metadata: metadata, durationSec: duration.isFinite ? duration : 0))
         }
         done.wait()
         return result.value
+    }
+
+    /// Passes progress on in whole-percent steps, so a caller is not called for every buffer.
+    struct ProgressThrottle {
+        private var last = -1
+
+        mutating func report(_ fraction: Double, to progress: Progress) {
+            let percent = Int((min(max(fraction, 0), 1) * 100).rounded(.down))
+            guard percent > last else { return }
+            last = percent
+            progress(Double(percent) / 100)
+        }
     }
 
     private final class Box<Value>: @unchecked Sendable {
