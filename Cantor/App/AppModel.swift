@@ -50,6 +50,8 @@ final class AppModel {
     var houseMeter = MeterState()
     var cueMeter = MeterState()
     var auditionPositionSec: Double?
+    /// The track Play Now is decoding before it starts.
+    var playNowLoading: UUID?
 
     let show: ShowController
     let cueBus = CueBus()
@@ -66,6 +68,10 @@ final class AppModel {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var peakCache: [UUID: [Float]] = [:]
     @ObservationIgnored private var auditionCache: [UUID: PCMBuffer] = [:]
+    /// The library track last selected, decoded ahead so Play Now starts at once.
+    @ObservationIgnored private var playNowCache: [UUID: PCMBuffer] = [:]
+    @ObservationIgnored private var playNowPreload: UUID?
+    @ObservationIgnored private var playNowRequest: UUID?
     @ObservationIgnored private var failedAnalysis = Set<UUID>()
     @ObservationIgnored private var cuesNeedRefresh = false
     @ObservationIgnored private var tickCount = 0
@@ -497,6 +503,58 @@ final class AppModel {
         auditionRequest = nil
         cueBus.stop()
         auditionPositionSec = nil
+    }
+
+    // MARK: Play Now
+
+    /// Decodes the one selected library track in the background, so Play Now needs no wait.
+    func preparePlayNow(_ track: Track?) {
+        guard let track, let file = track.bestFile() else { return }
+        guard playNowCache[track.id] == nil, resident[track.id] == nil, playNowPreload != track.id else { return }
+        playNowPreload = track.id
+        let url = file.url
+        Task {
+            let buffer = await Task.detached(priority: .utility) { try? PCMDecoder.decode(url: url) }.value
+            guard playNowPreload == track.id else { return }
+            playNowPreload = nil
+            if let buffer { playNowCache = [track.id: buffer] }
+        }
+    }
+
+    /// Emergency: plays a library track on the house output straight away, outside any service.
+    /// The Show view takes over from there, in Show Mode.
+    func playNow(_ track: Track) {
+        guard let file = track.bestFile() else {
+            alert = "\(track.title) is not on this Mac yet."
+            return
+        }
+        let request = UUID()
+        playNowRequest = request
+        playNowLoading = track.id
+        Task {
+            defer { if playNowRequest == request { playNowLoading = nil } }
+            var buffer = resident[track.id] ?? playNowCache[track.id] ?? auditionCache[track.id]
+            if buffer == nil {
+                let url = file.url
+                do {
+                    buffer = try await Task.detached(priority: .userInitiated) { try PCMDecoder.decode(url: url) }.value
+                } catch {
+                    if playNowRequest == request { alert = error.localizedDescription }
+                    return
+                }
+            }
+            guard let buffer, playNowRequest == request else { return }
+            playNowCache = [track.id: buffer]
+            // Edits made while it decoded are heard too.
+            let current = library.track(id: track.id) ?? track
+            let cue = ShowCue(
+                id: "play-now-\(request.uuidString)", title: current.title, track: current, buffer: buffer,
+                gainDb: gainDb(for: current)
+            )
+            if let refusal = show.playNow(cue) {
+                alert = refusal.message
+            }
+        }
     }
 
     // MARK: Planning Center

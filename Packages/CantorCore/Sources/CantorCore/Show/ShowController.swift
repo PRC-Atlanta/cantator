@@ -63,6 +63,8 @@ public final class ShowController {
     @ObservationIgnored private var panicGate = PanicGate()
     @ObservationIgnored private var kernel: PlaybackKernel?
     @ObservationIgnored private var retained: [CueID: Int] = [:]
+    /// A track played with Play Now. It is not in the cue list, so the list and its pointer are untouched.
+    private var playNowCue: ShowCue?
     /// The end this run is heading for, kept here so two nudges inside one render buffer both count.
     @ObservationIgnored private var runEndFrame = 0
     /// F or panic was sent. The operator is ending the cue, so no nudge or resume may bring it back.
@@ -82,7 +84,9 @@ public final class ShowController {
         self.deviceAvailable = deviceAvailable
     }
 
-    public var activeCue: ShowCue? { state.cueID.flatMap { id in cues.first { $0.id == id } } }
+    public var activeCue: ShowCue? {
+        state.cueID.flatMap { id in playNowCue?.id == id ? playNowCue : cues.first { $0.id == id } }
+    }
     public var pointedCue: ShowCue? { cues.indices.contains(nextIndex) ? cues[nextIndex] : nil }
     public var upcomingCue: ShowCue? {
         guard let id = state.cueID, let index = cues.firstIndex(where: { $0.id == id }) else { return pointedCue }
@@ -158,6 +162,38 @@ public final class ShowController {
         guard showMode else { return .notInShowMode }
         guard case .idle = state else { return .notIdle }
         guard let cue = pointedCue else { return .noCue }
+        return start(cue)
+    }
+
+    /// Emergency: arms a track from outside the cue list and plays it at once. It skips the Show Mode
+    /// requirement and the arm-to-GO delay, then turns Show Mode on so F, P and the Show view's
+    /// buttons control it. Anything armed is disarmed first. It never cuts off a cue that is sounding.
+    @discardableResult
+    public func playNow(_ cue: ShowCue) -> ArmRefusal? {
+        switch state {
+        case .idle: break
+        case .armed: apply(.disarm)
+        case .faulted: apply(.acknowledgeFault)
+        default:
+            notice = ArmRefusal.notIdle.message
+            return .notIdle
+        }
+        playNowCue = cue
+        if let refusal = start(cue) {
+            playNowCue = nil
+            notice = refusal.message
+            return refusal
+        }
+        showMode = true
+        apply(.go)
+        log?.record("play-now", cue: cue.title)
+        if let track = cue.track { onPlayed?(track) }
+        notice = nil
+        return nil
+    }
+
+    /// Opens the house output on a cue and leaves it armed.
+    private func start(_ cue: ShowCue) -> ArmRefusal? {
         guard let track = cue.track, let buffer = cue.buffer else { return .notLoaded(cue.title) }
         guard !routing.isSameDevice else { return .sameOutput }
         guard let uid = routing.houseDeviceUID, deviceAvailable(uid) else { return .noHouseOutput }
@@ -362,6 +398,7 @@ public final class ShowController {
             case .teardown:
                 house.stop()
                 kernel = nil
+                playNowCue = nil
                 stopping = false
                 goGuard.clear()
                 armedSince = nil

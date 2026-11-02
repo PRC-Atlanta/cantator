@@ -102,7 +102,11 @@ struct LibraryView: View {
         .navigationSubtitle(subtitle)
         // Leaving a list clears what was selected in it, so actions never reach hidden tracks.
         .onChange(of: filter) { selection = [] }
+        .onChange(of: selection) { model.preparePlayNow(selectedTrack) }
         .toolbar {
+            ToolbarItem {
+                PlayNowButton(track: selectedTrack)
+            }
             ToolbarItemGroup {
                 TrackActions(ids: selection, clearSelection: { selection = [] })
                     .labelStyle(.titleAndIcon)
@@ -117,6 +121,11 @@ struct LibraryView: View {
                 .help("Rescan your folders")
             }
         }
+    }
+
+    private var selectedTrack: Track? {
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return model.library.track(id: id)
     }
 
     private func inTableOrder(_ ids: Set<UUID>) -> [UUID] {
@@ -141,6 +150,42 @@ struct LibraryView: View {
 
 /// Exclude, Include, Make Local and Tag for the selected tracks. Used in the toolbar, the
 /// right-click menu and the inspector when several tracks are selected.
+/// Emergency: one click on a track, one click here, and it plays on the house output. It skips
+/// the service, the arm-to-GO wait and the Show Mode lock, then hands over to the Show view.
+private struct PlayNowButton: View {
+    @Environment(AppModel.self) private var model
+    let track: Track?
+
+    var body: some View {
+        let loading = track != nil && model.playNowLoading == track?.id
+        Button {
+            if let track { model.playNow(track) }
+        } label: {
+            Label(loading ? "Loading…" : "Arm + Play", systemImage: "play.fill")
+                .labelStyle(.titleAndIcon)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Theme.danger)
+        .disabled(!canPlay || model.playNowLoading != nil)
+        .help(help)
+    }
+
+    private var canPlay: Bool {
+        guard let track, track.isLocal else { return false }
+        switch model.show.state {
+        case .idle, .armed, .faulted: return true
+        default: return false
+        }
+    }
+
+    private var help: String {
+        guard let track else { return "Select one track to play it on the house output right away" }
+        if !track.isLocal { return "\(track.title) is not on this Mac yet" }
+        if !canPlay { return "A cue is playing. Stop it first." }
+        return "Play \(track.title) on the house output now, skipping arm and the service"
+    }
+}
+
 private struct TrackActions: View {
     @Environment(AppModel.self) private var model
     let ids: Set<UUID>

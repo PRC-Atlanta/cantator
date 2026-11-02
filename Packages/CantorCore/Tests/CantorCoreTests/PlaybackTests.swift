@@ -445,6 +445,44 @@ final class ShowControllerTests: XCTestCase {
         XCTAssertEqual(level() / before, 2, accuracy: 0.05)
     }
 
+    func testPlayNowStartsAtOnceOutsideShowModeAndLeavesTheListAlone() {
+        let show = controller()
+        show.movePointer(by: 1)
+        XCTAssertNil(show.playNow(cue("x")))
+        XCTAssertEqual(show.state, .live("x"))
+        XCTAssertTrue(show.showMode)
+        XCTAssertEqual(show.activeCue?.title, "x")
+        XCTAssertEqual(show.cues.map(\.id), ["a", "b"])
+        XCTAssertEqual(played, ["x"])
+        house.render(seconds: 0.1)
+        show.fadeOut()
+        house.render(seconds: 3.2)
+        show.tick()
+        XCTAssertEqual(show.state, .idle)
+        XCTAssertNil(show.activeCue)
+        XCTAssertEqual(show.nextIndex, 1)
+    }
+
+    func testPlayNowReplacesAnArmedCueButNeverASoundingOne() {
+        let show = controller()
+        show.setShowMode(true)
+        show.arm()
+        XCTAssertNil(show.playNow(cue("x")))
+        XCTAssertEqual(show.state, .live("x"))
+        XCTAssertEqual(show.playNow(cue("y")), .notIdle)
+        XCTAssertEqual(show.state, .live("x"))
+        XCTAssertEqual(house.starts, 2)
+    }
+
+    func testPlayNowRefusalStaysSilent() {
+        let show = controller()
+        available = false
+        XCTAssertEqual(show.playNow(cue("x")), .noHouseOutput)
+        XCTAssertEqual(show.state, .idle)
+        XCTAssertFalse(show.showMode)
+        XCTAssertNil(show.activeCue)
+    }
+
     func testArmRefusedOutsideShowMode() {
         let show = controller()
         XCTAssertEqual(show.arm(), .notInShowMode)
