@@ -249,6 +249,50 @@ final class PlanMergeTests: XCTestCase {
         XCTAssertEqual(needs, ["a": true, "b": false, "c": true, "m": true])
     }
 
+    // Review 2, finding 9.
+    func testOperatorNotNeededSticksThroughNotesAndSyncs() {
+        var cue = ServiceCue(id: "a", position: 0, title: "Choir Anthem", itemType: "song", notes: "Choir live, no tracks", needsPlayback: true)
+        cue.operatorNeeds = false
+        cue.needsPlayback = false
+        var service = plan([cue])
+        service.redetect(memory: AliasMemory())
+        XCTAssertEqual(service.cues[0].needsPlayback, false, "the notes say tracks, but the operator said no")
+
+        // A strong match doesn't land on it either.
+        service.cues[0].candidates = [MatchCandidate(trackID: UUID(), score: 0.97, source: .string, reason: "")]
+        XCTAssertEqual(service.autoConfirmStrongMatches(), 0)
+
+        // A sync brings the notes back in, and the operator's choice stays.
+        let fresh = plan([ServiceCue(id: "a", position: 0, title: "Choir Anthem", itemType: "song", notes: "Choir live, no tracks", needsPlayback: true)])
+        let merged = service.merging(fresh: fresh)
+        XCTAssertEqual(merged.cues[0].operatorNeeds, false)
+        XCTAssertEqual(merged.cues[0].needsPlayback, false)
+
+        // And it is saved.
+        let decoded = try? JSONDecoder().decode(ServiceCue.self, from: JSONEncoder().encode(merged.cues[0]))
+        XCTAssertEqual(decoded?.operatorNeeds, false)
+    }
+
+    // Review 2, finding 11.
+    func testWrongLengthNameMatchWaitsForTheOperator() {
+        let file = UUID()
+        func cue(_ id: String, source: MatchSource, mismatch: Bool) -> ServiceCue {
+            var cue = ServiceCue(id: id, position: 0, title: "Gloria", needsPlayback: true)
+            cue.candidates = [MatchCandidate(trackID: file, score: 1, source: source, reason: "", durationMismatch: mismatch)]
+            return cue
+        }
+        var service = plan([
+            cue("other-setting", source: .string, mismatch: true),
+            cue("same-length", source: .string, mismatch: false),
+            cue("chosen-before", source: .remembered, mismatch: true),
+        ])
+        XCTAssertEqual(service.autoConfirmStrongMatches(), 2)
+        let byID = Dictionary(uniqueKeysWithValues: service.cues.map { ($0.id, $0.trackID) })
+        XCTAssertNil(byID["other-setting"]!)
+        XCTAssertEqual(byID["same-length"], file)
+        XCTAssertEqual(byID["chosen-before"], file)
+    }
+
     func testAddedCuesGoWhereChosen() {
         var service = plan([
             ServiceCue(id: "a", position: 1, title: "Welcome"),

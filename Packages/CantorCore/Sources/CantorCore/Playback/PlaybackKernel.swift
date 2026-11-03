@@ -88,7 +88,19 @@ public final class PlaybackKernel: @unchecked Sendable {
     private let eqCoefficients: UnsafeMutablePointer<Double>
     private let eqState: UnsafeMutablePointer<Double>
     private var eqCount = 0
+    private var eqLayout: UInt8 = 0
+    /// The EQ's output gain as heard now. It glides to `eqOutputTarget`, so a jump in output gain
+    /// (Bypass or Reset on a boosted track) doesn't step the house level.
     private var eqOutput: Float = 1
+    private var eqOutputTarget: Float = 1
+    private let eqOutputGlide: Float
+    // The chain an EQ change replaced, still sounding while it crossfades out, so turning a band
+    // on or off live never cuts the filters' history.
+    private let fadingCoefficients: UnsafeMutablePointer<Double>
+    private let fadingState: UnsafeMutablePointer<Double>
+    private var fadingCount = 0
+    private var eqFadeRemaining = 0
+    private let eqFadeFrames: Int
 
     // Telemetry, written by the render thread.
     private let telemetryPosition = Atomic<Int>(0)
@@ -138,9 +150,18 @@ public final class PlaybackKernel: @unchecked Sendable {
         eqCoefficients.initialize(repeating: 0, count: EQCoefficients.capacity * EQCoefficients.stride)
         eqState = .allocate(capacity: EQCoefficients.capacity * 4)
         eqState.initialize(repeating: 0, count: EQCoefficients.capacity * 4)
+        fadingCoefficients = .allocate(capacity: EQCoefficients.capacity * EQCoefficients.stride)
+        fadingCoefficients.initialize(repeating: 0, count: EQCoefficients.capacity * EQCoefficients.stride)
+        fadingState = .allocate(capacity: EQCoefficients.capacity * 4)
+        fadingState.initialize(repeating: 0, count: EQCoefficients.capacity * 4)
+        eqFadeFrames = max(Int(buffer.sampleRate * Self.eqFadeSeconds), 1)
+        // One time constant of 5 ms: a step settles within about 25 ms.
+        eqOutputGlide = Float(1 - exp(-1 / max(buffer.sampleRate * 0.005, 1)))
         parameters.eq.write(to: eqCoefficients)
         eqCount = parameters.eq.count
+        eqLayout = parameters.eq.layout
         eqOutput = parameters.eq.outputGain
+        eqOutputTarget = eqOutput
         telemetryPosition.store(position, ordering: .relaxed)
         telemetryEnd.store(endFrame, ordering: .relaxed)
     }
@@ -150,7 +171,12 @@ public final class PlaybackKernel: @unchecked Sendable {
         ring.deallocate()
         eqCoefficients.deallocate()
         eqState.deallocate()
+        fadingCoefficients.deallocate()
+        fadingState.deallocate()
     }
+
+    /// How long a live EQ change that turns sections on or off crossfades.
+    static let eqFadeSeconds = 0.02
 
     static func declickFrames(sampleRate: Double) -> Int {
         max(Int(sampleRate * declickSeconds), 1)
@@ -208,7 +234,7 @@ public final class PlaybackKernel: @unchecked Sendable {
         let srcR = buffer.right
         var peakL: Float = 0
         var peakR: Float = 0
-        let gain = parameters.gainLinear * eqOutput
+        let gain = parameters.gainLinear
         var i = 0
 
         while i < frames {
@@ -223,10 +249,24 @@ public final class PlaybackKernel: @unchecked Sendable {
                 isFadingOut = true
             }
 
-            let sampleGain = nextEnvelope() * gain
+            if eqOutput != eqOutputTarget {
+                eqOutput += (eqOutputTarget - eqOutput) * eqOutputGlide
+                if abs(eqOutputTarget - eqOutput) < 1e-5 { eqOutput = eqOutputTarget }
+            }
+            let sampleGain = nextEnvelope() * gain * eqOutput
             var inL = srcL[position]
             var inR = srcR[position]
-            if eqCount > 0 { equalize(&inL, &inR) }
+            if eqFadeRemaining > 0 {
+                var oldL = inL, oldR = inR
+                Self.run(fadingCoefficients, fadingState, fadingCount, &oldL, &oldR)
+                Self.run(eqCoefficients, eqState, eqCount, &inL, &inR)
+                let old = Float(eqFadeRemaining) / Float(eqFadeFrames)
+                inL = oldL * old + inL * (1 - old)
+                inR = oldR * old + inR * (1 - old)
+                eqFadeRemaining -= 1
+            } else if eqCount > 0 {
+                Self.run(eqCoefficients, eqState, eqCount, &inL, &inR)
+            }
             let outL = inL * sampleGain
             let outR = inR * sampleGain
             left[i] = outL
@@ -321,6 +361,8 @@ public final class PlaybackKernel: @unchecked Sendable {
             guard !playing else { return }
             position = min(max(frame, 0), max(endFrame - 1, 0))
             clearEQState()
+            eqFadeRemaining = 0
+            eqOutput = eqOutputTarget
 
         case .setEnd(let frame):
             // F and panic are the operator ending the cue. A nudge never undoes them.
@@ -342,21 +384,32 @@ public final class PlaybackKernel: @unchecked Sendable {
 
         case .setEQ(let eq):
             // Sections keep their history while a knob moves. A band turned on or off shifts the
-            // sections, so their history no longer fits and starts over.
-            if eq.count != eqCount { clearEQState() }
+            // sections, so the new chain starts fresh and the old one keeps playing as it fades out.
+            // Starting over in one step would click on the house.
+            if eq.layout != eqLayout {
+                fadingCoefficients.update(from: eqCoefficients, count: EQCoefficients.capacity * EQCoefficients.stride)
+                fadingState.update(from: eqState, count: EQCoefficients.capacity * 4)
+                fadingCount = eqCount
+                eqFadeRemaining = eqFadeFrames
+                clearEQState()
+            }
             eq.write(to: eqCoefficients)
             eqCount = eq.count
-            eqOutput = eq.outputGain
+            eqLayout = eq.layout
+            eqOutputTarget = eq.outputGain
         }
     }
 
     @inline(__always)
-    private func equalize(_ left: inout Float, _ right: inout Float) {
+    private static func run(
+        _ coefficients: UnsafeMutablePointer<Double>, _ state: UnsafeMutablePointer<Double>, _ count: Int,
+        _ left: inout Float, _ right: inout Float
+    ) {
         var l = Double(left)
         var r = Double(right)
-        for section in 0..<eqCount {
-            let c = eqCoefficients + section * EQCoefficients.stride
-            let s = eqState + section * 4
+        for section in 0..<count {
+            let c = coefficients + section * EQCoefficients.stride
+            let s = state + section * 4
             // Transposed direct form II, one pair of states per channel.
             let yl = c[0] * l + s[0]
             s[0] = c[1] * l - c[3] * yl + s[1]

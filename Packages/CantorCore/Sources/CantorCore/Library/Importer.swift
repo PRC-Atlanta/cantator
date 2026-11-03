@@ -25,8 +25,9 @@ public enum ImportError: LocalizedError {
 /// again would only lose quality, and a movie's AAC soundtrack is copied out the same way.
 /// Formats macOS can't read go through FFmpeg when it is installed. The original is left where it is.
 public enum Importer {
-    /// Formats copied unchanged.
-    static let compressedExtensions: Set<String> = ["m4a", "mp3", "aac"]
+    /// Formats copied unchanged. An m4a can hold ALAC as well as AAC, so it goes through the
+    /// encoder, which passes AAC straight through and converts anything else.
+    static let compressedExtensions: Set<String> = ["mp3", "aac"]
     /// What the open panel offers: what macOS reads, plus what FFmpeg is there for.
     public static let pickableExtensions = [
         "wav", "wave", "aif", "aiff", "aifc", "flac", "caf", "m4a", "mp3", "aac", "mov", "mp4", "m4v",
@@ -182,8 +183,9 @@ public enum Importer {
         writer.startSession(atSourceTime: .zero)
 
         var reporter = ProgressThrottle()
-        // Feeds the encoder on this thread. A writer that is not ready yet gets a moment.
-        while reader.status == .reading {
+        // Feeds the encoder on this thread. A writer that is not ready yet gets a moment. A writer
+        // that fails on its own (a full disk) is never ready again, so its status ends the loop too.
+        while reader.status == .reading, writer.status == .writing {
             guard input.isReadyForMoreMediaData else {
                 usleep(1000)
                 continue
@@ -195,14 +197,14 @@ public enum Importer {
                 if end.isNumeric { reporter.report(end.seconds / loaded.durationSec, to: progress) }
             }
         }
-        input.markAsFinished()
-
-        if reader.status == .failed || writer.status == .failed {
+        // A reader that finished cleanly reads .completed. Anything else, on either side, is a failure.
+        if reader.status == .failed || reader.status == .cancelled || writer.status != .writing {
             reader.cancelReading()
-            writer.cancelWriting()
+            if writer.status == .writing { writer.cancelWriting() }
             let reason = (writer.error ?? reader.error)?.localizedDescription ?? "the conversion stopped partway"
             throw ImportError.failed(name, reason)
         }
+        input.markAsFinished()
 
         let done = DispatchSemaphore(value: 0)
         writer.finishWriting { done.signal() }

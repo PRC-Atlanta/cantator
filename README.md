@@ -108,15 +108,15 @@ Cantator never moves, renames or deletes your files. **Make Local** copies a tra
 
 ### Importing files
 
-To add a file from somewhere Cantator doesn't watch, choose **Import…** in the Library toolbar or **File > Import Audio…** (Command-I), then pick one or more files. WAV, AIFF, FLAC, ALAC and CAF files are converted to m4a (AAC, 256 kbps stereo, 128 kbps mono) in `~/Music/Cantor`, under the original file's name. MP3 and m4a files are copied as they are, because converting an already compressed file again only loses quality. Files above 48 kHz are converted to 48 kHz, and files with more than two channels are mixed down to stereo. Title, artist, album, genre and comment tags are kept. The original is left where it was.
+To add a file from somewhere Cantator doesn't watch, choose **Import…** in the Library toolbar or **File > Import Audio…** (Command-I), then pick one or more files. WAV, AIFF, FLAC, ALAC and CAF files are converted to m4a (AAC, 256 kbps stereo, 128 kbps mono) in `~/Music/Cantor`, under the original file's name. MP3 and AAC files are kept as they are, because converting an already compressed file again only loses quality: an MP3 is copied, and an m4a holding AAC is passed through unchanged. An m4a holding ALAC is converted like any other lossless file. Files above 48 kHz are converted to 48 kHz, and files with more than two channels are mixed down to stereo. Title, artist, album, genre and comment tags are kept. The original is left where it was.
 
 From a movie (MOV, MP4 or M4V), only the audio is imported: the first audio track, which is the main mix. When that audio is already AAC, as it usually is, it is copied out without converting it again.
 
-Some file types, such as MKV, AVI, WebM, OGG and WMA, need FFmpeg. When FFmpeg is installed, Cantator uses it for those files; when it isn't, Import says FFmpeg is needed for that file. Cantator runs FFmpeg with no network access, writing only to a temporary folder of its own.
+Some file types, such as MKV, AVI, WebM, OGG and WMA, need FFmpeg. When FFmpeg is installed, Cantator uses it for those files; when it isn't, Import says FFmpeg is needed for that file. Cantator runs FFmpeg in a sandbox: no network, no system services, no other programs, and file writes only in a temporary folder of its own.
 
-While it converts, the Import button and the Library's subtitle show the file and how far it has got, such as "Importing 2 of 5 · 43%". Files are converted one at a time; files chosen while others convert are added to the end.
+While it converts, the Import button and the Library's subtitle show the file and how far it has got, such as "Importing 2 of 5 · 43%". Files are converted one at a time; files chosen while others convert are added to the end. A file already converting finishes, but the next one waits while a cue is armed or playing or Show Mode is on, and the button shows "Import paused" until the show is idle.
 
-Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import is off in Show Mode and while a cue is armed or playing.
+Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import can't be started in Show Mode or while a cue is armed or playing.
 
 ## EQ
 

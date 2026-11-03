@@ -276,4 +276,67 @@ final class PlanningCenterConnectorTests: XCTestCase {
         XCTAssertFalse(decoded.importAllServiceTypes)
         XCTAssertEqual(decoded.serviceTypes["200"], "Funerals")
     }
+
+    // MARK: Review 2, findings 2 and 10
+
+    private func replacing(_ id: String, with line: String, in stream: String) -> String {
+        stream.components(separatedBy: "\n").map { $0.contains("\"tool_use_id\":\"\(id)\"") ? line : $0 }.joined(separator: "\n")
+    }
+
+    func testFailedPlanListIsNotASync() {
+        let denied = line(["type": "user", "message": ["content": [["type": "tool_result", "tool_use_id": "b", "content": "Internal error", "is_error": true]]]])
+        let stream = replacing("b", with: denied, in: fullStream)
+        XCTAssertThrowsError(try PlanningCenterConnector.plans(fromStream: Data(stream.utf8), memory: AliasMemory())) {
+            XCTAssertEqual($0 as? PlanningCenterConnectorError, .toolsDenied)
+        }
+    }
+
+    func testErrorDocumentIsNotData() {
+        let stream = replacing("b", with: result("b", ["errors": [["status": "500", "title": "Internal Server Error"]]]), in: fullStream)
+        XCTAssertThrowsError(try PlanningCenterConnector.plans(fromStream: Data(stream.utf8), memory: AliasMemory()))
+    }
+
+    func testRunThatEndsInAnErrorIsNotASync() {
+        let failed = line(["type": "result", "subtype": "error_during_execution", "is_error": true, "result": "API Error: Overloaded"])
+        let stream = fullStream.components(separatedBy: "\n").map { $0.contains("\"type\":\"result\"") ? failed : $0 }.joined(separator: "\n")
+        XCTAssertTrue(stream.contains("Overloaded"))
+        XCTAssertThrowsError(try PlanningCenterConnector.plans(fromStream: Data(stream.utf8), memory: AliasMemory()))
+    }
+
+    func testServiceTypeWhosePlansWereNeverReadIsNotASync() throws {
+        let types: [String: Any] = ["data": [
+            ["type": "ServiceType", "id": "100", "attributes": ["name": "Sunday Morning", "archived_at": NSNull()]],
+            ["type": "ServiceType", "id": "200", "attributes": ["name": "Wednesday", "archived_at": NSNull()]],
+            ["type": "ServiceType", "id": "300", "attributes": ["name": "Old", "archived_at": "2024-01-01T00:00:00Z"]],
+        ]]
+        let stream = replacing("a", with: result("a", types), in: fullStream)
+        // Wednesday's plans were never asked for: the run stopped early.
+        XCTAssertThrowsError(try PlanningCenterConnector.plans(fromStream: Data(stream.utf8), memory: AliasMemory())) {
+            XCTAssertEqual($0 as? PlanningCenterConnectorError, .incomplete)
+        }
+        // Skipped and archived types are not expected.
+        let plans = try PlanningCenterConnector.plans(fromStream: Data(stream.utf8), skipping: ["200"], memory: AliasMemory())
+        XCTAssertEqual(plans.map(\.id), ["900", "901"])
+    }
+
+    func testRereadWithoutACountNeedsEveryPage() throws {
+        let summary = PlanSummary(id: "901", serviceTypeID: "100", serviceTypeName: "Sunday Morning", title: "", dates: "", sortDate: nil)
+        XCTAssertNil(summary.itemsCount)
+        let items: [[String: Any]] = [item("4", "Offertory", sequence: 1)]
+        for more in [["has_more": true], ["meta": ["next_page_token": "abc"]]] as [[String: Any]] {
+            var page: [String: Any] = ["data": items]
+            page.merge(more) { _, new in new }
+            let stream = replacing("d", with: result("d", page), in: fullStream)
+            XCTAssertThrowsError(try PlanningCenterConnector.plan(fromStream: Data(stream.utf8), summary: summary, memory: AliasMemory())) {
+                XCTAssertEqual($0 as? PlanningCenterConnectorError, .incomplete)
+            }
+        }
+        // The last page says there is no more.
+        let last = replacing("d", with: result("d", ["data": items, "meta": ["has_more": false, "next_page_token": NSNull()]]), in: fullStream)
+        XCTAssertEqual(try PlanningCenterConnector.plan(fromStream: Data(last.utf8), summary: summary, memory: AliasMemory()).cues.count, 1)
+
+        // An error in place of the items is no service at all.
+        let failed = replacing("d", with: result("d", ["errors": [["title": "Not Found"]]]), in: fullStream)
+        XCTAssertThrowsError(try PlanningCenterConnector.plan(fromStream: Data(failed.utf8), summary: summary, memory: AliasMemory()))
+    }
 }

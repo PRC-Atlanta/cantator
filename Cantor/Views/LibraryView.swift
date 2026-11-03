@@ -146,7 +146,9 @@ struct LibraryView: View {
 
     private var subtitle: String {
         if !selection.isEmpty { return "\(selection.count) of \(tracks.count) selected" }
-        if let status = model.importStatus { return "Importing \(status.filename) · \(status.percent)%" }
+        if let status = model.imports.status {
+            return status.paused ? "Import paused until the show is idle" : "Importing \(status.filename) · \(status.percent)%"
+        }
         if model.isScanning { return "Scanning" }
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
         if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
@@ -162,10 +164,9 @@ struct ImportButton: View {
         Button {
             Self.choose(model)
         } label: {
-            if let status = model.importStatus {
+            if let status = model.imports.status {
                 Label {
-                    Text(status.total > 1 ? "Importing \(status.number) of \(status.total) · \(status.percent)%" : "Importing \(status.percent)%")
-                        .monospacedDigit()
+                    Text(Self.text(status)).monospacedDigit()
                 } icon: {
                     ProgressView(value: status.fraction).progressViewStyle(.circular).controlSize(.small)
                 }
@@ -174,8 +175,18 @@ struct ImportButton: View {
             }
         }
         .disabled(!model.canImport)
-        .help(model.importStatus.map { "Converting \($0.filename). Choose more files to add them after it." }
+        .help(model.imports.status.map { status in
+            status.paused
+                ? "Import waits while a cue is armed or playing, or Show Mode is on."
+                : "Converting \(status.filename). Choose more files to add them after it."
+        }
             ?? "Convert audio files, or the audio from movies, to m4a in ~/Music/Cantor and add them to the library")
+    }
+
+    static func text(_ status: ImportQueue.Status) -> String {
+        let count = status.total > 1 ? " \(status.number) of \(status.total)" : ""
+        if status.paused { return "Import paused\(count)" }
+        return count.isEmpty ? "Importing \(status.percent)%" : "Importing\(count) · \(status.percent)%"
     }
 
     static func choose(_ model: AppModel) {

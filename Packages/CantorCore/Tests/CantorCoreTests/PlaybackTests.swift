@@ -474,6 +474,41 @@ final class ShowControllerTests: XCTestCase {
         XCTAssertEqual(house.starts, 2)
     }
 
+    // Review 2, finding 4.
+    func testLatePlayNowIsCancelledWhenTheShowChanged() {
+        let show = controller()
+        // Pressed while idle. Before it loads, the operator enters Show Mode and arms cue a.
+        let pressed = show.moment
+        show.setShowMode(true)
+        show.arm()
+        XCTAssertEqual(show.playNow(cue("x"), pressedAt: pressed), .showChanged("x"))
+        XCTAssertEqual(show.state, .armed("a"), "the cue the operator armed stays armed")
+        XCTAssertEqual(house.starts, 1)
+
+        // Show Mode on its own also counts: the operator is running the service now.
+        let quiet = controller()
+        let before = quiet.moment
+        quiet.setShowMode(true)
+        XCTAssertEqual(quiet.playNow(cue("x"), pressedAt: before), .showChanged("x"))
+        XCTAssertEqual(quiet.state, .idle)
+
+        // Nothing changed: it plays.
+        let ready = controller()
+        XCTAssertNil(ready.playNow(cue("x"), pressedAt: ready.moment))
+        XCTAssertEqual(ready.state, .live("x"))
+    }
+
+    func testLatePlayNowDoesNotAcknowledgeAFaultItNeverSaw() {
+        let show = controller()
+        let pressed = show.moment
+        show.setShowMode(true)
+        show.arm()
+        show.deviceLost()
+        guard case .faulted = show.state else { return XCTFail("expected a fault") }
+        XCTAssertEqual(show.playNow(cue("x"), pressedAt: pressed), .showChanged("x"))
+        guard case .faulted = show.state else { return XCTFail("the fault stays for the operator") }
+    }
+
     func testPlayNowRefusalStaysSilent() {
         let show = controller()
         available = false

@@ -162,3 +162,80 @@ Tier 3 is still open, apart from these, which were fixed along the way:
 - **GO by mouse:** the GO button and the GO menu item make house sound from a click. DESIGN implies this is intended, but it conflicts with "clicks never start audio".
 - **Aggregate and Multi-Output devices:** one that includes the house interface passes the house-and-cue-differ check.
 - **Panic then fault:** should resuming after that restart from the top?
+
+# Review findings: second pass (2026-11-02)
+
+Three independent reviewers read the 16 commits after `79d42f9`, which the first pass covered: Planning Center (connector sync, service picker, service types, notes and schedule matching), the live show and library (Arm + Play, adding tracks to services, live EQ, meters, Not a Playback, multi-select), and Import (conversion, movies, FFmpeg, progress). Each one only read the code and ran the tests. ✓ means I re-read the code path myself and confirmed it before fixing.
+
+**Baseline:** 315 tests passed before the fixes. **After:** 334 tests, 0 failures, 5 hardware tests skipped. The Release app builds.
+
+## High: fixed
+
+1. **✓ A sync that finished after Show Mode was turned on changed the loaded service.** Refresh checked Show Mode only when it started, and a connector sync can run for 8 minutes.
+   - Fix: [AppModel.refreshPlans](Cantor/App/AppModel.swift) sets the read aside if Show Mode is on when it ends, and says so once the show is over.
+   - Test: none. This is AppModel code, which has no test target. The guard is one line after the `await`.
+2. **✓ A partly failed connector run counted as a sync, dropping services and skipping the token fallback.** Only "no data at all" was an error.
+   - Fix: [PlanningCenterConnector.plans(fromStream:)](Packages/CantorCore/Sources/CantorCore/Planning/PlanningCenterConnector.swift) now throws, which hands over to the token client or keeps the saved plans, when:
+     - the run ends in an error;
+     - a service-type or plan list call fails;
+     - Planning Center returns an `{"errors": …}` document;
+     - an active, unskipped service type's plans were never read.
+   - Tests: `testFailedPlanListIsNotASync`, `testErrorDocumentIsNotData`, `testRunThatEndsInAnErrorIsNotASync`, `testServiceTypeWhosePlansWereNeverReadIsNotASync`.
+3. **✓ Import hung for good when the writer failed mid-encode,** for example on a full disk. The loop waited only on the reader. The progress display stuck, the queue stopped, and a hidden partial file was left.
+   - Fix: the loop also ends when the writer stops writing, and every non-writing state counts as a failure.
+   - Test: `testFullDiskEndsTheImportInsteadOfHanging` imports into a 1 MB disk image.
+
+## Medium: fixed
+
+4. **✓ A Play Now still loading could fire later over whatever the operator had armed since,** with no GO, or quietly acknowledge a fault.
+   - Fix: `ShowController.playNow(_:pressedAt:)` cancels the request if the show's state or Show Mode changed after the button was pressed.
+   - Tests: `testLatePlayNowIsCancelledWhenTheShowChanged`, `testLatePlayNowDoesNotAcknowledgeAFaultItNeverSaw`.
+5. **✓ Live EQ clicked on the house output.** These all cleared every filter's state at once:
+   - a gain dragged through 0 dB;
+   - Band On/Off, Bypass and Reset.
+
+   Output gain also changed in one step.
+   - Fix: when sections come or go, [PlaybackKernel](Packages/CantorCore/Sources/CantorCore/Playback/PlaybackKernel.swift) crossfades from the old chain to the new one over 20 ms, using preallocated buffers. Output gain glides with a 5 ms time constant. Knob moves still update in place.
+   - Tests: `testTurningABandOffLiveDoesNotClick` and `testBypassOnABoostedTrackGlides`. Both fail on the old kernel (one-sample jumps of 0.13 and 0.43) and pass on the new one.
+   - This also covers first-pass finding 51 for preview.
+6. **✓ ALAC in an `.m4a` was copied, not converted,** because the choice was made by extension.
+   - Fix: an `.m4a` now goes through the encoder. AAC passes straight through and anything else is converted.
+   - Tests: `testALACm4aIsConverted`, `testAACm4aIsPassedThroughNotReencoded`, `testMP3IsCopiedAsItIs`.
+7. **✓ A running import queue kept converting through a cue.** The cue check only blocked starting an import.
+   - Fix: the queue moved into CantorCore as [ImportQueue](Packages/CantorCore/Sources/CantorCore/Library/ImportQueue.swift). It waits between files while a cue is armed or playing or Show Mode is on, and shows "Import paused". It converts on a utility-priority dispatch queue instead of blocking Swift's shared threads.
+   - Tests: `testQueueWaitsWhileTheShowIsBusyAndRunsInOrder`, `testQueuePausesBetweenFilesWhenACueIsArmed`, `testQueueReportsFailuresTogether`.
+8. **The FFmpeg sandbox let FFmpeg write through system services.** `(allow default)` left Mach services open; the reviewer's `defaults write` from inside the sandbox went through.
+   - Fix: the profile now also denies:
+     - Mach lookups, which covers cfprefsd, Apple Events and LaunchServices;
+     - Apple Events;
+     - forking;
+     - starting any program but FFmpeg itself.
+   - Tests: `testSandboxBlocksWritesThroughSystemServices`, `testSandboxStartsNoOtherProgram`. FFmpeg imports still pass under the new profile.
+9. **✓ Not Needed didn't stick on an item whose notes mention tracks,** such as "no tracks". Every Refresh turned it back on and could auto-confirm a file.
+   - Fix: `ServiceCue.operatorNeeds` keeps the operator's choice for that item. Redetect and merging never override it, and it is saved.
+   - Test: `testOperatorNotNeededSticksThroughNotesAndSyncs`.
+10. **Re-reading a saved service didn't check the item count,** so a short or failed read could wipe its lines.
+    - Fix: without a count, a read whose last page says more pages remain is refused. An error document is refused too.
+    - Test: `testRereadWithoutACountNeedsEveryPage`.
+11. **Auto-confirm accepted an exact title match whose length was far off,** for example another Mass setting's Gloria.
+    - Fix: a name match with a length mismatch now waits for the operator. A file the operator chose for that song before still goes on, because Planning Center lengths are often placeholders.
+    - Test: `testWrongLengthNameMatchWaitsForTheOperator`.
+
+## Found while fixing
+
+- **Import progress could crash the app** (in `e12c095`, the build installed before this pass). The progress update read the import status inside its own assignment, which Swift's exclusivity check stops at run time. It was found by the new queue tests. `ImportQueue` now reads, then writes.
+
+## Low: open
+
+- **Alert sounds and sleep during Play Now:** with no service loaded, Play Now doesn't keep macOS alert sounds off the house output or hold off sleep.
+- **A fault during Play Now:** the Show view names the service's cue, not the Play Now track. Its kept position is under a one-off id.
+- **Live EQ drags during a song:** each drag re-runs a failed buffer load, and its alert keeps coming back. Each edit also rebuilds the show (first-pass finding 44).
+- **Plans read per service type:** the token sync reads 6 and the connector 4, so switching source drops plans 5 and 6.
+- **Arrival order:** `plans()` keeps plans in the order they arrive, not by date.
+- **The service picker** misses plans for service types that have services every day.
+- **Name collisions:** an import's name is chosen before encoding, so a file with the same name dropped in during an import is replaced. A name near 255 bytes can't take " 2".
+- **FFmpeg errors** logged inside a component (`[mov @ …] [error]`) aren't picked out, so the message can be "exited with status N".
+- **Two live EQ changes within 20 ms:** the second restarts the crossfade from the first's new chain.
+
+The long blocking waits on Swift's shared threads were fixed with finding 7, since imports now run on a dispatch queue.
+

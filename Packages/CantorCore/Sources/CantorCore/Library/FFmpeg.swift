@@ -3,7 +3,8 @@ import Foundation
 import Synchronization
 
 /// FFmpeg, when the operator has installed it, for imports macOS can't read. Cantator never
-/// ships it. It runs sandboxed: no network, and writes only to its own temporary folder.
+/// ships it. It runs sandboxed: no network, no system services, no other programs, and file
+/// writes only in its own temporary folder.
 public enum FFmpeg {
     /// Offered by the open panel. Without FFmpeg, these are refused with a note that it is needed.
     public static let extensions = [
@@ -42,7 +43,7 @@ public enum FFmpeg {
         let ffmpegArguments = arguments(source: source.path, output: output.path)
         if FileManager.default.isExecutableFile(atPath: sandboxExec) {
             process.executableURL = URL(fileURLWithPath: sandboxExec)
-            process.arguments = ["-p", sandboxProfile(writableFolder: folder.path), ffmpeg] + ffmpegArguments
+            process.arguments = ["-p", sandboxProfile(writableFolder: folder.path, executable: ffmpeg), ffmpeg] + ffmpegArguments
         } else {
             process.executableURL = URL(fileURLWithPath: ffmpeg)
             process.arguments = ffmpegArguments
@@ -133,15 +134,30 @@ public enum FFmpeg {
         ]
     }
 
-    /// Everything is allowed except the network and writing outside `writableFolder`.
-    static func sandboxProfile(writableFolder: String) -> String {
-        let folder = writableFolder.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    /// Reading files is allowed, so FFmpeg can load its libraries and the source. Denied: the
+    /// network; writing outside `writableFolder`; Mach services, which would otherwise let it write
+    /// preferences through cfprefsd, send Apple Events or open apps through LaunchServices; and
+    /// starting any program but `executable`.
+    static func sandboxProfile(writableFolder: String, executable: String) -> String {
+        func quoted(_ path: String) -> String {
+            "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        // Homebrew's ffmpeg is a link into its Cellar, and the check sees the resolved path.
+        let resolved = realpath(executable, nil).map { path in
+            defer { free(path) }
+            return String(cString: path)
+        } ?? executable
         return """
         (version 1)
         (allow default)
         (deny network*)
         (deny file-write*)
-        (allow file-write* (subpath "\(folder)") (literal "/dev/null") (literal "/dev/dtracehelper"))
+        (allow file-write* (subpath \(quoted(writableFolder))) (literal "/dev/null") (literal "/dev/dtracehelper"))
+        (deny mach-lookup)
+        (deny appleevent-send)
+        (deny process-fork)
+        (deny process-exec)
+        (allow process-exec (literal \(quoted(executable))) (literal \(quoted(resolved))))
         """
     }
 }

@@ -85,15 +85,90 @@ final class ImporterTests: XCTestCase {
         try assertM4A(try Importer.importFile(source, into: managed), channels: 1, rate: 44_100, seconds: 3)
     }
 
-    func testCompressedFileIsCopiedNotReencoded() throws {
-        let wav = try writeTone("Prelude.wav")
+    func testAACm4aIsPassedThroughNotReencoded() throws {
+        let wav = try writeTone("Prelude.wav", seconds: 10)
         let first = try Importer.importFile(wav, into: managed)
         let elsewhere = folder.appendingPathComponent("Prelude Copy.m4a")
         try FileManager.default.moveItem(at: first, to: elsewhere)
 
         let result = try Importer.importFile(elsewhere, into: managed)
         XCTAssertEqual(result.lastPathComponent, "Prelude Copy.m4a")
-        XCTAssertEqual(try Data(contentsOf: result), try Data(contentsOf: elsewhere))
+        try assertM4A(result, channels: 2, rate: 44_100, seconds: 10)
+        // The same AAC packets in a new file: the size barely moves.
+        let before = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: elsewhere.path)[.size] as? Int)
+        let after = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: result.path)[.size] as? Int)
+        XCTAssertEqual(Double(after), Double(before), accuracy: Double(before) * 0.05)
+    }
+
+    // Review 2, finding 6.
+    func testALACm4aIsConverted() throws {
+        let wav = try writeTone("Lossless.wav", settings: [AVLinearPCMBitDepthKey: 24], rate: 96_000)
+        let source = folder.appendingPathComponent("Lossless.m4a")
+        try afconvert(["-f", "m4af", "-d", "alac", wav.path, source.path])
+        // Held in a constant: the description points into the file's format, which must stay alive.
+        let lossless = try AVAudioFile(forReading: source)
+        XCTAssertEqual(lossless.fileFormat.streamDescription.pointee.mFormatID, kAudioFormatAppleLossless)
+        let result = try Importer.importFile(source, into: managed)
+        XCTAssertEqual(result.lastPathComponent, "Lossless.m4a")
+        try assertM4A(result, channels: 2, rate: 48_000, seconds: 3)
+    }
+
+    func testMP3IsCopiedAsItIs() throws {
+        try requireFFmpeg()
+        let mp3 = try ffmpegMake("Hymn.mp3", tone + ["-c:a", "libmp3lame"])
+        let result = try Importer.importFile(mp3, into: managed)
+        XCTAssertEqual(try Data(contentsOf: result), try Data(contentsOf: mp3))
+    }
+
+    // Review 2, finding 3.
+    func testFullDiskEndsTheImportInsteadOfHanging() throws {
+        let image = folder.appendingPathComponent("tiny.dmg")
+        let mount = folder.appendingPathComponent("tiny")
+        try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+        func hdiutil(_ arguments: [String]) -> Int32 {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return -1 }
+            process.waitUntilExit()
+            return process.terminationStatus
+        }
+        try XCTSkipIf(hdiutil(["create", "-size", "1m", "-fs", "HFS+", "-volname", "Tiny", image.path]) != 0, "could not make a disk image")
+        try XCTSkipIf(hdiutil(["attach", "-nobrowse", "-mountpoint", mount.path, image.path]) != 0, "could not mount a disk image")
+        defer { _ = hdiutil(["detach", "-force", mount.path]) }
+
+        // About 2 MB of AAC, twice what fits.
+        let source = try writeTone("Long.wav", seconds: 60)
+        let target = mount.appendingPathComponent("Cantor")
+        let finished = expectation(description: "import ends")
+        let outcome = OutcomeBox()
+        DispatchQueue.global().async {
+            do {
+                _ = try Importer.importFile(source, into: target)
+            } catch {
+                outcome.error = error
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 60)
+        XCTAssertNotNil(outcome.error)
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath: target.path)) ?? [], [], "no partial file is left")
+    }
+
+    private final class OutcomeBox: @unchecked Sendable {
+        var error: Error?
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Bool
+        init(_ value: Bool) { stored = value }
+        var value: Bool {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
     }
 
     func testTakenNameGetsANumber() throws {
@@ -238,13 +313,47 @@ final class ImporterTests: XCTestCase {
         let outside = resolved.deletingLastPathComponent().appendingPathComponent("escaped.flac")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: FFmpeg.sandboxExec)
-        process.arguments = ["-p", FFmpeg.sandboxProfile(writableFolder: resolved.path), ffmpeg, "-nostdin", "-loglevel", "quiet"]
+        process.arguments = ["-p", FFmpeg.sandboxProfile(writableFolder: resolved.path, executable: ffmpeg), ffmpeg, "-nostdin", "-loglevel", "quiet"]
             + tone + [outside.path]
         process.standardError = FileHandle.nullDevice
         try process.run()
         process.waitUntilExit()
         XCTAssertNotEqual(process.terminationStatus, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: outside.path))
+    }
+
+    /// Runs a program under the FFmpeg profile, as if it were the allowed program.
+    private func sandboxed(_ program: String, _ arguments: [String]) throws -> Int32 {
+        let writable = URL(fileURLWithPath: try XCTUnwrap(realpath(folder.path, nil).map { String(cString: $0) }))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: FFmpeg.sandboxExec)
+        process.arguments = ["-p", FFmpeg.sandboxProfile(writableFolder: writable.path, executable: program), program] + arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
+    // Review 2, finding 8.
+    func testSandboxBlocksWritesThroughSystemServices() throws {
+        let domain = "org.prcatlanta.cantor.sandboxprobe.\(UUID().uuidString)"
+        defer { CFPreferencesSetAppValue("k" as CFString, nil, domain as CFString); CFPreferencesAppSynchronize(domain as CFString) }
+        XCTAssertNotEqual(try sandboxed("/usr/bin/defaults", ["write", domain, "k", "v"]), 0)
+        XCTAssertNil(CFPreferencesCopyAppValue("k" as CFString, domain as CFString))
+    }
+
+    func testSandboxStartsNoOtherProgram() throws {
+        // The profile allows only /usr/bin/true, so the shell it tries to start is refused.
+        let writable = URL(fileURLWithPath: try XCTUnwrap(realpath(folder.path, nil).map { String(cString: $0) }))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: FFmpeg.sandboxExec)
+        process.arguments = ["-p", FFmpeg.sandboxProfile(writableFolder: writable.path, executable: "/usr/bin/true"), "/bin/sh", "-c", "true"]
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertNotEqual(process.terminationStatus, 0)
+        XCTAssertEqual(try sandboxed("/usr/bin/true", []), 0, "the allowed program still runs")
     }
 
     func testFFmpegArgumentsReadNamesAsFiles() {
@@ -277,10 +386,21 @@ final class ImporterTests: XCTestCase {
     }
 
     func testCopyReportsDone() throws {
-        let first = try Importer.importFile(try writeTone("Short.wav"), into: managed)
+        let wav = try writeTone("Short.wav")
+        let adts = folder.appendingPathComponent("Short.aac")
+        try afconvert(["-f", "adts", "-d", "aac", wav.path, adts.path])
         let recorder = Recorder()
-        _ = try Importer.importFile(first, into: managed, progress: recorder.record)
+        _ = try Importer.importFile(adts, into: managed, progress: recorder.record)
         XCTAssertEqual(recorder.values, [1])
+    }
+
+    private func afconvert(_ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+        process.arguments = arguments
+        try process.run()
+        process.waitUntilExit()
+        try XCTSkipIf(process.terminationStatus != 0, "afconvert could not make the test file")
     }
 
     func testFFmpegImportReportsBothHalves() throws {
@@ -307,5 +427,69 @@ final class ImporterTests: XCTestCase {
         XCTAssertThrowsError(try Importer.importFile(source, into: managed)) { error in
             XCTAssertFalse(error.localizedDescription.contains("[error]"), error.localizedDescription)
         }
+    }
+
+    // MARK: Review 2, finding 7: the queue
+
+    @MainActor
+    func testQueueWaitsWhileTheShowIsBusyAndRunsInOrder() async throws {
+        let log = Recorder()
+        let busy = Flag(true)
+        let queue = ImportQueue(pollInterval: .milliseconds(10), canRun: { !busy.value }) { url, progress in
+            progress(0.5)
+            log.record(Double(url.lastPathComponent.dropLast(4))!)
+            return url
+        }
+        var finished: ([URL], [String])?
+        queue.onFinished = { finished = ($0, $1) }
+        queue.add([URL(fileURLWithPath: "/x/1.wav"), URL(fileURLWithPath: "/x/2.wav")])
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(log.values, [], "nothing converts while a cue is engaged")
+        XCTAssertEqual(queue.status?.paused, true)
+
+        queue.add([URL(fileURLWithPath: "/x/3.wav")])
+        XCTAssertEqual(queue.status?.total, 3)
+        busy.value = false
+        for _ in 0..<200 where finished == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(log.values, [1, 2, 3])
+        XCTAssertEqual(finished?.0.count, 3)
+        XCTAssertNil(queue.status)
+    }
+
+    @MainActor
+    func testQueuePausesBetweenFilesWhenACueIsArmed() async throws {
+        let log = Recorder()
+        let busy = Flag(false)
+        let queue = ImportQueue(pollInterval: .milliseconds(10), canRun: { !busy.value }) { url, _ in
+            log.record(Double(url.lastPathComponent.dropLast(4))!)
+            // A cue is armed while the first file converts.
+            busy.value = true
+            return url
+        }
+        var done = false
+        queue.onFinished = { _, _ in done = true }
+        queue.add([URL(fileURLWithPath: "/x/1.wav"), URL(fileURLWithPath: "/x/2.wav")])
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(log.values, [1], "the second file waits")
+        XCTAssertEqual(queue.status?.number, 2)
+        XCTAssertEqual(queue.status?.paused, true)
+        busy.value = false
+        for _ in 0..<200 where !done { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(log.values, [1, 2])
+    }
+
+    @MainActor
+    func testQueueReportsFailuresTogether() async throws {
+        struct Broken: LocalizedError { var errorDescription: String? { "broken" } }
+        let queue = ImportQueue(pollInterval: .milliseconds(10), canRun: { true }) { url, _ in
+            if url.lastPathComponent.hasPrefix("bad") { throw Broken() }
+            return url
+        }
+        var finished: ([URL], [String])?
+        queue.onFinished = { finished = ($0, $1) }
+        queue.add([URL(fileURLWithPath: "/x/bad1.wav"), URL(fileURLWithPath: "/x/good.wav"), URL(fileURLWithPath: "/x/bad2.wav")])
+        for _ in 0..<200 where finished == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(finished?.0.map(\.lastPathComponent), ["good.wav"])
+        XCTAssertEqual(finished?.1, ["broken", "broken"])
     }
 }

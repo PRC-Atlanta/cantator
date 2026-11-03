@@ -24,6 +24,7 @@ public struct ShowCue: Identifiable, Sendable {
 
 public enum ArmRefusal: Equatable, Sendable {
     case notInShowMode, noCue, noHouseOutput, sameOutput, notLoaded(String), notIdle, deviceFailed(String), emptyRange(String)
+    case showChanged(String)
 
     public var message: String {
         switch self {
@@ -35,6 +36,7 @@ public enum ArmRefusal: Equatable, Sendable {
         case .notIdle: "Finish the current cue first."
         case .deviceFailed(let reason): reason
         case .emptyRange(let title): "\(title) has no audio between its start and end points."
+        case .showChanged(let title): "Play Now for \(title) was cancelled: the show changed while it loaded."
         }
     }
 }
@@ -165,11 +167,27 @@ public final class ShowController {
         return start(cue)
     }
 
+    /// What the show looked like when Play Now was pressed.
+    public struct Moment: Equatable, Sendable {
+        public var state: ShowState
+        public var showMode: Bool
+    }
+
+    public var moment: Moment { Moment(state: state, showMode: showMode) }
+
     /// Emergency: arms a track from outside the cue list and plays it at once. It skips the Show Mode
     /// requirement and the arm-to-GO delay, then turns Show Mode on so F, P and the Show view's
     /// buttons control it. Anything armed is disarmed first. It never cuts off a cue that is sounding.
+    ///
+    /// `pressedAt` is the show as it was when the operator asked. A track can take seconds to load,
+    /// and if the operator armed a cue, entered Show Mode or a fault came in meanwhile, the request
+    /// is out of date: playing it would replace what they chose since, so it is cancelled.
     @discardableResult
-    public func playNow(_ cue: ShowCue) -> ArmRefusal? {
+    public func playNow(_ cue: ShowCue, pressedAt: Moment? = nil) -> ArmRefusal? {
+        if let pressedAt, pressedAt != moment {
+            notice = ArmRefusal.showChanged(cue.title).message
+            return .showChanged(cue.title)
+        }
         switch state {
         case .idle: break
         case .armed: apply(.disarm)

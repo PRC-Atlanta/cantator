@@ -108,6 +108,8 @@ public enum PlanningCenterConnector {
     private struct ToolRun {
         var results: [(call: Call, document: [String: Any])] = []
         var deniedOrFailed = 0
+        /// The read tools whose calls were denied, failed, or returned an error document.
+        var failedTools = Set<String>()
         var finalError: LLMError?
 
         /// The error to report when the run produced nothing usable.
@@ -136,11 +138,18 @@ public enum PlanningCenterConnector {
                     guard let id = block["tool_use_id"] as? String, let call = calls[id], readTools.contains(call.tool) else { continue }
                     if block["is_error"] as? Bool == true {
                         run.deniedOrFailed += 1
+                        run.failedTools.insert(call.tool)
                         continue
                     }
                     guard let text = resultText(block["content"]),
                           let document = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
                     else { continue }
+                    // Planning Center reports a failed request as a document of errors, which is not data.
+                    if document["errors"] != nil, document["data"] == nil {
+                        run.deniedOrFailed += 1
+                        run.failedTools.insert(call.tool)
+                        continue
+                    }
                     run.results.append((call, document))
                 }
             case "result":
@@ -155,11 +164,16 @@ public enum PlanningCenterConnector {
     }
 
     private typealias PlanEntry = (typeID: String, plan: [String: Any], included: [String: [String: Any]])
-    private typealias ItemPage = (items: [[String: Any]], included: [String: [String: Any]])
+    /// `complete` is false when the last page read for the plan said more pages remained.
+    private typealias ItemPage = (items: [[String: Any]], included: [String: [String: Any]], complete: Bool)
 
     /// Service type names, plan entries in the order they arrived, and item pages by plan id.
-    private static func collect(_ run: ToolRun) -> (typeNames: [String: String], plans: [PlanEntry], items: [String: ItemPage]) {
+    private static func collect(
+        _ run: ToolRun
+    ) -> (typeNames: [String: String], plans: [PlanEntry], items: [String: ItemPage], activeTypes: Set<String>, typesWithPlans: Set<String>) {
         var typeNames: [String: String] = [:]
+        var activeTypes = Set<String>()
+        var typesWithPlans = Set<String>()
         var planEntries: [PlanEntry] = []
         var itemPages: [String: ItemPage] = [:]
         for (call, document) in run.results {
@@ -169,22 +183,35 @@ public enum PlanningCenterConnector {
             case "services_service_types":
                 for type in data {
                     guard let id = type["id"] as? String else { continue }
-                    typeNames[id] = PCOClient.resourceAttributes(type)["name"] as? String ?? "Service"
+                    let attributes = PCOClient.resourceAttributes(type)
+                    typeNames[id] = attributes["name"] as? String ?? "Service"
+                    if attributes["archived_at"] == nil || attributes["archived_at"] is NSNull { activeTypes.insert(id) }
                 }
             case "services_plans":
                 guard let typeID = string(call.input["service_type_id"]) else { continue }
+                typesWithPlans.insert(typeID)
                 planEntries += data.map { (typeID, $0, included) }
             case "services_plan_items":
                 guard let planID = string(call.input["plan_id"]) else { continue }
-                var page = itemPages[planID] ?? ([], [:])
+                var page = itemPages[planID] ?? ([], [:], true)
                 page.items += data
                 page.included.merge(included) { a, _ in a }
+                page.complete = !hasMorePages(document)
                 itemPages[planID] = page
             default:
                 break
             }
         }
-        return (typeNames, planEntries, itemPages)
+        return (typeNames, planEntries, itemPages, activeTypes, typesWithPlans)
+    }
+
+    /// Whether a result says further pages remain, at its top level or in its metadata.
+    static func hasMorePages(_ document: [String: Any]) -> Bool {
+        for container in [document, document["meta"] as? [String: Any] ?? [:]] {
+            if container["has_more"] as? Bool == true { return true }
+            if let token = container["next_page_token"] as? String, !token.isEmpty { return true }
+        }
+        return false
     }
 
     /// A plan entry as a summary, and whether its service times could be read.
@@ -206,8 +233,10 @@ public enum PlanningCenterConnector {
         return (summary, true)
     }
 
-    /// The plan's cues from its item pages, or nil when the items that arrived don't match the count.
+    /// The plan's cues from its item pages, or nil when the items that arrived don't match the
+    /// count, or, with no count to check, when the last page said more remained.
     private static func cues(_ page: ItemPage, expected: Int?, memory: AliasMemory) -> [ServiceCue]? {
+        guard page.complete else { return nil }
         var items: [[String: Any]] = []
         var itemIDs = Set<String>()
         for item in page.items {
@@ -234,8 +263,15 @@ public enum PlanningCenterConnector {
         memory: AliasMemory, now: Date = Date()
     ) throws -> [ServicePlan] {
         let run = try toolRun(stream)
-        let (typeNames, planEntries, itemPages) = collect(run)
+        let (typeNames, planEntries, itemPages, activeTypes, typesWithPlans) = collect(run)
         guard !planEntries.isEmpty || !typeNames.isEmpty else { throw run.failure }
+        // A sync drops services it didn't see, so a run that stopped early or lost a list of plans
+        // must not count as a sync. Throwing hands it to the token client, or keeps the saved plans.
+        if let finalError = run.finalError { throw finalError }
+        if run.failedTools.contains("services_service_types") || run.failedTools.contains("services_plans") {
+            throw PlanningCenterConnectorError.toolsDenied
+        }
+        guard activeTypes.subtracting(skipping).isSubset(of: typesWithPlans) else { throw PlanningCenterConnectorError.incomplete }
 
         var plans: [ServicePlan] = []
         var seen = Set<String>()
@@ -262,7 +298,7 @@ public enum PlanningCenterConnector {
     /// The service picker's list from a `listPrompt` run: every plan inside the picker's window.
     public static func summaries(fromStream stream: Data, now: Date = Date()) throws -> [PlanSummary] {
         let run = try toolRun(stream)
-        let (typeNames, planEntries, _) = collect(run)
+        let (typeNames, planEntries, _, _, _) = collect(run)
         guard !planEntries.isEmpty || !typeNames.isEmpty else { throw run.failure }
         return PlanSummary.inWindow(planEntries.compactMap { summary($0, typeNames: typeNames)?.0 }, now: now)
     }
@@ -271,8 +307,9 @@ public enum PlanningCenterConnector {
     /// the operator is waiting on this plan.
     public static func plan(fromStream stream: Data, summary: PlanSummary, memory: AliasMemory, now: Date = Date()) throws -> ServicePlan {
         let run = try toolRun(stream)
-        let (_, _, itemPages) = collect(run)
+        let (_, _, itemPages, _, _) = collect(run)
         guard let page = itemPages[summary.id] else { throw run.failure }
+        if run.failedTools.contains("services_plan_items") { throw PlanningCenterConnectorError.incomplete }
         guard let cues = cues(page, expected: summary.itemsCount, memory: memory) else { throw PlanningCenterConnectorError.incomplete }
         var plan = summary.emptyPlan(now: now)
         // No times in the list keeps the saved ones.

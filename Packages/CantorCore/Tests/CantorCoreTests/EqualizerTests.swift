@@ -96,4 +96,64 @@ final class EqualizerTests: XCTestCase {
         track.eq = eq
         XCTAssertEqual(try JSONDecoder().decode(Track.self, from: JSONEncoder().encode(track)).eq, eq)
     }
+
+    // MARK: Review 2, finding 5: live changes on the house
+
+    /// Plays a 97 Hz sine, applies `change` halfway, and returns the largest sample-to-sample
+    /// step just after the change, and the largest in the steady parts before and after it. A
+    /// click is a step bigger than the tone ever makes on its own. 97 Hz, so the change doesn't
+    /// land on a zero crossing.
+    private func steps(from eq: TrackEQ?, to change: TrackEQ?) -> (atChange: Float, steady: Float) {
+        let frames = Int(rate)
+        let samples = (0..<frames).map { Float(0.25 * sin(2 * .pi * 97 * Double($0) / rate)) }
+        let buffer = PCMBuffer(left: samples, right: samples, sampleRate: rate)
+        let kernel = PlaybackKernel(buffer: buffer, parameters: PlaybackParameters(
+            startFrame: 0, endFrame: frames, fadeOutFrames: 0, fadeInFrames: 0, gainLinear: 1, eq: EQCoefficients(eq, sampleRate: rate)
+        ))
+        kernel.play()
+        let block = 4800
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: block)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: block)
+        defer { left.deallocate(); right.deallocate() }
+        var out: [Float] = []
+        for index in 0..<6 {
+            if index == 3 { kernel.setEQ(EQCoefficients(change, sampleRate: rate)) }
+            kernel.render(frames: block, left: left, right: right)
+            out += (0..<block).map { left[$0] }
+        }
+        func largestStep(_ range: Range<Int>) -> Float { range.dropFirst().map { abs(out[$0] - out[$0 - 1]) }.max() ?? 0 }
+        let steady = max(largestStep(block..<3 * block), largestStep(5 * block..<6 * block))
+        // From the last sample before the change, so the step into the first one after it counts.
+        return (largestStep(3 * block - 1..<3 * block + 2400), steady)
+    }
+
+    func testTurningABandOffLiveDoesNotClick() {
+        // A high-pass above the tone and a bell on it, so both shape what is heard.
+        var filtered = TrackEQ()
+        filtered.bands[0].isOn = true
+        filtered.bands[0].frequency = 200
+        filtered.bands[3].frequency = 97
+        filtered.bands[3].gainDb = 6
+        // The bell lands on 0 dB while being dragged, so its section drops out of the chain.
+        var dragged = filtered
+        dragged.bands[3].gainDb = 0
+        var passOff = filtered
+        passOff.bands[0].isOn = false
+        for change in [dragged, passOff] {
+            let (atChange, steady) = steps(from: filtered, to: change)
+            XCTAssertLessThan(atChange, steady * 1.2, "no jump bigger than the tone's own movement")
+        }
+    }
+
+    func testBypassOnABoostedTrackGlides() {
+        var boosted = TrackEQ()
+        boosted.outputDb = 12
+        var bypassed = boosted
+        bypassed.isOn = false
+        let (atChange, steady) = steps(from: boosted, to: bypassed)
+        // A 12 dB step would jump by about three quarters of the boosted peak in one sample.
+        XCTAssertLessThan(atChange, steady * 1.2)
+        // And it does arrive: a second later the level is the plain one.
+        XCTAssertEqual(peak(hz: 1000, eq: boosted, change: bypassed), 0.25, accuracy: 0.003)
+    }
 }

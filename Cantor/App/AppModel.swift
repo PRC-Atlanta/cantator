@@ -33,8 +33,6 @@ final class AppModel {
     var pendingExclusion: PendingExclusion?
     var status: String?
     var makingLocal: Set<UUID> = []
-    /// What Import is doing, while it runs.
-    var importStatus: ImportStatus?
     var unreadableFiles: [String] = []
     var systemSoundStuckOnHouse = false
     var inbox: NewFileInbox
@@ -57,14 +55,13 @@ final class AppModel {
 
     let show: ShowController
     let cueBus = CueBus()
+    /// Files chosen with Import, converting one at a time. Set at the end of init.
+    @ObservationIgnored private(set) var imports: ImportQueue!
 
     @ObservationIgnored private let houseBus = HouseBus()
     /// Imported files the next scan should send to the New File pop-up. The managed folder has no
     /// watch start, so the scan alone would not count them as new.
     @ObservationIgnored private var pendingImports: Set<String> = []
-    /// Files chosen but not yet started. One worker converts them in order.
-    @ObservationIgnored private var importQueue: [URL] = []
-    @ObservationIgnored private var importFailures: [String] = []
     @ObservationIgnored private let sleepGuard = SleepGuard()
     @ObservationIgnored private let soundGuard = SystemSoundGuard()
     @ObservationIgnored private var hashCache: HashCache
@@ -126,6 +123,13 @@ final class AppModel {
         applySettingsToShow()
         if !setAside.isEmpty {
             alert = "Some saved data could not be read and was set aside: \(setAside.joined(separator: ", "))"
+        }
+        imports = ImportQueue(canRun: { [weak self] in self?.canImport ?? false })
+        imports.onFinished = { [weak self] imported, failures in
+            guard let self else { return }
+            pendingImports.formUnion(imported.map(\.path))
+            if !failures.isEmpty { alert = failures.joined(separator: "\n") }
+            rescan()
         }
     }
 
@@ -453,48 +457,10 @@ final class AppModel {
     }
 
     /// Converts the chosen files into ~/Music/Cantor, then scans so they reach the library and the
-    /// New File pop-up. Files are converted one at a time, and files chosen while others convert
-    /// join the end. Failures are listed together once the last file is done.
+    /// New File pop-up. The queue waits between files while a cue is engaged.
     func importFiles(_ urls: [URL]) {
         guard canImport, !urls.isEmpty else { return }
-        importQueue += urls
-        if var status = importStatus {
-            status.total += urls.count
-            importStatus = status
-            return
-        }
-        importStatus = ImportStatus(filename: urls[0].lastPathComponent, number: 1, total: urls.count, fraction: 0)
-        Task { await runImports() }
-    }
-
-    private func runImports() async {
-        while !importQueue.isEmpty {
-            let url = importQueue.removeFirst()
-            let fileID = UUID()
-            importStatus?.fileID = fileID
-            importStatus?.filename = url.lastPathComponent
-            importStatus?.fraction = 0
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
-                Result {
-                    try Importer.importFile(url) { fraction in
-                        Task { @MainActor [weak self] in
-                            // A late report from the file before must not move the next one's bar.
-                            guard let self, self.importStatus?.fileID == fileID else { return }
-                            self.importStatus?.fraction = max(self.importStatus?.fraction ?? 0, fraction)
-                        }
-                    }
-                }
-            }.value
-            switch result {
-            case .success(let destination): pendingImports.insert(destination.path)
-            case .failure(let error): importFailures.append(error.localizedDescription)
-            }
-            if !importQueue.isEmpty { importStatus?.number += 1 }
-        }
-        importStatus = nil
-        if !importFailures.isEmpty { alert = importFailures.joined(separator: "\n") }
-        importFailures = []
-        rescan()
+        imports.add(urls)
     }
 
     func makeLocal(_ track: Track) {
@@ -589,6 +555,7 @@ final class AppModel {
         let request = UUID()
         playNowRequest = request
         playNowLoading = track.id
+        let pressedAt = show.moment
         Task {
             defer { if playNowRequest == request { playNowLoading = nil } }
             var buffer = resident[track.id] ?? playNowCache[track.id] ?? auditionCache[track.id]
@@ -609,7 +576,7 @@ final class AppModel {
                 id: "play-now-\(request.uuidString)", title: current.title, track: current, buffer: buffer,
                 gainDb: gainDb(for: current)
             )
-            if let refusal = show.playNow(cue) {
+            if let refusal = show.playNow(cue, pressedAt: pressedAt) {
                 alert = refusal.message
             }
         }
@@ -642,6 +609,12 @@ final class AppModel {
                 token: { try await $0.fetchUpcomingPlans(skipping: hidden, memory: memory) }
             )
             var notes = readNotes
+            // Show Mode can be turned on while Planning Center is read, which takes minutes. The
+            // services must not change under a live show, so this read is set aside.
+            guard !show.showMode else {
+                alert = "Planning Center was read while Show Mode was on, so nothing was changed. Choose Refresh again after the service."
+                return
+            }
             if let fresh {
                 plans = ServicePlan.applySync(existing: plans, fresh: fresh, loadedID: loadedPlanID)
                 noteServiceTypes(fresh.map { ($0.serviceTypeID, $0.serviceTypeName) })
@@ -960,7 +933,10 @@ final class AppModel {
     }
 
     func setNeeded(planID: String, cue: ServiceCue, needed: Bool) {
-        updateCue(planID: planID, cueID: cue.id) { $0.needsPlayback = needed }
+        updateCue(planID: planID, cueID: cue.id) {
+            $0.needsPlayback = needed
+            $0.operatorNeeds = needed
+        }
         memory.rememberNeeds(cue, needed: needed)
         rankAllPlans()
         scheduleSave()
@@ -1381,17 +1357,4 @@ struct PendingExclusion: Identifiable {
     let id = UUID()
     let trackIDs: Set<UUID>
     let message: String
-}
-
-/// The file Import is on, and how far through it is.
-struct ImportStatus: Equatable {
-    /// New for each file, so a late report from the file before is ignored.
-    var fileID = UUID()
-    var filename: String
-    /// Which file this is, counting from 1, out of `total`.
-    var number: Int
-    var total: Int
-    var fraction: Double
-
-    var percent: Int { Int((fraction * 100).rounded(.down)) }
 }

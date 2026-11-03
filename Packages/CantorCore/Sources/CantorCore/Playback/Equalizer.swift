@@ -140,6 +140,9 @@ public struct EQCoefficients: Sendable {
 
     public private(set) var count = 0
     public private(set) var outputGain: Float = 1
+    /// Which bands the sections come from, one bit per band. Sections are packed, so when this
+    /// changes, a section's history belongs to another band.
+    public private(set) var layout: UInt8 = 0
     private var values: (
         Biquad, Biquad, Biquad, Biquad, Biquad, Biquad, Biquad, Biquad
     ) = (.identity, .identity, .identity, .identity, .identity, .identity, .identity, .identity)
@@ -151,9 +154,10 @@ public struct EQCoefficients: Sendable {
     public init(_ eq: TrackEQ?, sampleRate: Double) {
         guard let eq, !eq.isFlat, sampleRate > 0 else { return }
         outputGain = Float(pow(10, eq.outputDb / 20))
-        for band in eq.bands.prefix(Self.capacity) where !band.isNeutral {
+        for (index, band) in eq.bands.prefix(Self.capacity).enumerated() where !band.isNeutral {
             set(count, Biquad(band, sampleRate: sampleRate))
             count += 1
+            layout |= 1 << UInt8(index)
         }
     }
 

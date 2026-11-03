@@ -321,6 +321,9 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     public var autoConfirmed = false
     /// The operator cleared a match, so Cantor never confirms one on this item by itself again.
     public var matchCleared = false
+    /// Needs as the operator set it on this item. Nil until they do. Notes and remembered choices
+    /// never override it, so Not Needed stays off however the notes are worded.
+    public var operatorNeeds: Bool?
 
     public init(
         id: CueID, position: Int, title: String, itemType: String = "item", notes: String = "", arrangement: String = "",
@@ -348,7 +351,7 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, position, title, itemType, notes, arrangement, keyName, songID, lengthSec, attachmentFilenames
         case needsPlayback, candidates, trackID, changedSinceConfirm, isManual, removedInPCO
-        case autoConfirmed, matchCleared
+        case autoConfirmed, matchCleared, operatorNeeds
     }
 
     public init(from decoder: Decoder) throws {
@@ -373,6 +376,7 @@ public struct ServiceCue: Codable, Equatable, Identifiable, Sendable {
         removedInPCO = try c.decodeIfPresent(Bool.self, forKey: .removedInPCO) ?? false
         autoConfirmed = try c.decodeIfPresent(Bool.self, forKey: .autoConfirmed) ?? false
         matchCleared = try c.decodeIfPresent(Bool.self, forKey: .matchCleared) ?? false
+        operatorNeeds = try c.decodeIfPresent(Bool.self, forKey: .operatorNeeds)
     }
 
     /// Something the operator chose the track for has changed. A key saved before Cantor read keys
@@ -462,6 +466,10 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     /// operator turned it off, so a confirmed line never drops out by itself.
     public mutating func redetect(memory: AliasMemory) {
         for index in cues.indices where !cues[index].isManual && cues[index].itemType != "header" {
+            if let choice = cues[index].operatorNeeds {
+                cues[index].needsPlayback = choice
+                continue
+            }
             let detected = PlaybackDetector.needsPlayback(cues[index], memory: memory)
             if cues[index].trackID == nil {
                 cues[index].needsPlayback = detected
@@ -478,8 +486,12 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         var count = 0
         for index in cues.indices {
             let cue = cues[index]
+            // A name match whose length is far from the item's is likely another setting or
+            // arrangement of the same title, so it waits for the operator. A file the operator chose
+            // for this song before still goes on: Planning Center lengths are often placeholders.
             guard cue.needsPlayback, cue.trackID == nil, !cue.matchCleared, !cue.removedInPCO,
-                  MatchBand(candidates: cue.candidates) == .proposed, let top = cue.candidates.first
+                  MatchBand(candidates: cue.candidates) == .proposed, let top = cue.candidates.first,
+                  !top.durationMismatch || top.source == .remembered
             else { continue }
             cues[index].trackID = top.trackID
             cues[index].autoConfirmed = true
@@ -579,6 +591,8 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             merged.changedSinceConfirm = old.changedSinceConfirm
             merged.autoConfirmed = old.autoConfirmed
             merged.matchCleared = old.matchCleared
+            merged.operatorNeeds = old.operatorNeeds
+            if let choice = old.operatorNeeds { merged.needsPlayback = choice }
             if incoming.attachmentsUnavailable { merged.attachmentFilenames = old.attachmentFilenames }
             if old.trackID != nil, old.differsForPlayback(from: incoming) {
                 merged.changedSinceConfirm = true
