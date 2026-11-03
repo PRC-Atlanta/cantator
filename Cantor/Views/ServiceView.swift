@@ -26,7 +26,12 @@ struct ServiceView: View {
     var body: some View {
         Group {
             if let plan {
-                table(plan)
+                ScrollViewReader { proxy in
+                    table(plan)
+                        .onAppear { takeReveal(plan, proxy) }
+                        .onChange(of: model.revealedCue) { takeReveal(plan, proxy) }
+                        .onChange(of: planID) { takeReveal(plan, proxy) }
+                }
                     .inspector(isPresented: .constant(true)) {
                         Group {
                             if let cue = plan.cues.first(where: { $0.id == selectedCue }) {
@@ -59,6 +64,14 @@ struct ServiceView: View {
                 ContentUnavailableView("Service Not Found", systemImage: "calendar.badge.exclamationmark")
             }
         }
+    }
+
+    /// Selects the item a Pre-Service Check issue points at, and scrolls it into view.
+    private func takeReveal(_ plan: ServicePlan, _ proxy: ScrollViewProxy) {
+        guard let cue = model.revealedCue, plan.cues.contains(where: { $0.id == cue }) else { return }
+        model.revealedCue = nil
+        selectedCue = cue
+        DispatchQueue.main.async { proxy.scrollTo(cue, anchor: .center) }
     }
 
     private func subtitle(_ plan: ServicePlan) -> String {

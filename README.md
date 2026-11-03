@@ -205,7 +205,7 @@ Every preview button, including the headphones on a candidate, becomes **Stop** 
 **Before the service**
 
 1. Choose **Load Service** to load every cue into memory.
-2. Open **Pre-Service Check** and clear everything under **Must Fix**.
+2. Open **Pre-Service Check** and clear everything under **Must Fix**. A yellow mark next to it in the sidebar means it found something. Click an issue to go to the service item it's about, or to Settings for an output problem.
 3. Plug in the Mac and keep the lid open. Closing the lid sleeps it.
 4. Open **Show**. Arm and GO work there right away. Clicking anything else in the sidebar disarms an armed cue.
 5. To lock editing too, press Command-Shift-L for Show Mode. It locks everything except the EQ, and the sidebar turns into the service's program so you can follow along. The cue the show is on is marked and kept in view.

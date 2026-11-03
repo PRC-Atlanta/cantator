@@ -109,7 +109,10 @@ private struct SidebarView: View {
             VStack(alignment: .leading, spacing: 1) {
                 SidebarHeader("Service")
                 row(.show) { SidebarLabel("Show", "play.rectangle") }
-                row(.check) { SidebarLabel("Pre-Service Check", "checklist") }
+                // A yellow mark while the check finds something to fix or look at, so it is seen before opening it.
+                let problems = model.checkResults().filter { $0.severity > .ok }.count
+                row(.check) { SidebarLabel("Pre-Service Check", "checklist", alert: problems > 0) }
+                    .help(problems > 0 ? "Pre-Service Check found \(problems) \(problems == 1 ? "issue" : "issues")" : "")
             }
             .padding(10)
             Divider()
@@ -270,11 +273,13 @@ private struct SidebarLabel: View {
     let title: String
     let symbol: String
     var count = 0
+    var alert = false
 
-    init(_ title: String, _ symbol: String, count: Int = 0) {
+    init(_ title: String, _ symbol: String, count: Int = 0, alert: Bool = false) {
         self.title = title
         self.symbol = symbol
         self.count = count
+        self.alert = alert
     }
 
     var body: some View {
@@ -282,6 +287,10 @@ private struct SidebarLabel: View {
             Image(systemName: symbol).frame(width: 18)
             Text(title).lineLimit(1)
             Spacer(minLength: 4)
+            if alert {
+                Image(systemName: "info.circle.fill").foregroundStyle(Theme.armed)
+                    .accessibilityLabel("Needs attention")
+            }
             if count > 0 {
                 Text("\(count)").font(.callout).foregroundStyle(.secondary).monospacedDigit()
             }

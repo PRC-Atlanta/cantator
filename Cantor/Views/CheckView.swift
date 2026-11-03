@@ -54,20 +54,50 @@ struct CheckView: View {
 
     private func refresh() { issues = model.checkResults() }
 
+    private func label(_ issue: CheckIssue, symbol: String, color: Color, opens: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(issue.title).font(.system(size: 14, weight: .medium))
+                Text(issue.action).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if opens {
+                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    /// Where a click takes the operator to fix the issue: the item in Service, or Settings for an
+    /// output. Nil when there is nowhere to go, as for the Do Not Disturb reminder.
+    private func destination(_ issue: CheckIssue) -> (() -> Void)? {
+        if let cue = issue.cueID, let plan {
+            return { model.reveal(cue: cue, planID: plan.id) }
+        }
+        switch issue.kind {
+        case .noHouseOutput, .houseOutputMissing, .housePairMissing, .noCueOutput, .cueOutputMissing, .cuePairMissing, .sameOutput:
+            return { model.openSettings(.outputs) }
+        case .noCues:
+            return plan.map { plan in { model.selection = .plan(plan.id) } }
+        default:
+            return nil
+        }
+    }
+
     @ViewBuilder
     private func section(_ title: String, _ severity: CheckSeverity, symbol: String, color: Color) -> some View {
         let rows = issues.filter { $0.severity == severity }
         if !rows.isEmpty {
             Section(title) {
                 ForEach(rows) { issue in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: symbol).foregroundStyle(color)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(issue.title).font(.system(size: 14, weight: .medium))
-                            Text(issue.action).font(.system(size: 12)).foregroundStyle(.secondary)
-                        }
+                    if let open = destination(issue) {
+                        Button(action: open) { label(issue, symbol: symbol, color: color, opens: true) }
+                            .buttonStyle(.plain)
+                    } else {
+                        label(issue, symbol: symbol, color: color, opens: false)
                     }
-                    .padding(.vertical, 2)
                 }
             }
         }

@@ -304,6 +304,15 @@ final class AppModel {
         updateSettings { $0.chooseServiceSource(source) }
     }
 
+    /// An item the Service view should select and scroll to once it shows its service.
+    var revealedCue: CueID?
+
+    /// Opens a service on one of its items, as a Pre-Service Check issue does.
+    func reveal(cue: CueID, planID: String) {
+        revealedCue = cue
+        selection = .plan(planID)
+    }
+
     /// Opens Settings on a pane, as the sidebar's outputs row does.
     func openSettings(_ tab: SettingsTab) {
         settingsTab = tab
