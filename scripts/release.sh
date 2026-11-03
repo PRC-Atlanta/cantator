@@ -57,7 +57,7 @@ sign $app
 codesign --verify --strict --deep $app
 # Every piece must carry our team, not just a valid signature.
 for part in $sparkle/XPCServices/*.xpc $sparkle/Autoupdate $sparkle/Updater.app $app; do
-    codesign -dv $part 2>&1 | grep -q "TeamIdentifier=6RHHE8NEYA" || { echo "$part is not signed with our Developer ID."; exit 1; }
+    [[ $(codesign -dv $part 2>&1) == *"TeamIdentifier=6RHHE8NEYA"* ]] || { echo "$part is not signed with our Developer ID."; exit 1; }
 done
 
 rm -rf $out
