@@ -7,9 +7,9 @@
 # first. With --publish it tags the commit and creates the GitHub release that the app's
 # update feed points at.
 #
-# Needs: a clean tree, the Developer ID certificate and Sparkle's update key (account
-# "cantator") in the login keychain, and a notarytool profile (NOTARY_PROFILE, default
-# "cantator"). Publishing also needs the commit pushed to origin and `gh` signed in.
+# Needs: a clean tree, the Developer ID certificate (CODESIGN_IDENTITY) and Sparkle's update
+# key (account "cantator") in the login keychain, and a notarytool profile (NOTARY_PROFILE,
+# default "cantator"). Publishing also needs the commit pushed to origin and `gh` signed in.
 set -euo pipefail
 
 version=${1:?"usage: scripts/release.sh <version> [notes.md] [--publish]"}
@@ -25,6 +25,7 @@ done
 
 repo=PRC-Atlanta/cantator
 profile=${NOTARY_PROFILE:-cantator}
+identity=${CODESIGN_IDENTITY:-"Developer ID Application: ANDREI GERMAN (6RHHE8NEYA)"}
 tag=v$version
 root=${0:A:h:h}
 cd "$root"
@@ -43,7 +44,21 @@ zip=$out/Cantator-$version.zip
 echo "Building $version ($build)…"
 log=$(xcodebuild -project Cantor.xcodeproj -scheme Cantor -configuration Release -derivedDataPath $derived \
     MARKETING_VERSION=$version CURRENT_PROJECT_VERSION=$build build 2>&1) || { print -r -- $log | grep "error:"; exit 1; }
+# Xcode signs Sparkle.framework but not the helpers inside it, which keep Sparkle's own signature.
+# Notarization needs every one on our Developer ID with the hardened runtime and a timestamp, inside out.
+sign() { codesign -f -s $identity -o runtime --timestamp "$@" }
+sparkle=$app/Contents/Frameworks/Sparkle.framework/Versions/B
+sign $sparkle/XPCServices/Installer.xpc
+sign --preserve-metadata=entitlements $sparkle/XPCServices/Downloader.xpc
+sign $sparkle/Autoupdate
+sign $sparkle/Updater.app
+sign $app/Contents/Frameworks/Sparkle.framework
+sign $app
 codesign --verify --strict --deep $app
+# Every piece must carry our team, not just a valid signature.
+for part in $sparkle/XPCServices/*.xpc $sparkle/Autoupdate $sparkle/Updater.app $app; do
+    codesign -dv $part 2>&1 | grep -q "TeamIdentifier=6RHHE8NEYA" || { echo "$part is not signed with our Developer ID."; exit 1; }
+done
 
 rm -rf $out
 mkdir -p $out

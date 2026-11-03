@@ -23,6 +23,8 @@ The app ends up in `build/dd/Build/Products/Release/Cantator.app`. Copy it to `/
 
 Release builds are signed with the Developer ID Application certificate for team 6RHHE8NEYA, with the hardened runtime and a secure timestamp, and no entitlements. That certificate's private key must be in the login keychain. Debug builds stay ad hoc signed.
 
+Use `scripts/release.sh` (below) for anything you ship: Xcode leaves Sparkle's helper tools on Sparkle's own signature, and the script re-signs them with the Developer ID, which notarization requires. The steps below are what it does for the app itself.
+
 To notarize a Release build, store an app-specific password once with `xcrun notarytool store-credentials`, then zip, submit, staple and check:
 
 ```bash
