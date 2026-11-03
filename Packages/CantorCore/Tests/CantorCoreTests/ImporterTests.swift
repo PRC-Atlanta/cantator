@@ -80,6 +80,18 @@ final class ImporterTests: XCTestCase {
         try assertM4A(try Importer.importFile(source, into: managed), channels: 2, rate: 48_000, seconds: 2)
     }
 
+    // Review 3, finding 8.
+    func testLowSampleRatesImport() throws {
+        for (rate, channels) in [(8_000.0, 1), (11_025.0, 1), (16_000.0, 2), (22_050.0, 1), (22_050.0, 2), (32_000.0, 2)] {
+            let source = try writeTone("Memo \(Int(rate)) \(channels).wav", rate: rate, channels: channels, seconds: 2)
+            let result = try Importer.importFile(source, into: managed)
+            try assertM4A(result, channels: channels, rate: rate, seconds: 2)
+        }
+        // At the usual rates the bit rate is unchanged.
+        XCTAssertEqual(Importer.bitRate(sampleRate: 44_100, channels: 2), 256_000)
+        XCTAssertEqual(Importer.bitRate(sampleRate: 48_000, channels: 1), 128_000)
+    }
+
     func testMonoStaysMono() throws {
         let source = try writeTone("Solo.wav", channels: 1)
         try assertM4A(try Importer.importFile(source, into: managed), channels: 1, rate: 44_100, seconds: 3)

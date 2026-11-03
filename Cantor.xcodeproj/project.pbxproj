@@ -169,10 +169,17 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Cantator;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Cantator looks for new playback tracks on your Desktop and adds them to its library. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Cantator looks for new playback tracks in Downloads and adds them to its library. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Cantator reads playback tracks from folders you add in Settings. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSFileProviderDomainUsageDescription = "Cantator reads playback tracks from your Google Drive folders so services can use them. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSNetworkVolumesUsageDescription = "Cantator reads playback tracks from network folders you add in Settings.";
+				INFOPLIST_KEY_NSRemovableVolumesUsageDescription = "Cantator reads playback tracks from external drives you add in Settings.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -190,16 +197,27 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6RHHE8NEYA;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Cantator;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Cantator looks for new playback tracks on your Desktop and adds them to its library. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Cantator looks for new playback tracks in Downloads and adds them to its library. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Cantator reads playback tracks from folders you add in Settings. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSFileProviderDomainUsageDescription = "Cantator reads playback tracks from your Google Drive folders so services can use them. It never moves, renames or deletes your files.";
+				INFOPLIST_KEY_NSNetworkVolumesUsageDescription = "Cantator reads playback tracks from network folders you add in Settings.";
+				INFOPLIST_KEY_NSRemovableVolumesUsageDescription = "Cantator reads playback tracks from external drives you add in Settings.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp";
 				PRODUCT_BUNDLE_IDENTIFIER = org.prcatlanta.Cantor;
 				PRODUCT_NAME = Cantator;
 			};

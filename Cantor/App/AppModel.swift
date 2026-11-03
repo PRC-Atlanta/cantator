@@ -79,6 +79,8 @@ final class AppModel {
     @ObservationIgnored private var playNowRequest: UUID?
     @ObservationIgnored private var failedAnalysis = Set<UUID>()
     @ObservationIgnored private var cuesNeedRefresh = false
+    /// A Load Service finished while a Play Now held the house, so the show takes the cues once idle.
+    @ObservationIgnored private var showLoadPending = false
     @ObservationIgnored private var tickCount = 0
     @ObservationIgnored private var saveErrors: [String: String] = [:]
     @ObservationIgnored private var isCheckingClaude = false
@@ -190,7 +192,11 @@ final class AppModel {
             classifyNewFiles()
         }
         if tickCount.isMultiple(of: 30 * 300) { refreshClaudeConnection() }
-        if cuesNeedRefresh { refreshLoadedCues() }
+        if showLoadPending, loadedPlanID != nil, show.load(cues: showCues()) {
+            showLoadPending = false
+            cuesNeedRefresh = false
+        }
+        if cuesNeedRefresh, !showLoadPending { refreshLoadedCues() }
         if !show.state.holdsHouseEngine {
             if savePending { saveNow() }
             if rescanPending, !isScanning { rescan() }
@@ -236,6 +242,9 @@ final class AppModel {
         let previousRouting = settings.routing
         let previousClaude = (settings.llmEnabled, settings.claudePath)
         change(&settings)
+        if settings.routing.houseDeviceUID != previousRouting.houseDeviceUID || settings.routing.cueDeviceUID != previousRouting.cueDeviceUID {
+            settings.routing.fitPairs(deviceChannels: Dictionary(devices.map { ($0.uid, $0.outputChannels) }, uniquingKeysWith: { a, _ in a }))
+        }
         settings.stampWatchedFolders()
         applySettingsToShow()
         if settings.routing != previousRouting {
@@ -333,6 +342,13 @@ final class AppModel {
                 return (result, cache)
             }.value
             hashCache = result.1
+            // A cue was armed or started while the folders were read. Merging and ranking are heavy
+            // main-thread work, so they wait: the scan runs again once the show is idle.
+            guard !show.state.holdsHouseEngine else {
+                isScanning = false
+                rescanPending = true
+                return
+            }
             let previousIDs = Set(library.tracks.map(\.id))
             let replaced = library.merge(scan: result.0.files, gaps: result.0.gaps, defaultFadeOutSec: settings.defaultFadeOutSec)
             remapCues(replaced)
@@ -1002,10 +1018,12 @@ final class AppModel {
             }
             resident = decoded.0
             loadedPlanID = planID
-            show.load(cues: showCues())
+            showLoadPending = !show.load(cues: showCues())
             sleepGuard.engage()
             syncSoundGuard()
             if !decoded.1.isEmpty { alert = decoded.1.joined(separator: "\n") }
+            // A file confirmed while the service decoded wasn't in the list read at the start.
+            loadMissingBuffers()
         }
     }
 
@@ -1075,6 +1093,7 @@ final class AppModel {
         guard !show.state.holdsHouseEngine, !isLoadingService else { return }
         show.setShowMode(false)
         show.load(cues: [])
+        showLoadPending = false
         resident = [:]
         loadedPlanID = nil
         sleepGuard.release()
@@ -1327,7 +1346,9 @@ final class AppModel {
         return PreServiceCheck.run(CheckInput(
             plan: plan, tracks: tracks, residentTrackIDs: Set(resident.keys),
             residentLengths: resident.mapValues { ResidentLength(frames: $0.frames, sampleRate: $0.sampleRate) }, routing: settings.routing,
-            availableDeviceUIDs: Set(devices.map(\.uid)), targetLUFS: settings.targetLUFS, defaultOutputUIDs: defaults,
+            availableDeviceUIDs: Set(devices.map(\.uid)),
+            deviceOutputChannels: Dictionary(devices.map { ($0.uid, $0.outputChannels) }, uniquingKeysWith: { a, _ in a }),
+            targetLUFS: settings.targetLUFS, defaultOutputUIDs: defaults,
             isOnBattery: PowerStatus.isOnBattery
         ))
     }

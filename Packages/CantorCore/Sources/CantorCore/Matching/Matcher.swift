@@ -83,9 +83,10 @@ public enum Matcher {
             if (best[candidate.trackID]?.score ?? -1) < candidate.score { best[candidate.trackID] = candidate }
         }
 
-        if let contentID = memory.contentID(for: cue), let track = tracks.first(where: { $0.contentID == contentID }) {
+        if let remembered = memory.remembered(for: cue), let track = tracks.first(where: { $0.contentID == remembered.contentID }) {
             keep(MatchCandidate(
-                trackID: track.id, score: rememberedScore, source: .remembered, reason: "Confirmed for this song before",
+                trackID: track.id, score: rememberedScore, source: remembered.bySong ? .remembered : .rememberedTitle,
+                reason: remembered.bySong ? "Confirmed for this song before" : "Confirmed for an item with this title before",
                 durationMismatch: durationMismatch(cue: cue, track: track)
             ))
         }

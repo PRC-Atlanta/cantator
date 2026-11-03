@@ -99,11 +99,15 @@ public final class ShowController {
 
     // MARK: Setup
 
-    public func load(cues: [ShowCue]) {
-        guard !state.holdsHouseEngine else { return }
+    /// Replaces the cue list with a newly loaded service. Returns false, changing nothing, while a
+    /// cue is engaged (a Play Now started during the load), so the caller can try again once idle.
+    @discardableResult
+    public func load(cues: [ShowCue]) -> Bool {
+        guard !state.holdsHouseEngine else { return false }
         self.cues = cues
         nextIndex = 0
         retained = [:]
+        return true
     }
 
     /// Applies edits to the same service, keeping the pointer. Returns false while a cue is engaged.

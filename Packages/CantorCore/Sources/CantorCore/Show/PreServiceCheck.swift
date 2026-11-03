@@ -9,7 +9,7 @@ public enum CheckKind: String, Sendable {
     case unmatched, fileMissing, notDownloaded, notInMemory, noEndPoint, notAnalyzed, gainCapped, cueChanged
     case emptyRange, removedInPCO
     case noHouseOutput, houseOutputMissing, noCueOutput, cueOutputMissing, sameOutput
-    case systemSoundOnHouse, staleSync, onBattery, focusReminder, noCues
+    case systemSoundOnHouse, staleSync, onBattery, focusReminder, noCues, housePairMissing, cuePairMissing
 }
 
 public struct CheckIssue: Identifiable, Equatable, Sendable {
@@ -40,6 +40,8 @@ public struct CheckInput: Sendable {
     public var residentLengths: [UUID: ResidentLength]
     public var routing: OutputRouting
     public var availableDeviceUIDs: Set<String>
+    /// Output counts of the connected devices, so a saved pair can be checked against them.
+    public var deviceOutputChannels: [String: Int]
     public var targetLUFS: Double
     public var defaultOutputUIDs: Set<String>
     public var isOnBattery: Bool
@@ -47,9 +49,10 @@ public struct CheckInput: Sendable {
 
     public init(
         plan: ServicePlan, tracks: [UUID: Track], residentTrackIDs: Set<UUID>, residentLengths: [UUID: ResidentLength] = [:],
-        routing: OutputRouting, availableDeviceUIDs: Set<String>, targetLUFS: Double = -18, defaultOutputUIDs: Set<String> = [],
-        isOnBattery: Bool = false, now: Date = Date()
+        routing: OutputRouting, availableDeviceUIDs: Set<String>, deviceOutputChannels: [String: Int] = [:], targetLUFS: Double = -18,
+        defaultOutputUIDs: Set<String> = [], isOnBattery: Bool = false, now: Date = Date()
     ) {
+        self.deviceOutputChannels = deviceOutputChannels
         self.plan = plan
         self.tracks = tracks
         self.residentTrackIDs = residentTrackIDs
@@ -121,6 +124,10 @@ public enum PreServiceCheck {
         if let house = routing.houseDeviceUID {
             if !input.availableDeviceUIDs.contains(house) {
                 add(.blocking, .houseOutputMissing, nil, "House output is not connected", "Reconnect the interface or choose another output in Settings.")
+            } else if let channels = input.deviceOutputChannels[house],
+                      !OutputRouting.pairFits(firstChannel: routing.houseFirstChannel, deviceChannels: channels) {
+                add(.blocking, .housePairMissing, nil, "House outputs \(routing.houseFirstChannel + 1)-\(routing.houseFirstChannel + 2) are not on this device",
+                    "Choose the house device again in Settings > Outputs.")
             }
         } else {
             add(.blocking, .noHouseOutput, nil, "No house output selected", "Choose one in Settings.")
@@ -128,6 +135,10 @@ public enum PreServiceCheck {
         if let cue = routing.cueDeviceUID {
             if !input.availableDeviceUIDs.contains(cue) {
                 add(.warning, .cueOutputMissing, nil, "Cue output is not connected", "Reconnect headphones or choose another output in Settings.")
+            } else if let channels = input.deviceOutputChannels[cue],
+                      !OutputRouting.pairFits(firstChannel: routing.cueFirstChannel, deviceChannels: channels) {
+                add(.warning, .cuePairMissing, nil, "Cue outputs \(routing.cueFirstChannel + 1)-\(routing.cueFirstChannel + 2) are not on this device",
+                    "Choose the cue device again in Settings > Outputs.")
             }
         } else {
             add(.warning, .noCueOutput, nil, "No cue output selected", "Choose one in Settings to preview tracks.")

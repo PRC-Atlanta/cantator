@@ -79,6 +79,10 @@ public enum PCMDecoder {
             }
             (left + frames).update(from: channels[0], count: count)
             if let right { (right + frames).update(from: channels[1], count: count) }
+            // A float file can hold NaN or infinity from a bad export. One such sample would stick in
+            // the EQ's filters and silence the rest of the cue, and make the analysis unsavable.
+            scrub(left + frames, count: count)
+            if let right { scrub(right + frames, count: count) }
             frames += count
         }
 
@@ -87,6 +91,11 @@ public enum PCMDecoder {
         guard Double(expected) - Double(frames) <= format.sampleRate else { throw DecodeError.truncated(name) }
         complete = true
         return PCMBuffer(adoptingLeft: left, right: right, frames: frames, sampleRate: format.sampleRate)
+    }
+
+    @inline(__always)
+    private static func scrub(_ samples: UnsafeMutablePointer<Float>, count: Int) {
+        for index in 0..<count where !samples[index].isFinite { samples[index] = 0 }
     }
 
     private static func grow(_ pointer: UnsafeMutablePointer<Float>, frames: Int, to capacity: Int) -> UnsafeMutablePointer<Float> {

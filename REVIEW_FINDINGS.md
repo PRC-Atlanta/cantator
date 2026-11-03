@@ -239,3 +239,79 @@ Three independent reviewers read the 16 commits after `79d42f9`, which the first
 
 The long blocking waits on Swift's shared threads were fixed with finding 7, since imports now run on a dispatch queue.
 
+# Review findings: third pass, before release (2026-11-02)
+
+Five independent reviewers read the whole app at `6e4589b`, each only reading code: the audio and playback core, the library and saved data, Planning Center and Claude, the app layer and UI, and signing and release readiness. ✓ means I re-read the code path myself and confirmed it before fixing.
+
+**Baseline:** 334 tests passed. **After:** 347 tests, 0 failures, 5 hardware tests skipped. The Release app builds and is signed with Developer ID (team 6RHHE8NEYA), with the hardened runtime, a secure timestamp and no entitlements; `codesign --verify --strict` passes. It has not been notarized yet.
+
+## Release blockers: fixed
+
+1. **✓ A file remembered for one song was auto-confirmed onto another.**
+   - The memory key was a cleaned-up title with numbers and words like choir, special and solo dropped. So "Psalm 23" and "Psalm 91" shared `title:psalm`, and "Choir Special" had the empty key `title:`.
+   - The second-pass fix for finding 11 also let remembered matches skip the length check. The same keys spread Needed and Not Needed choices.
+   - Fix: [AliasMemory](Packages/CantorCore/Sources/CantorCore/Model/Models.swift) works as follows.
+     - An item with a song id is matched by that song only.
+     - A title key keeps the title's numbers, and a title with nothing left gets no key.
+     - A title-only hit becomes a new source, `rememberedTitle`, which is offered but never auto-confirmed.
+   - Tests: `testRememberedFileStaysWithItsOwnSong`, `testGenericTitlesHaveNoMemory`, `testTitleOnlyMemoryIsOfferedButNeverConfirmsItself`, `testRememberedNeedsStayWithTheirSong`.
+2. **✓ The project couldn't be notarized.** The hardened runtime was off, signing was ad hoc with no team, and `get-task-allow` was in the Release signature.
+   - Fix: the target's Release configuration sets:
+     - `ENABLE_HARDENED_RUNTIME = YES`
+     - `CODE_SIGN_IDENTITY = "Developer ID Application"`
+     - `DEVELOPMENT_TEAM = 6RHHE8NEYA`
+     - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO`
+     - `OTHER_CODE_SIGN_FLAGS = --timestamp`
+   - Debug stays ad hoc, with the hardened runtime on.
+   - The folder usage descriptions for Desktop, Downloads, Documents, File Provider (Google Drive), network volumes and removable volumes were added too, so the permission prompts say why.
+   - Checked on the built product with `codesign -dv`, `codesign -d --entitlements -` and `codesign --verify --strict`.
+
+## Medium: fixed
+
+3. **✓ A scan that finished during an engaged cue merged on the main thread.**
+   - Fix: [AppModel.rescan](Cantor/App/AppModel.swift) keeps only the hash cache, then scans again once the show is idle.
+   - Not unit-tested, because AppModel has no test target.
+4. **✓ Tracks confirmed while Load Service decoded were never loaded.**
+   - Fix: the load now runs `loadMissingBuffers()` when it finishes.
+   - Not unit-tested (AppModel).
+5. **✓ Arm + Play during Load Service left the service "loaded" with no cues.**
+   - Fix: `ShowController.load(cues:)` now returns whether it took the cues. If it refused because a cue was engaged, AppModel loads them on the first idle tick, and Unload clears that.
+   - Test: `testLoadWaitsWhileAPlayNowIsSounding`.
+6. **✓ Library merging grew with the square of the library size,** about 6 s for a no-change rescan of 10,000 files.
+   - Fix: [Library.merge](Packages/CantorCore/Sources/CantorCore/Library/Library.swift) builds path and content lookups once per merge.
+   - Tests:
+     - `testFastMergeMatchesTheReference` runs the old merge, kept in the test, against the new one on 1,200 random merges (moves, duplicates, downloads, missing files and gaps) and finds them identical.
+     - `testLargeLibraryMergesQuickly` merges 10,000 files in about 0.13 s in Debug.
+7. **✓ A saved output pair survived a change to a smaller device,** so every Arm was refused with no picker to fix it.
+   - Fix: choosing a device resets a pair it doesn't have to 1-2 (`OutputRouting.fitPairs`). Check now has a blocking item for a missing house pair and a warning for a missing cue pair.
+   - Tests: `testChoosingASmallerDeviceResetsItsPair`, `testMissingOutputPairIsFlagged`.
+8. **✓ Importing lossless audio at 32 kHz or below failed,** because the 256 kbps bit rate is above what the AAC encoder accepts there.
+   - Fix: `Importer.bitRate` uses the highest rate the encoder accepts, up to 256 kbps stereo or 128 kbps mono.
+   - Test: `testLowSampleRatesImport` covers 8, 11.025, 16, 22.05 and 32 kHz.
+9. **✓ A file dated in the future started a full rescan every 3 seconds.**
+   - Fix: a future date isn't treated as a file still being written.
+   - Test: `testFutureDatedFileIsNotTreatedAsBeingWritten`.
+10. **✓ Make Local on a symlinked track copied the link.**
+    - Fix: the copy reads through the link.
+    - Test: `testMakeLocalCopiesTheAudioBehindALink`.
+11. **✓ One NaN or infinite sample in a float file silenced the rest of the cue when EQ was on.**
+    - Fix: `PCMDecoder` sets non-finite samples to 0, which also keeps infinite peaks out of the saved library.
+    - Test: `testBadFloatSamplesAreZeroedSoTheEQKeepsPlaying`.
+
+## Low: open
+
+- **Hold during a fade-in:** resuming comes back at full level within 5 ms.
+- **The command ring:** a full ring to the audio thread drops a command silently. Nothing notices a position that stops advancing while live.
+- **The "Not a Playback?" dialog** isn't gated by Show Mode and takes the transport keys.
+- **Meters** are updated 30 times a second even when idle. A live EQ drag keeps a refresh retrying until the song ends.
+- **VoiceOver:** the EQ knobs and graph handles have no accessibility value or adjust action. Cue rows show state only by symbol and colour.
+- **A generic attachment filename** can auto-confirm the wrong file.
+- **Planning Center paging:** `links.next` is followed with the credential without checking the host. `Retry-After` is not capped.
+- **Keychain:** items stay in the file-based keychain. Expect one access prompt after the change of signature, and if it's denied, sync shows a Keychain error.
+- **Ejected watched disk:** it stays a scan gap instead of showing its files as missing.
+- **Renamed files** leave `.missing` entries that make Duplicates list a "same audio" group.
+- **Interrupted imports:** a quit or crash during an import leaves a hidden partial file in ~/Music/Cantor.
+- **Retagging:** the content hash only strips MP3 tags, so retagging a WAV, M4A or AIFF makes a new track. The comment in ContentHasher overstates this.
+- **Copyright:** `NSHumanReadableCopyright` is still empty, and the build number is 1. Set both before each release.
+- **Device names:** `hasPrefix("Pro Tools Audio Bridge 6")` also matches "…Bridge 64".
+

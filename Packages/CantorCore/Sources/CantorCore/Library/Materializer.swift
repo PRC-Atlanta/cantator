@@ -89,7 +89,9 @@ public enum Materializer {
         let partial = folder.appendingPathComponent(".\(UUID().uuidString).\(destination.pathExtension)")
         do {
             try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-            try manager.copyItem(at: source, to: partial)
+            // A scanned file can be a link to a Drive or external-disk original. Copying the link
+            // would leave a local copy that vanishes with the volume, so the audio is copied.
+            try manager.copyItem(at: source.resolvingSymlinksInPath(), to: partial)
         } catch {
             try? manager.removeItem(at: partial)
             throw MaterializeError.failed("Could not copy \(source.lastPathComponent): \(error.localizedDescription)")

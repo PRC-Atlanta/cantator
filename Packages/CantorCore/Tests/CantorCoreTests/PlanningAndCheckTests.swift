@@ -383,6 +383,37 @@ final class PreServiceCheckTests: XCTestCase {
         Set(PreServiceCheck.run(input).filter { $0.severity > .ok }.map(\.kind))
     }
 
+    // Review 3, finding 7.
+    func testMissingOutputPairIsFlagged() {
+        var check = input(track: goodTrack(), routing: OutputRouting(houseDeviceUID: "h", houseFirstChannel: 2, cueDeviceUID: "c", cueFirstChannel: 4))
+        check.deviceOutputChannels = ["h": 2, "c": 4]
+        let issues = PreServiceCheck.run(check)
+        XCTAssertEqual(issues.first { $0.kind == .housePairMissing }?.severity, .blocking)
+        XCTAssertEqual(issues.first { $0.kind == .cuePairMissing }?.severity, .warning)
+        // The pairs exist on larger devices.
+        check.deviceOutputChannels = ["h": 8, "c": 8]
+        XCTAssertFalse(kinds(check).contains(.housePairMissing))
+        XCTAssertFalse(kinds(check).contains(.cuePairMissing))
+    }
+
+    func testChoosingASmallerDeviceResetsItsPair() {
+        var routing = OutputRouting(houseDeviceUID: "big", houseFirstChannel: 2, cueDeviceUID: "phones", cueFirstChannel: 6)
+        routing.houseDeviceUID = "usb"
+        routing.fitPairs(deviceChannels: ["usb": 2, "phones": 8, "big": 8])
+        XCTAssertEqual(routing.houseFirstChannel, 0, "3-4 doesn't exist on a two-output device")
+        XCTAssertEqual(routing.cueFirstChannel, 6, "7-8 still exists on the cue device")
+
+        // A device that isn't connected right now keeps its pair.
+        var unplugged = OutputRouting(houseDeviceUID: "big", houseFirstChannel: 2)
+        unplugged.fitPairs(deviceChannels: [:])
+        XCTAssertEqual(unplugged.houseFirstChannel, 2)
+
+        // A 16-out pair on an 8-out device goes back too.
+        var smaller = OutputRouting(houseDeviceUID: "eight", houseFirstChannel: 12)
+        smaller.fitPairs(deviceChannels: ["eight": 8])
+        XCTAssertEqual(smaller.houseFirstChannel, 0)
+    }
+
     func testCleanServiceHasNoIssues() {
         XCTAssertEqual(kinds(input(track: goodTrack())), [])
     }

@@ -17,7 +17,31 @@ From the command line:
 xcodebuild -project Cantor.xcodeproj -scheme Cantor -configuration Release -derivedDataPath build/dd build
 ```
 
-The app ends up in `build/dd/Build/Products/Release/Cantator.app`. Copy it to `/Applications` so macOS keeps its folder permissions between runs. Rebuilding with an ad hoc signature can make macOS ask again.
+The app ends up in `build/dd/Build/Products/Release/Cantator.app`. Copy it to `/Applications` so macOS keeps its folder permissions between runs.
+
+### Signing and notarizing
+
+Release builds are signed with the Developer ID Application certificate for team 6RHHE8NEYA, with the hardened runtime and a secure timestamp, and no entitlements. That certificate's private key must be in the login keychain. Debug builds stay ad hoc signed.
+
+To notarize a Release build, store an app-specific password once with `xcrun notarytool store-credentials`, then zip, submit, staple and check:
+
+```bash
+ditto -c -k --keepParent build/dd/Build/Products/Release/Cantator.app Cantator.zip
+```
+
+```bash
+xcrun notarytool submit Cantator.zip --keychain-profile <profile> --wait
+```
+
+```bash
+xcrun stapler staple build/dd/Build/Products/Release/Cantator.app
+```
+
+```bash
+spctl --assess -vv --type execute build/dd/Build/Products/Release/Cantator.app
+```
+
+The last command should report "Notarized Developer ID". Zip the stapled app again to share it. After the first Developer ID build replaces an ad hoc one, macOS asks once more for folder access, and the Keychain asks once to let Cantator read the Planning Center credentials.
 
 ## Tests
 

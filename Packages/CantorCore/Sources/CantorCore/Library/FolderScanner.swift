@@ -154,8 +154,11 @@ public enum FolderScanner {
                     continue
                 }
 
-                // AirDrop and Drive write in pieces. Wait until the file has stopped changing.
-                if now.timeIntervalSince1970 - mtime < settleSeconds {
+                // AirDrop and Drive write in pieces. Wait until the file has stopped changing. A date
+                // in the future (a zip made in another time zone) is not a file being written: waiting
+                // for it would rescan every few seconds until the clock caught up.
+                let age = now.timeIntervalSince1970 - mtime
+                if age >= 0, age < settleSeconds {
                     unsettled = true
                     gaps.paths.insert(path)
                     continue

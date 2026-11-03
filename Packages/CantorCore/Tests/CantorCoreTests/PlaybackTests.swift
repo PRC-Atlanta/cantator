@@ -509,6 +509,21 @@ final class ShowControllerTests: XCTestCase {
         guard case .faulted = show.state else { return XCTFail("the fault stays for the operator") }
     }
 
+    // Review 3, finding 5: a Load Service that finishes during a Play Now.
+    func testLoadWaitsWhileAPlayNowIsSounding() {
+        let show = controller()
+        XCTAssertNil(show.playNow(cue("x")))
+        XCTAssertFalse(show.load(cues: [cue("new")]), "refused, so the app knows to load again")
+        XCTAssertEqual(show.cues.map(\.id), ["a", "b"], "the list is unchanged until it can be replaced")
+        house.render(seconds: 0.1)
+        show.fadeOut()
+        house.render(seconds: 3.2)
+        show.tick()
+        XCTAssertEqual(show.state, .idle)
+        XCTAssertTrue(show.load(cues: [cue("new")]))
+        XCTAssertEqual(show.cues.map(\.id), ["new"])
+    }
+
     func testPlayNowRefusalStaysSilent() {
         let show = controller()
         available = false
@@ -1084,6 +1099,46 @@ final class PCMDecoderTests: XCTestCase {
         }
         try file.write(from: buffer)
         return url
+    }
+
+    // Review 3, finding 11.
+    func testBadFloatSamplesAreZeroedSoTheEQKeepsPlaying() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("bad.wav")
+        let frames = 48_000
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))
+            buffer.frameLength = AVAudioFrameCount(frames)
+            for n in 0..<frames {
+                let value = Float(0.25 * sin(2 * .pi * 440 * Double(n) / 48_000))
+                buffer.floatChannelData![0][n] = value
+                buffer.floatChannelData![1][n] = value
+            }
+            buffer.floatChannelData![0][10_000] = .nan
+            buffer.floatChannelData![1][20_000] = .infinity
+            try file.write(from: buffer)
+        }
+        let decoded = try PCMDecoder.decode(url: url)
+        XCTAssertTrue((0..<decoded.frames).allSatisfy { decoded.left[$0].isFinite && decoded.right[$0].isFinite })
+        XCTAssertEqual(decoded.left[10_000], 0)
+
+        var eq = TrackEQ()
+        eq.bands[3].frequency = 440
+        eq.bands[3].gainDb = 3
+        let kernel = PlaybackKernel(buffer: decoded, parameters: PlaybackParameters(
+            startFrame: 0, endFrame: frames, fadeOutFrames: 0, fadeInFrames: 0, gainLinear: 1, eq: EQCoefficients(eq, sampleRate: 48_000)
+        ))
+        kernel.play()
+        let left = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+        let right = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+        defer { left.deallocate(); right.deallocate() }
+        kernel.render(frames: frames, left: left, right: right)
+        XCTAssertTrue((0..<frames).allSatisfy { left[$0].isFinite && right[$0].isFinite })
+        XCTAssertGreaterThan((40_000..<41_000).map { abs(left[$0]) }.max() ?? 0, 0.2, "still playing after the bad sample")
     }
 
     func testReadsEveryChunkToTheEnd() throws {

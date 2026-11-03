@@ -153,7 +153,7 @@ public enum Importer {
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: sampleRate,
             AVNumberOfChannelsKey: channels,
-            AVEncoderBitRateKey: stereoBitRate * channels / 2,
+            AVEncoderBitRateKey: bitRate(sampleRate: sampleRate, channels: channels),
         ]
 
         let reader: AVAssetReader
@@ -212,6 +212,22 @@ public enum Importer {
         guard writer.status == .completed else {
             throw ImportError.failed(name, writer.error?.localizedDescription ?? "the file could not be finished")
         }
+    }
+
+    /// 256 kbps stereo or 128 kbps mono, or the nearest rate below it the AAC encoder accepts at
+    /// this sample rate: at 32 kHz and below it refuses those rates, which failed voice memos and
+    /// older recordings.
+    static func bitRate(sampleRate: Double, channels: Int) -> Int {
+        let target = stereoBitRate * channels / 2
+        var aac = AudioStreamBasicDescription(
+            mSampleRate: sampleRate, mFormatID: kAudioFormatMPEG4AAC, mFormatFlags: 0, mBytesPerPacket: 0, mFramesPerPacket: 1024,
+            mBytesPerFrame: 0, mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 0, mReserved: 0
+        )
+        guard let pcm = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: AVAudioChannelCount(channels)),
+              let encoded = AVAudioFormat(streamDescription: &aac),
+              let rates = AVAudioConverter(from: pcm, to: encoded)?.applicableEncodeBitRates?.map(\.intValue), !rates.isEmpty
+        else { return target }
+        return rates.filter { $0 <= target }.max() ?? rates.min() ?? target
     }
 
     /// AVFoundation misses the info tags Core Audio reads from WAV, AIFF and CAF, which are the

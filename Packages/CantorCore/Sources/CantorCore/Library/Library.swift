@@ -43,37 +43,61 @@ public struct Library: Codable, Equatable, Sendable {
             }
         }
 
+        // Lookups built once and kept current, so a scan costs the same per file however large the
+        // library is. A library of thousands of files merged on the main thread otherwise took seconds.
+        // Indices stay valid: tracks are only appended until the clean-up below.
+        var holders: [String: [Int]] = [:]
+        var byContent: [String: Int] = [:]
+        for index in tracks.indices {
+            for file in tracks[index].files { holders[file.path, default: []].append(index) }
+            if let contentID = tracks[index].contentID, byContent[contentID] == nil { byContent[contentID] = index }
+        }
+        func add(_ file: ScannedFile, to index: Int, entry: TrackFile) {
+            apply(file, to: index, entry: entry)
+            if holders[file.path]?.contains(index) != true { holders[file.path, default: []].append(index) }
+        }
+        func append(_ track: Track, path: String) {
+            tracks.append(track)
+            holders[path, default: []].append(tracks.count - 1)
+            if let contentID = track.contentID, byContent[contentID] == nil { byContent[contentID] = tracks.count - 1 }
+        }
+
         for file in scan {
             let entry = TrackFile(path: file.path, locality: file.locality)
             if let contentID = file.contentID {
-                let holder = tracks.firstIndex { $0.files.contains { $0.path == file.path } }
+                let holder = holders[file.path]?.min()
                 if let holder, tracks[holder].contentID == nil {
                     // A placeholder finished downloading. Keep whichever record already has this audio.
-                    if let existing = track(contentID: contentID) {
-                        replaced[tracks[holder].id] = existing.id
+                    if let existing = byContent[contentID] {
+                        replaced[tracks[holder].id] = tracks[existing].id
                     } else {
                         tracks[holder].contentID = contentID
-                        apply(file, to: holder, entry: entry)
+                        byContent[contentID] = holder
+                        add(file, to: holder, entry: entry)
                         continue
                     }
                 }
-                detach(path: file.path, exceptContentID: contentID)
-                if let index = tracks.firstIndex(where: { $0.contentID == contentID }) {
-                    apply(file, to: index, entry: entry)
+                // The path now holds this audio, so no other track keeps it.
+                for index in holders[file.path] ?? [] where tracks[index].contentID != contentID {
+                    tracks[index].files.removeAll { $0.path == file.path }
+                }
+                holders[file.path]?.removeAll { tracks[$0].contentID != contentID }
+                if let index = byContent[contentID] {
+                    add(file, to: index, entry: entry)
                 } else {
                     var track = Track(
                         contentID: contentID, files: [entry], title: TitleNormalizer.displayTitle(filename: entry.filename),
                         durationSec: file.durationSec, sampleRate: file.sampleRate, channels: file.channels
                     )
                     track.fadeOutSec = defaultFadeOutSec
-                    tracks.append(track)
+                    append(track, path: file.path)
                 }
-            } else if let index = tracks.firstIndex(where: { $0.files.contains { $0.path == file.path } }) {
-                apply(file, to: index, entry: entry)
+            } else if let index = holders[file.path]?.min() {
+                add(file, to: index, entry: entry)
             } else {
                 var track = Track(files: [entry], title: TitleNormalizer.displayTitle(filename: entry.filename))
                 track.fadeOutSec = defaultFadeOutSec
-                tracks.append(track)
+                append(track, path: file.path)
             }
         }
 
@@ -115,12 +139,6 @@ public struct Library: Codable, Equatable, Sendable {
         for (name, arrivals) in appeared where arrivals.count == 1 {
             guard let gone = vanished[name], gone.count == 1 else { continue }
             tracks[gone[0].track].files[gone[0].file].path = arrivals[0].path
-        }
-    }
-
-    private mutating func detach(path: String, exceptContentID contentID: String) {
-        for index in tracks.indices where tracks[index].contentID != contentID {
-            tracks[index].files.removeAll { $0.path == path }
         }
     }
 

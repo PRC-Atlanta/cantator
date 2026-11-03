@@ -268,6 +268,142 @@ final class LibraryMergeTests: XCTestCase {
     }
 }
 
+// MARK: Review 3, finding 6: merge speed
+
+/// The merge as it was before it used lookup tables, kept as a reference for what the faster
+/// one must still do.
+private extension Library {
+    mutating func referenceMerge(scan: [ScannedFile], gaps: ScanGaps = ScanGaps(), defaultFadeOutSec: Double = 3) -> [UUID: UUID] {
+        var replaced: [UUID: UUID] = [:]
+        let scannedPaths = Set(scan.map(\.path))
+        let known = Set(tracks.flatMap { $0.files.map(\.path) })
+        let appeared = Dictionary(grouping: scan.filter { $0.contentID == nil && $0.locality == .cloudOnly && !known.contains($0.path) }) {
+            URL(fileURLWithPath: $0.path).lastPathComponent
+        }
+        if !appeared.isEmpty {
+            var vanished: [String: [(track: Int, file: Int)]] = [:]
+            for index in tracks.indices {
+                for fileIndex in tracks[index].files.indices {
+                    let file = tracks[index].files[fileIndex]
+                    guard file.locality == .cloudOnly, !scannedPaths.contains(file.path), !gaps.contains(file.path) else { continue }
+                    vanished[file.filename, default: []].append((index, fileIndex))
+                }
+            }
+            for (name, arrivals) in appeared where arrivals.count == 1 {
+                guard let gone = vanished[name], gone.count == 1 else { continue }
+                tracks[gone[0].track].files[gone[0].file].path = arrivals[0].path
+            }
+        }
+        for index in tracks.indices {
+            for fileIndex in tracks[index].files.indices {
+                let path = tracks[index].files[fileIndex].path
+                guard !scannedPaths.contains(path), !gaps.contains(path) else { continue }
+                tracks[index].files[fileIndex].locality = .missing
+            }
+        }
+        func apply(_ file: ScannedFile, to index: Int, entry: TrackFile) {
+            if let fileIndex = tracks[index].files.firstIndex(where: { $0.path == file.path }) {
+                tracks[index].files[fileIndex] = entry
+            } else {
+                tracks[index].files.append(entry)
+            }
+            if file.durationSec > 0 {
+                tracks[index].durationSec = file.durationSec
+                tracks[index].sampleRate = file.sampleRate
+                tracks[index].channels = file.channels
+            }
+        }
+        for file in scan {
+            let entry = TrackFile(path: file.path, locality: file.locality)
+            if let contentID = file.contentID {
+                let holder = tracks.firstIndex { $0.files.contains { $0.path == file.path } }
+                if let holder, tracks[holder].contentID == nil {
+                    if let existing = track(contentID: contentID) {
+                        replaced[tracks[holder].id] = existing.id
+                    } else {
+                        tracks[holder].contentID = contentID
+                        apply(file, to: holder, entry: entry)
+                        continue
+                    }
+                }
+                for index in tracks.indices where tracks[index].contentID != contentID {
+                    tracks[index].files.removeAll { $0.path == file.path }
+                }
+                if let index = tracks.firstIndex(where: { $0.contentID == contentID }) {
+                    apply(file, to: index, entry: entry)
+                } else {
+                    var track = Track(
+                        contentID: contentID, files: [entry], title: TitleNormalizer.displayTitle(filename: entry.filename),
+                        durationSec: file.durationSec, sampleRate: file.sampleRate, channels: file.channels
+                    )
+                    track.fadeOutSec = defaultFadeOutSec
+                    tracks.append(track)
+                }
+            } else if let index = tracks.firstIndex(where: { $0.files.contains { $0.path == file.path } }) {
+                apply(file, to: index, entry: entry)
+            } else {
+                var track = Track(files: [entry], title: TitleNormalizer.displayTitle(filename: entry.filename))
+                track.fadeOutSec = defaultFadeOutSec
+                tracks.append(track)
+            }
+        }
+        tracks.removeAll { $0.contentID == nil && $0.files.isEmpty }
+        return replaced
+    }
+}
+
+final class LibraryMergeSpeedTests: XCTestCase {
+    /// What a merge leaves, without the random ids new tracks get.
+    private func shape(_ library: Library, _ replaced: [UUID: UUID]) -> [String] {
+        let position = Dictionary(uniqueKeysWithValues: library.tracks.enumerated().map { ($1.id, $0) })
+        let tracks = library.tracks.map { "\($0.contentID ?? "-") \($0.title) \($0.durationSec) \($0.files.map { "\($0.path):\($0.locality)" })" }
+        let moves = replaced.map { "\(position[$0.key].map(String.init) ?? "gone")->\(position[$0.value].map(String.init) ?? "gone")" }.sorted()
+        return tracks + moves
+    }
+
+    func testFastMergeMatchesTheReference() {
+        var generator = SystemRandomNumberGenerator()
+        for round in 0..<200 {
+            var fast = Library(), reference = Library()
+            for _ in 0..<6 {
+                // Few paths and contents, so they collide: moves, duplicates, downloads, vanishings.
+                let scan: [ScannedFile] = (0..<Int.random(in: 0...12, using: &generator)).map { _ in
+                    let local = Bool.random(using: &generator)
+                    let folder = ["a", "b", "c"].randomElement(using: &generator)!
+                    let name = ["One", "Two", "Three", "Four"].randomElement(using: &generator)!
+                    return ScannedFile(
+                        path: "/\(folder)/\(name).mp3", locality: local ? .local : .cloudOnly,
+                        contentID: local ? ["x", "y", "z", "w"].randomElement(using: &generator)! : nil,
+                        durationSec: local ? Double.random(in: 100...300, using: &generator).rounded() : 0, sampleRate: 48_000, channels: 2
+                    )
+                }
+                var seen = Set<String>()
+                let unique = scan.filter { seen.insert($0.path).inserted }
+                let gaps = Bool.random(using: &generator) ? ScanGaps(folders: ["/c"]) : ScanGaps()
+                // Same starting ids on both sides, so their results compare directly.
+                reference.tracks = fast.tracks
+                let a = fast.merge(scan: unique, gaps: gaps)
+                let b = reference.referenceMerge(scan: unique, gaps: gaps)
+                XCTAssertEqual(shape(fast, a), shape(reference, b), "round \(round)")
+                if shape(fast, a) != shape(reference, b) { return }
+            }
+        }
+    }
+
+    func testLargeLibraryMergesQuickly() {
+        let scan = (0..<10_000).map { index in
+            ScannedFile(path: "/Drive/Folder \(index / 50)/Stem \(index).wav", locality: .local, contentID: "c\(index)", durationSec: 200, sampleRate: 48_000, channels: 2)
+        }
+        var library = Library()
+        library.merge(scan: scan)
+        // A rescan where nothing changed: the old merge took about 6 s here in a Release build.
+        let start = Date()
+        library.merge(scan: scan)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.5)
+        XCTAssertEqual(library.tracks.count, 10_000)
+    }
+}
+
 final class FolderScannerTests: XCTestCase {
     private var root: URL!
 
@@ -323,6 +459,17 @@ final class FolderScannerTests: XCTestCase {
         let result = FolderScanner.scan(roots: [root.path], cache: &cache)
         XCTAssertTrue(result.files.isEmpty)
         XCTAssertTrue(result.hasUnsettledFiles)
+    }
+
+    // Review 3, finding 9.
+    func testFutureDatedFileIsNotTreatedAsBeingWritten() throws {
+        try writeWAV("from abroad.wav")
+        let future = Date(timeIntervalSinceNow: 5 * 3600)
+        try FileManager.default.setAttributes([.modificationDate: future], ofItemAtPath: root.appendingPathComponent("from abroad.wav").path)
+        var cache = HashCache()
+        let result = FolderScanner.scan(roots: [root.path], cache: &cache)
+        XCTAssertFalse(result.hasUnsettledFiles, "no rescan every few seconds")
+        XCTAssertEqual(result.files.count, 1)
     }
 
     func testBrokenFileIsReportedNotFatal() throws {
@@ -384,6 +531,21 @@ final class FolderScannerTests: XCTestCase {
         // A second copy replaces the first, and no partial file is left behind.
         _ = try Materializer.copyAndVerify(from: root.appendingPathComponent("one.wav"), to: destination)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: destination.deletingLastPathComponent().path), ["One abc.wav"])
+    }
+
+    // Review 3, finding 10.
+    func testMakeLocalCopiesTheAudioBehindALink() throws {
+        try writeWAV("one.wav")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("links"), withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("links/One.wav")
+        // Relative, as Finder aliases made in Terminal often are.
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../one.wav")
+        let destination = root.appendingPathComponent("managed/One abc.wav")
+        _ = try Materializer.copyAndVerify(from: link, to: destination)
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.path)
+        XCTAssertEqual(attributes[.type] as? FileAttributeType, .typeRegular, "a real file, not a link")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("one.wav"))
+        XCTAssertNotNil(PCMDecoder.info(url: destination), "still plays once the original is gone")
     }
 
     func testMakeLocalRemovesACopyThatDoesNotVerify() throws {
@@ -538,6 +700,57 @@ final class MatcherTests: XCTestCase {
         memory.remember(ServiceCue(id: "1", position: 0, title: "Old Name", songID: "77"), contentID: "abc")
         let ranked = Matcher.rank(cue: ServiceCue(id: "2", position: 0, title: "New Name", songID: "77"), tracks: tracks, memory: memory)
         XCTAssertEqual(ranked.first?.source, .remembered)
+    }
+
+    // Review 3, release blocker: a file remembered for one song went onto another.
+    func testRememberedFileStaysWithItsOwnSong() {
+        let x = track("Psalm 23 Choir.mp3", contentID: "x")
+        var memory = AliasMemory()
+        memory.remember(ServiceCue(id: "1", position: 0, title: "Psalm 23", songID: "100"), contentID: "x")
+
+        // Another song whose title differs only by number gets nothing from memory.
+        let psalm91 = ServiceCue(id: "2", position: 0, title: "Psalm 91", songID: "200")
+        XCTAssertFalse(Matcher.rank(cue: psalm91, tracks: [x], memory: memory).contains { $0.source == .remembered || $0.source == .rememberedTitle })
+        // Nor does one with no song attached.
+        let untagged = ServiceCue(id: "3", position: 0, title: "Psalm 91")
+        XCTAssertNil(memory.contentID(for: untagged))
+
+        // An item with a song is matched by its song alone, not by a shared title.
+        let sameTitleOtherSong = ServiceCue(id: "4", position: 0, title: "Psalm 23", songID: "300")
+        XCTAssertNil(memory.contentID(for: sameTitleOtherSong))
+    }
+
+    func testGenericTitlesHaveNoMemory() {
+        var memory = AliasMemory()
+        let special = ServiceCue(id: "1", position: 0, title: "Choir Special")
+        memory.remember(special, contentID: "x")
+        memory.rememberNeeds(special, needed: true)
+        XCTAssertEqual(AliasMemory.keys(for: special), [], "nothing is left of the title to key by")
+        XCTAssertNil(memory.contentID(for: ServiceCue(id: "2", position: 0, title: "Special")))
+        XCTAssertNil(memory.needsOverride(for: ServiceCue(id: "3", position: 0, title: "Solo")))
+    }
+
+    func testTitleOnlyMemoryIsOfferedButNeverConfirmsItself() {
+        let x = track("Last Week.mp3", contentID: "x")
+        var memory = AliasMemory()
+        memory.remember(ServiceCue(id: "1", position: 0, title: "Special Music"), contentID: "x")
+        let nextWeek = ServiceCue(id: "2", position: 0, title: "Special Music", needsPlayback: true)
+        let ranked = Matcher.rank(cue: nextWeek, tracks: [x], memory: memory)
+        XCTAssertEqual(ranked.first?.source, .rememberedTitle)
+
+        var service = ServicePlan(id: "p", serviceTypeID: "1", serviceTypeName: "Sunday", title: "", dates: "", sortDate: nil)
+        var cue = nextWeek
+        cue.candidates = ranked
+        service.cues = [cue]
+        XCTAssertEqual(service.autoConfirmStrongMatches(), 0)
+        XCTAssertNil(service.cues[0].trackID)
+    }
+
+    func testRememberedNeedsStayWithTheirSong() {
+        var memory = AliasMemory()
+        memory.rememberNeeds(ServiceCue(id: "1", position: 0, title: "Psalm 23", songID: "100"), needed: false)
+        XCTAssertNil(memory.needsOverride(for: ServiceCue(id: "2", position: 0, title: "Psalm 91", songID: "200")))
+        XCTAssertEqual(memory.needsOverride(for: ServiceCue(id: "3", position: 0, title: "Psalm 23 (renamed)", songID: "100")), false)
     }
 
     func testAttachmentFilenameIsStrongSignal() {

@@ -240,7 +240,13 @@ public enum ManagedFolder {
 }
 
 public enum MatchSource: String, Codable, Sendable {
-    case remembered, attachment, string, llm
+    /// The operator confirmed this file for the same Planning Center song.
+    case remembered
+    /// The operator confirmed this file for an item with the same title but no song to compare.
+    /// Offered, never confirmed by Cantor itself: items such as "Special Music" recur weekly with
+    /// a different song each time.
+    case rememberedTitle
+    case attachment, string, llm
 
     public init(from decoder: Decoder) throws {
         self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .string
@@ -488,10 +494,11 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             let cue = cues[index]
             // A name match whose length is far from the item's is likely another setting or
             // arrangement of the same title, so it waits for the operator. A file the operator chose
-            // for this song before still goes on: Planning Center lengths are often placeholders.
+            // for this same song before still goes on: Planning Center lengths are often placeholders.
+            // A file remembered only by title always waits.
             guard cue.needsPlayback, cue.trackID == nil, !cue.matchCleared, !cue.removedInPCO,
                   MatchBand(candidates: cue.candidates) == .proposed, let top = cue.candidates.first,
-                  !top.durationMismatch || top.source == .remembered
+                  top.source != .rememberedTitle, !top.durationMismatch || top.source == .remembered
             else { continue }
             cues[index].trackID = top.trackID
             cues[index].autoConfirmed = true
@@ -693,19 +700,41 @@ public struct AliasMemory: Codable, Equatable, Sendable {
         needsOverrides = try c.decodeIfPresent([String: Bool].self, forKey: .needsOverrides) ?? [:]
     }
 
+    /// Where a choice is saved: the item's song, and its title. A title keeps its numbers, so
+    /// "Psalm 23" and "Psalm 91" differ, and a title with nothing left once words such as "choir"
+    /// and "special" are dropped has no key at all.
     public static func keys(for cue: ServiceCue) -> [String] {
         var keys: [String] = []
         if let song = cue.songID { keys.append("song:\(song)") }
-        keys.append("title:\(TitleNormalizer.normalize(cue.title).joined(separator: " "))")
+        if let title = titleKey(cue.title) { keys.append(title) }
         return keys
     }
 
+    static func titleKey(_ title: String) -> String? {
+        let words = TitleNormalizer.normalize(title)
+        guard !words.isEmpty else { return nil }
+        return "title:" + (words + TitleNormalizer.titleNumbers(title).sorted()).joined(separator: " ")
+    }
+
+    /// Where a choice is looked up. An item with a song is only ever matched by that song, so
+    /// another song with a similar title never inherits its file or its Needs.
+    static func lookupKey(for cue: ServiceCue) -> (key: String, bySong: Bool)? {
+        if let song = cue.songID { return ("song:\(song)", true) }
+        return titleKey(cue.title).map { ($0, false) }
+    }
+
     public func contentID(for cue: ServiceCue) -> String? {
-        Self.keys(for: cue).lazy.compactMap { confirmed[$0] }.first
+        remembered(for: cue)?.contentID
+    }
+
+    /// The file confirmed before, and whether it was found by the item's song.
+    public func remembered(for cue: ServiceCue) -> (contentID: String, bySong: Bool)? {
+        guard let lookup = Self.lookupKey(for: cue), let id = confirmed[lookup.key] else { return nil }
+        return (id, lookup.bySong)
     }
 
     public func needsOverride(for cue: ServiceCue) -> Bool? {
-        Self.keys(for: cue).lazy.compactMap { needsOverrides[$0] }.first
+        Self.lookupKey(for: cue).flatMap { needsOverrides[$0.key] }
     }
 
     public mutating func remember(_ cue: ServiceCue, contentID: String) {
@@ -718,6 +747,24 @@ public struct AliasMemory: Codable, Equatable, Sendable {
 }
 
 public struct OutputRouting: Codable, Equatable, Sendable {
+    /// Whether a stereo pair starting at `firstChannel` exists. A device with two outputs or fewer
+    /// only has the pair 1-2.
+    public static func pairFits(firstChannel: Int, deviceChannels: Int) -> Bool {
+        deviceChannels <= 2 ? firstChannel == 0 : firstChannel >= 0 && firstChannel + 1 < deviceChannels
+    }
+
+    /// After a device is chosen: a pair it doesn't have goes back to 1-2, which every device has,
+    /// so a pair saved for a larger interface can't leave Arm refused with no picker to fix it.
+    /// Only connected devices count: one briefly unplugged keeps its pair.
+    public mutating func fitPairs(deviceChannels: [String: Int]) {
+        if let uid = houseDeviceUID, let channels = deviceChannels[uid], !Self.pairFits(firstChannel: houseFirstChannel, deviceChannels: channels) {
+            houseFirstChannel = 0
+        }
+        if let uid = cueDeviceUID, let channels = deviceChannels[uid], !Self.pairFits(firstChannel: cueFirstChannel, deviceChannels: channels) {
+            cueFirstChannel = 0
+        }
+    }
+
     public var houseDeviceUID: String?
     /// Zero-based first channel of the stereo pair.
     public var houseFirstChannel: Int

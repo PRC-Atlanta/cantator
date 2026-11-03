@@ -38,8 +38,7 @@ final class OutputEngine {
     /// The pair must exist as configured. Moving to another pair would put the cue on a console
     /// channel nobody is watching. A device with two outputs or fewer only has the pair 1-2.
     nonisolated static func validatePair(firstChannel: Int, deviceChannels: Int) throws {
-        let fits = deviceChannels <= 2 ? firstChannel == 0 : firstChannel >= 0 && firstChannel + 1 < deviceChannels
-        guard fits else { throw OutputError.channelPairMissing(firstChannel: firstChannel, deviceChannels: deviceChannels) }
+        guard OutputRouting.pairFits(firstChannel: firstChannel, deviceChannels: deviceChannels) else { throw OutputError.channelPairMissing(firstChannel: firstChannel, deviceChannels: deviceChannels) }
     }
 
     func start(kernel: PlaybackKernel, deviceUID: String, firstChannel: Int) throws {
