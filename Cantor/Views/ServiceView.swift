@@ -58,15 +58,30 @@ struct ServiceView: View {
     private func table(_ plan: ServicePlan) -> some View {
         Table(of: ServiceCue.self, selection: $selectedCue) {
             TableColumn("Item") { cue in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(cue.title).fontWeight(cue.itemType == "header" ? .semibold : .regular).lineLimit(1)
-                    let detail = cue.isManual
-                        ? ["Added in Cantator"]
-                        : [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
-                    if !detail.isEmpty {
-                        Text(detail.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            .help(cue.notes)
+                if cue.itemType == "header" {
+                    // A section label, as in Planning Center, so the items under it read as a group.
+                    Text(cue.title)
+                        .font(.system(size: 11, weight: .bold))
+                        .textCase(.uppercase)
+                        .tracking(0.6)
+                        .foregroundStyle(Theme.cue)
+                        .lineLimit(1)
+                        .padding(.top, 10)
+                        .padding(.bottom, 2)
+                        .help(cue.title)
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(cue.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        let detail = cue.isManual
+                            ? ["Added in Cantator"]
+                            : [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
+                        if !detail.isEmpty {
+                            Text(detail.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                .help(cue.notes)
+                        }
                     }
+                    .padding(.vertical, 3)
+                    .padding(.leading, plan.cues.contains { $0.itemType == "header" } ? 10 : 0)
                 }
             }
             .width(min: 180, ideal: 240)
@@ -111,6 +126,8 @@ struct ServiceView: View {
                 }
             }
         }
+        // Stripes fall on headers and items alike and blur the sections, so rows are left plain.
+        .alternatingRowBackgrounds(.disabled)
     }
 
     private func fileName(_ cue: ServiceCue) -> String {
