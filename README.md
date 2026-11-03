@@ -43,6 +43,26 @@ spctl --assess -vv --type execute build/dd/Build/Products/Release/Cantator.app
 
 The last command should report "Notarized Developer ID". Zip the stapled app again to share it. After the first Developer ID build replaces an ad hoc one, macOS asks once more for folder access, and the Keychain asks once to let Cantator read the Planning Center credentials.
 
+### Releasing an update
+
+Cantator checks for updates with [Sparkle](https://sparkle-project.org). Its feed is the `appcast.xml` on the newest GitHub release of PRC-Atlanta/cantator, and updates are signed with a key kept in the login keychain under the account `cantator` (public key in `Config/Info.plist`). Back that key up: without it, installed copies can't take another update. Sparkle's `generate_keys -x <file>` exports it.
+
+`scripts/release.sh` does a release in one step: it builds with the version you give and a build number from the commit count, notarizes and staples, and writes the zip and feed to `build/releases/<version>/`. The notarytool profile defaults to `cantator`; set `NOTARY_PROFILE` for another. Run it on a clean, pushed commit:
+
+```bash
+scripts/release.sh 1.1 notes.md
+```
+
+Try the app it built, then publish. This tags the commit and creates the GitHub release:
+
+```bash
+scripts/release.sh 1.1 notes.md --publish
+```
+
+The notes are Markdown and appear in the update window. Without them, GitHub writes notes from the commits.
+
+Installed copies check once a day and ask before installing; **Check for Updates…** in the Cantator menu checks now. Nothing is checked while a cue is armed or playing, in Show Mode or while a service loads, and no scheduled check runs while the Show view is open. An update chosen while a cue is engaged waits to relaunch until the show is idle. Debug builds never check.
+
 ## Tests
 
 ```bash
