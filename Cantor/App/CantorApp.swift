@@ -121,17 +121,19 @@ private struct TransportMenu: View {
 
     var body: some View {
         let show = model.show
-        Button("Arm Next Cue (A)") { show.arm() }
-        Button("Disarm (D)") { show.disarm() }
-        Button("GO (Space)") { show.go() }
+        // Like the keys: only where the Show view, and so the state of the show, is on screen.
+        let inShow = show.showMode || model.selection == .show
+        Button("Arm Next Cue (A)") { show.arm() }.disabled(!inShow)
+        Button("Disarm (D)") { show.disarm() }.disabled(!inShow)
+        Button("GO (Space)") { show.go() }.disabled(!inShow)
         Divider()
-        Button("Hold (P)") { show.hold() }
-        Button("End of Song Fade (F)") { show.fadeOut() }
+        Button("Hold (P)") { show.hold() }.disabled(!inShow)
+        Button("End of Song Fade (F)") { show.fadeOut() }.disabled(!inShow)
         Button("Panic Fade (Esc)") { show.panicPressed() }.disabled(!show.state.holdsHouseEngine)
         Divider()
-        Button("Next Marker (M)") { show.jumpMarker(forward: true) }
-        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }
-        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }
-        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }
+        Button("Next Marker (M)") { show.jumpMarker(forward: true) }.disabled(!inShow)
+        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }.disabled(!inShow)
+        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }.disabled(!inShow)
+        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }.disabled(!inShow)
     }
 }

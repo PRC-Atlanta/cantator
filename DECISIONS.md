@@ -44,3 +44,4 @@ Calls made without asking, with the reason. Design-level conflicts between propo
 - **Sleep with a cue armed or playing counts as device loss**: wake always lands in a fault the operator acknowledges, never in sound.
 - **Transport keys are not menu shortcuts**: a bare-key shortcut would fire from a text field in Settings. The keys are shown in the menu titles instead.
 - **Show Mode is optional**: the operator found requiring it before Arm and GO one step too far. The transport works in the Show view, and leaving that view through the sidebar disarms, so an armed cue never waits unseen. Show Mode stays as a lock on editing.
+- **The sidebar shows the program in Show Mode**: the operator wanted to follow the service, not just its playback cues. Its links led to text fields, which is why Show Mode used to close it; read-only program rows have no such risk.

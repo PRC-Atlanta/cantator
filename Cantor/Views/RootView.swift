@@ -19,29 +19,41 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columns) {
-            SidebarView(selection: $model.selection)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+            Group {
+                // Show Mode trades the sidebar's links, which lead to text fields, for the program.
+                if model.show.showMode {
+                    ProgramSidebar()
+                } else {
+                    SidebarView(selection: $model.selection)
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             detail
                 .sheet(isPresented: $model.showingServicePicker) { ServicePickerSheet() }
         }
         .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
         .onChange(of: columns) { _, value in
-            // The sidebar leads to text fields, so it stays closed in Show Mode.
-            if model.show.showMode, value != .detailOnly { columns = .detailOnly }
+            // The program stays in view in Show Mode.
+            if model.show.showMode, value != .all { columns = .all }
         }
         .onChange(of: model.selection) { _, item in
             // Leaving the Show view lets go of an armed cue, so nothing waits on a GO no one can see.
-            if item != .show, case .armed = model.show.state { model.show.disarm() }
+            // A cue playing or on hold keeps the Show view, since its controls and keys live there.
+            guard item != .show else { return }
+            if case .armed = model.show.state {
+                model.show.disarm()
+            } else if model.show.state.holdsHouseEngine {
+                model.selection = .show
+                model.alert = "Stop the cue before leaving the Show view."
+            }
         }
         .onChange(of: model.show.showMode) { _, locked in
             if locked {
                 model.showingServicePicker = false
                 model.selection = .show
-                columns = .detailOnly
-            } else {
-                columns = .all
             }
+            columns = .all
         }
         .sheet(item: Binding(
             get: { model.newFileToPresent },
@@ -107,7 +119,7 @@ private struct SidebarView: View {
                         }
                         .buttonStyle(.plain)
                         .hoverHighlight(cornerRadius: 6)
-                        .disabled(model.show.showMode || model.isLoadingService)
+                        .disabled(model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
                         .help("Pick a service from six weeks back to three weeks ahead")
                         UpdateServicesButton()
                             .padding(.trailing, 6)

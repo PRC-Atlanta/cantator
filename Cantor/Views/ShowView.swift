@@ -37,7 +37,7 @@ struct ShowView: View {
                 }
                 .toggleStyle(.button)
                 .disabled((show.cues.isEmpty || model.isLoadingService) && !show.showMode)
-                .help("Show Mode locks editing, except the EQ, and closes the sidebar (Command-Shift-L)")
+                .help("Show Mode locks editing, except the EQ, and shows the program in the sidebar (Command-Shift-L)")
 
                 if model.loadedPlanID != nil {
                     Button("Unload") { model.unloadService() }
@@ -95,7 +95,8 @@ private struct StateBar: View {
         .foregroundStyle(foreground)
         .padding(.horizontal, 20)
         .frame(height: 76)
-        .background(style.color ?? EQTheme.chrome)
+        // Kept inside the safe area, so the state color ends at the sidebar instead of running under it.
+        .background(style.color ?? EQTheme.chrome, ignoresSafeAreaEdges: [])
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .combine)
     }

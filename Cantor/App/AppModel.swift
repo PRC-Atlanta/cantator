@@ -562,7 +562,7 @@ final class AppModel {
     }
 
     /// Emergency: plays a library track on the house output straight away, outside any service.
-    /// The Show view takes over from there, in Show Mode.
+    /// The Show view takes over from there.
     func playNow(_ track: Track) {
         guard let file = track.bestFile() else {
             alert = "\(track.title) is not on this Mac yet."
