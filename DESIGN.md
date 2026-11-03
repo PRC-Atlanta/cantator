@@ -9,7 +9,7 @@ Cantator is a native macOS playback app for the person running choir and special
 | A wants engines always running to avoid clicks. D wants the house engine stopped unless armed. | D wins. A stopped engine cannot emit. ARM starts the engine with the kernel producing exact zeros. GO opens with a 5 ms ramp, so there is no click. |
 | B targets -18 LUFS, D targets -16. | -18 LUFS, changeable in Settings. Choir tracks have dynamics and the console has headroom to make up. Capped at -1 dBTP. |
 | B wants GRDB/SQLite. | Atomic JSON files with rolling backups. A show app should have no third-party dependencies, and the data set is thousands of rows at most. |
-| B's tiered hashing vs simplicity. | One content ID: SHA-256 of the audio payload (tags stripped for MP3), cached by path, size and mtime. Duplicates collapse into one track with several paths, so cue points survive. Tiering saved little on an SSD. |
+| B's tiered hashing vs simplicity. | One content ID: SHA-256 of the audio payload (tags stripped for MP3), cached by path, size and mtime. Duplicates collapse into one track with several paths, so cue points survive. The copy in ~/Music/Cantor doesn't count toward Duplicates. Tiering saved little on an SSD. |
 | D's aggressive decode at ARM vs A's preload. | Decode every matched cue into RAM on Load Service. ARM never touches disk, so a Drive stall cannot delay or cut a cue. |
 | D resamples at load vs letting the graph do it. | Keep native-rate buffers and let the engine's mixer convert. Marker frames stay simple and no resampler is written. |
 | A's manual end nudges vs D's fixed end marker. | Markers are saved per track. `[` and `]` move the end for this run only and are never persisted in show mode. |

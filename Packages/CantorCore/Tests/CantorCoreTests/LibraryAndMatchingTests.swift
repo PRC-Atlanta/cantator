@@ -92,6 +92,16 @@ final class LibraryMergeTests: XCTestCase {
         XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio)
     }
 
+    func testCantatorsOwnCopyIsNotADuplicate() {
+        var library = Library()
+        library.merge(scan: [file("/a/Song.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x")])
+        XCTAssertEqual(library.tracks[0].files.count, 2)
+        XCTAssertTrue(library.duplicateGroups.isEmpty)
+
+        library.merge(scan: [file("/a/Song.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file("/b/Song.mp3", id: "x")])
+        XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio)
+    }
+
     func testMovingAFileKeepsCuePoints() {
         var library = Library()
         library.merge(scan: [file("/a/Song.mp3", id: "x")])
