@@ -50,6 +50,14 @@ final class AppModel {
     var houseMeter = MeterState()
     var cueMeter = MeterState()
     var auditionPositionSec: Double?
+    /// The preview asked for last, from the press until it stops, including while it decodes, so
+    /// the button that started it can stop it.
+    private(set) var auditioning: AuditionRequest?
+
+    struct AuditionRequest: Equatable {
+        var trackID: UUID
+        var fromSec: Double?
+    }
     /// The track Play Now is decoding before it starts.
     var playNowLoading: UUID?
 
@@ -211,7 +219,10 @@ final class AppModel {
         } else {
             cueMeter.update(left: 0, right: 0)
             // The cue bus can stop on its own, after a device change.
-            if auditionPositionSec != nil { auditionPositionSec = nil }
+            if auditionPositionSec != nil {
+                auditionPositionSec = nil
+                auditioning = nil
+            }
         }
     }
 
@@ -516,6 +527,7 @@ final class AppModel {
         // Only the latest request may start. Stop, sleep or another preview cancels a decode in progress.
         let request = UUID()
         auditionRequest = request
+        auditioning = AuditionRequest(trackID: track.id, fromSec: fromSec)
         Task {
             do {
                 var buffer = resident[track.id] ?? auditionCache[track.id]
@@ -534,13 +546,24 @@ final class AppModel {
                 )
             } catch {
                 guard auditionRequest == request else { return }
+                auditioning = nil
                 alert = error.localizedDescription
             }
         }
     }
 
+    /// A second press of the same preview stops it. A different track or start point plays that instead.
+    func toggleAudition(_ track: Track, fromSec: Double? = nil) {
+        if isAuditioning(track, fromSec: fromSec) { stopAudition() } else { audition(track, fromSec: fromSec) }
+    }
+
+    func isAuditioning(_ track: Track, fromSec: Double? = nil) -> Bool {
+        auditioning == AuditionRequest(trackID: track.id, fromSec: fromSec)
+    }
+
     func stopAudition() {
         auditionRequest = nil
+        auditioning = nil
         cueBus.stop()
         auditionPositionSec = nil
     }

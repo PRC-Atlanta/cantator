@@ -44,7 +44,7 @@ struct EQEditor: View {
     }
 
     private func header(_ track: Track, _ eq: TrackEQ) -> some View {
-        let previewing = model.cueBus.isPlaying && model.cueBus.trackID == track.id
+        let previewing = model.auditioning?.trackID == track.id
         return HStack(spacing: 12) {
             Toggle(isOn: Binding(get: { eq.isOn }, set: { value in edit { $0.isOn = value } })) {
                 Label(eq.isOn ? "EQ On" : "Bypassed", systemImage: "power")

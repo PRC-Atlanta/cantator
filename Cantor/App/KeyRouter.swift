@@ -62,7 +62,7 @@ final class KeyRouter {
     }
 
     private func toggleAudition(_ model: AppModel) {
-        if model.cueBus.isPlaying {
+        if model.cueBus.isPlaying || model.auditioning != nil {
             model.stopAudition()
         } else if let track = (model.show.state.holdsHouseEngine ? model.show.upcomingCue : model.show.pointedCue)?.track {
             model.audition(track)

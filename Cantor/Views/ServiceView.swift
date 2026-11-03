@@ -179,7 +179,12 @@ private struct CueInspector: View {
                 if let id = cue.trackID, let track = model.library.track(id: id) {
                     Section(cue.autoConfirmed ? "Auto-confirmed" : "Confirmed") {
                         LabeledContent("File", value: track.primaryFilename)
-                        Button("Preview on Cue Output") { model.audition(track) }
+                        Button {
+                            model.toggleAudition(track)
+                        } label: {
+                            Label(model.isAuditioning(track) ? "Stop Preview" : "Preview on Cue Output",
+                                  systemImage: model.isAuditioning(track) ? "stop.fill" : "headphones")
+                        }
                         if cue.isManual {
                             Button("Remove from Service") { model.removeManualCue(planID: plan.id, cueID: cue.id) }
                                 .disabled(model.show.showMode)
@@ -242,11 +247,11 @@ private struct CueInspector: View {
                 }
                 Spacer()
                 Button {
-                    model.audition(track)
+                    model.toggleAudition(track)
                 } label: {
-                    Image(systemName: "headphones")
+                    Image(systemName: model.isAuditioning(track) ? "stop.fill" : "headphones")
                 }
-                .help("Preview on the cue output")
+                .help(model.isAuditioning(track) ? "Stop the preview" : "Preview on the cue output")
                 .hoverBrighten()
                 .disabled(!track.isLocal)
                 Button("Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }

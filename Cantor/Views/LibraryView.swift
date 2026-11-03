@@ -354,13 +354,18 @@ private struct TrackInspector: View {
                     .frame(height: 110)
                     .listRowInsets(EdgeInsets())
                 HStack {
+                    let ending = max((track.endSec ?? track.durationSec) - 15, 0)
                     Button {
-                        model.cueBus.isPlaying ? model.stopAudition() : model.audition(track, fromSec: track.startSec)
+                        model.toggleAudition(track, fromSec: track.startSec)
                     } label: {
-                        Label(model.cueBus.isPlaying ? "Stop" : "Preview", systemImage: model.cueBus.isPlaying ? "stop.fill" : "headphones")
+                        let on = model.isAuditioning(track, fromSec: track.startSec)
+                        Label(on ? "Stop" : "Preview", systemImage: on ? "stop.fill" : "headphones")
                     }
-                    Button("Preview Ending") {
-                        model.audition(track, fromSec: max((track.endSec ?? track.durationSec) - 15, 0))
+                    Button {
+                        model.toggleAudition(track, fromSec: ending)
+                    } label: {
+                        let on = model.isAuditioning(track, fromSec: ending)
+                        Label(on ? "Stop" : "Preview Ending", systemImage: on ? "stop.fill" : "forward.end")
                     }
                     Spacer()
                     if let position = model.auditionPositionSec {
