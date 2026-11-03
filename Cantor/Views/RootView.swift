@@ -51,10 +51,14 @@ struct RootView: View {
         .onChange(of: model.show.showMode) { _, locked in
             if locked {
                 model.showingServicePicker = false
+                model.showingNewService = false
                 model.selection = .show
             }
             columns = .all
         }
+        .sheet(isPresented: $model.showingNewService) { NewServiceSheet() }
+        // The first-launch question. Older installs answered it by having used Planning Center.
+        .sheet(isPresented: Binding(get: { !model.settings.hasChosenServiceSource }, set: { _ in })) { WelcomeSheet() }
         .sheet(item: Binding(
             get: { model.newFileToPresent },
             set: { value in
@@ -97,6 +101,7 @@ struct RootView: View {
 private struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Binding var selection: SidebarItem?
+    @State private var pastOpen = false
 
     var body: some View {
         let library = model.library
@@ -111,32 +116,62 @@ private struct SidebarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     SidebarHeader("Services")
-                    HStack(spacing: 6) {
+                    let busy = model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService
+                    Button {
+                        model.startNewService()
+                    } label: {
+                        SidebarLabel("New Service…", "calendar.badge.plus").sidebarRowPadding()
+                    }
+                    .buttonStyle(.plain)
+                    .hoverHighlight(cornerRadius: 6)
+                    .disabled(busy)
+                    .help("Build a service here: blank, a copy of another, or from a template. Drop tracks on it to start with them.")
+                    .acceptsTracks { model.startNewService(with: $0) }
+                    if model.settings.usesPlanningCenter {
+                        HStack(spacing: 6) {
+                            Button {
+                                model.showingServicePicker = true
+                            } label: {
+                                SidebarLabel("Choose Service…", "calendar").sidebarRowPadding()
+                            }
+                            .buttonStyle(.plain)
+                            .hoverHighlight(cornerRadius: 6)
+                            .disabled(busy)
+                            .help("Pick a Planning Center service from six weeks back to three weeks ahead")
+                            UpdateServicesButton()
+                                .padding(.trailing, 6)
+                        }
+                    }
+                    ForEach(model.upcomingSidebarPlans) { plan in
+                        planRow(plan)
+                    }
+                    if model.upcomingSidebarPlans.isEmpty {
+                        Text(model.sidebarPlans.isEmpty ? (model.plans.isEmpty ? "No services yet" : "None of the shown types") : "Nothing coming up")
+                            .foregroundStyle(.secondary)
+                            .sidebarRowPadding()
+                    }
+                    let past = model.pastSidebarPlans
+                    if !past.isEmpty {
                         Button {
-                            model.showingServicePicker = true
+                            withAnimation(.easeOut(duration: 0.15)) { pastOpen.toggle() }
                         } label: {
-                            SidebarLabel("Choose Service…", "calendar.badge.plus").sidebarRowPadding()
+                            HStack(spacing: 8) {
+                                Image(systemName: pastOpen ? "chevron.down" : "chevron.right").frame(width: 18).font(.caption)
+                                Text("Past Services").lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text("\(past.count)").font(.callout).monospacedDigit()
+                            }
+                            .foregroundStyle(.secondary)
+                            .sidebarRowPadding()
                         }
                         .buttonStyle(.plain)
                         .hoverHighlight(cornerRadius: 6)
-                        .disabled(model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
-                        .help("Pick a service from six weeks back to three weeks ahead")
-                        UpdateServicesButton()
-                            .padding(.trailing, 6)
-                    }
-                    ForEach(model.sidebarPlans) { plan in
-                        row(.plan(plan.id)) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
-                                Text(plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .help("Services already over. Open one to run it again or copy its order.")
+                        if pastOpen {
+                            ForEach(past) { plan in
+                                planRow(plan).padding(.leading, 12)
                             }
                         }
-                        .acceptsTracks(open: { selection = .plan(plan.id) }) { model.addTracks($0, to: plan.id, at: .end) }
-                    }
-                    if model.sidebarPlans.isEmpty {
-                        Text(model.plans.isEmpty ? "None synced" : "None of the shown types")
-                            .foregroundStyle(.secondary)
-                            .sidebarRowPadding()
                     }
                 }
                 .padding(10)
@@ -163,11 +198,37 @@ private struct SidebarView: View {
                 libraryRow("Not Downloaded", "icloud", .notDownloaded, library.playbackTracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.count)
                 libraryRow("Duplicates", "square.on.square", .duplicates, library.duplicateGroups.count)
                 libraryRow("Excluded", "eye.slash", .excluded, library.excludedTracks.count)
-                SidebarHeader("Claude")
-                ClaudeStatusRow()
+                if model.settings.llmEnabled {
+                    SidebarHeader("Claude")
+                    ClaudeStatusRow()
+                }
+                SidebarHeader("Outputs")
+                OutputsStatusRow()
             }
             .padding(10)
         }
+    }
+
+    private func planRow(_ plan: ServicePlan) -> some View {
+        row(.plan(plan.id)) {
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
+                    Text(plan.isManual ? plan.title : plan.serviceTypeName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                if plan.id == model.loadedPlanID {
+                    Spacer(minLength: 4)
+                    Text("LOADED")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(0.8)
+                        .foregroundStyle(Theme.live)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.live.opacity(0.7)))
+                }
+            }
+        }
+        .acceptsTracks(open: { selection = .plan(plan.id) }) { model.addTracks($0, to: plan.id, at: .end) }
     }
 
     private func row(_ item: SidebarItem, @ViewBuilder content: () -> some View) -> some View {
@@ -287,6 +348,52 @@ private struct ClaudeStatusRow: View {
         .hoverHighlight(cornerRadius: 6)
         .onTapGesture { model.refreshClaudeConnection() }
         .help("\(connection.detail) Click to check again.")
+    }
+}
+
+/// House and cue, always in view while preparing. Amber until both are set, connected and
+/// different, which is what Arm will insist on. Click to open Settings > Outputs.
+private struct OutputsStatusRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let routing = model.settings.routing
+        let connected = Set(model.devices.map(\.uid))
+        let houseOK = routing.houseDeviceUID.map(connected.contains) ?? false
+        let cueOK = routing.cueDeviceUID.map(connected.contains) ?? false
+        let distinct = !routing.isSameDevice
+        Button {
+            model.openSettings(.outputs)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                line("House", name: houseName(routing), ok: houseOK && distinct)
+                line("Cue", name: model.deviceName(routing.cueDeviceUID), ok: cueOK && distinct)
+                if routing.isSameDevice {
+                    Text("Must be different devices").font(.caption).foregroundStyle(Theme.armed)
+                }
+            }
+            .sidebarRowPadding()
+        }
+        .buttonStyle(.plain)
+        .hoverHighlight(cornerRadius: 6)
+        .help("Open Settings > Outputs")
+    }
+
+    private func houseName(_ routing: OutputRouting) -> String {
+        let name = model.deviceName(routing.houseDeviceUID)
+        guard let uid = routing.houseDeviceUID, let device = model.devices.first(where: { $0.uid == uid }), device.outputChannels > 2 else { return name }
+        return "\(name) \(routing.houseFirstChannel + 1)-\(routing.houseFirstChannel + 2)"
+    }
+
+    private func line(_ label: String, name: String, ok: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle" : "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(ok ? Color.secondary : Theme.armed)
+                .frame(width: 14)
+            Text("\(label) · \(name)").font(.callout).lineLimit(1).truncationMode(.middle)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

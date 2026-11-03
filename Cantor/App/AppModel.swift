@@ -46,6 +46,13 @@ final class AppModel {
     var lastPlanningCenterSource: PlanningCenterSource?
     /// Set by Later. Cleared when another new file arrives or the app starts again.
     var newFilesSnoozed = false
+    /// The operator clicked New Files, so the pop-up shows even when new files are handled quietly.
+    var reviewingNewFiles = false
+    /// The New Service sheet, and tracks dropped on New Service… that the new service starts with.
+    var showingNewService = false
+    var newServiceTrackIDs: [UUID] = []
+    /// The Settings pane to show. The sidebar's outputs row opens Outputs.
+    var settingsTab = SettingsTab.outputs
 
     var houseMeter = MeterState()
     var cueMeter = MeterState()
@@ -130,6 +137,9 @@ final class AppModel {
         }
         settings.stampWatchedFolders()
         try? settingsFile.save(settings)
+        // Services built here leave on their own once they are old; synced ones leave with a sync.
+        plans = ServicePlan.pruningPastManual(plans, keepWeeks: settings.keepPastServicesWeeks, loadedID: nil)
+        if settings.newFileHandling == .quiet { inbox.dropStale() }
         applySettingsToShow()
         if !setAside.isEmpty {
             alert = "Some saved data could not be read and was set aside: \(setAside.joined(separator: ", "))"
@@ -270,6 +280,19 @@ final class AppModel {
             restartWatcher()
             rescan()
         }
+        if settings.newFileHandling == .quiet, inbox.dropStale() > 0 { scheduleSave() }
+        if !settings.usesPlanningCenter { showingServicePicker = false }
+    }
+
+    /// The first-launch answer, also changeable in Settings > Services.
+    func chooseServiceSource(_ source: ServiceSource) {
+        updateSettings { $0.chooseServiceSource(source) }
+    }
+
+    /// Opens Settings on a pane, as the sidebar's outputs row does.
+    func openSettings(_ tab: SettingsTab) {
+        settingsTab = tab
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
     private func applySettingsToShow() {
@@ -1000,11 +1023,162 @@ final class AppModel {
     }
 
     /// Only items added by hand can be removed. Planning Center owns the rest.
-    func removeManualCue(planID: String, cueID: CueID) {
-        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }) else { return }
-        plans[index].cues.removeAll { $0.id == cueID && $0.isManual }
+    func removeCue(planID: String, cueID: CueID) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }),
+              plans[index].cues.contains(where: { $0.id == cueID && $0.isManual })
+        else { return }
+        plans[index].remove(cueID)
         markCuesChanged()
         scheduleSave()
+    }
+
+    // MARK: Services built in Cantator
+
+    /// How a new service starts: empty, as a copy of another service's order, or from a template.
+    enum ServiceStart: Hashable {
+        case blank
+        case copy(String)
+        case template(UUID)
+    }
+
+    /// Creates a service and shows it. Tracks dropped on New Service… go in at the end, each as an
+    /// item of its own, already matched.
+    func createService(title: String, date: Date, start: ServiceStart, trackIDs: [UUID] = []) {
+        guard !show.showMode else { return }
+        var plan: ServicePlan
+        switch start {
+        case .blank:
+            plan = .manual(title: title, date: date)
+        case .copy(let id):
+            guard let source = plans.first(where: { $0.id == id }) else { return }
+            plan = source.copyingOrder(title: title, date: date)
+        case .template(let id):
+            guard let template = settings.templates.first(where: { $0.id == id }) else { return }
+            plan = .manual(title: title, date: date, cues: ServicePlan.cues(from: template))
+        }
+        plans.append(plan)
+        plans.sort { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
+        addTracks(trackIDs, to: plan.id, at: .end)
+        rankAllPlans()
+        showingNewService = false
+        newServiceTrackIDs = []
+        selection = .plan(plan.id)
+        scheduleSave()
+    }
+
+    /// Opens the New Service sheet, with tracks that were dropped on it.
+    func startNewService(with trackIDs: [UUID] = []) {
+        guard !show.showMode, !show.state.holdsHouseEngine, !isLoadingService else { return }
+        newServiceTrackIDs = trackIDs
+        showingNewService = true
+    }
+
+    /// Only a service built in Cantator can be deleted, and not while it is loaded.
+    func deleteService(planID: String) {
+        guard !show.showMode, planID != loadedPlanID, let plan = plans.first(where: { $0.id == planID }), plan.isManual else { return }
+        plans.removeAll { $0.id == planID }
+        if selection == .plan(planID) { selection = .show }
+        scheduleSave()
+    }
+
+    func saveTemplate(planID: String, name: String) {
+        guard let plan = plans.first(where: { $0.id == planID }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateSettings { settings in
+            settings.templates.append(ServiceTemplate(plan: plan, name: trimmed.isEmpty ? plan.title : trimmed))
+        }
+        status = "Saved as a template. New Service… can start from it."
+    }
+
+    func deleteTemplate(_ id: UUID) {
+        updateSettings { $0.templates.removeAll { $0.id == id } }
+    }
+
+    /// Adds an item or a section after a cue, or at the end. Returns the new cue's id so it can be selected.
+    @discardableResult
+    func addCue(planID: String, header: Bool, after cueID: CueID?) -> CueID? {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }) else { return nil }
+        let cue = ServicePlan.manualCue(title: header ? "New Section" : "New Item", header: header)
+        plans[index].insert([cue], at: cueID.map { .after($0) } ?? .end)
+        markCuesChanged()
+        scheduleSave()
+        return cue.id
+    }
+
+    func renameCue(planID: String, cueID: CueID, title: String) {
+        guard !show.showMode else { return }
+        updateCue(planID: planID, cueID: cueID) { cue in
+            guard cue.isManual else { return }
+            cue.title = title
+        }
+        // The name is what the matcher works from, but not on every keystroke.
+        scheduleRank()
+    }
+
+    /// Renames a service built in Cantator, or moves it to another date.
+    func updateManualPlan(planID: String, title: String, date: Date) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }), plans[index].isManual else { return }
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            plans[index].title = name
+            plans[index].serviceTypeName = name
+        }
+        plans[index].dates = ServicePlan.dateLabel(date)
+        plans[index].sortDate = date
+        plans[index].serviceTimes = [date]
+        plans.sort { ($0.sortDate ?? .distantFuture) < ($1.sortDate ?? .distantFuture) }
+        scheduleSave()
+    }
+
+    @ObservationIgnored private var rankTask: Task<Void, Never>?
+
+    private func scheduleRank() {
+        rankTask?.cancel()
+        rankTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled, let self else { return }
+            self.rankAllPlans()
+        }
+    }
+
+    func setCueNotes(planID: String, cueID: CueID, notes: String) {
+        guard !show.showMode else { return }
+        updateCue(planID: planID, cueID: cueID) { cue in
+            guard cue.isManual else { return }
+            cue.notes = notes
+        }
+    }
+
+    /// Moves a cue one place. Only cues added by hand move; Planning Center owns the order of its own.
+    func moveCue(planID: String, cueID: CueID, by offset: Int) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }),
+              plans[index].cues.contains(where: { $0.id == cueID && $0.isManual })
+        else { return }
+        guard plans[index].move(cueID, by: offset) else { return }
+        markCuesChanged()
+        scheduleSave()
+    }
+
+    /// A cue dragged onto another lands right after it.
+    func moveCue(planID: String, cueID: CueID, to point: ServicePlan.InsertPoint) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }),
+              plans[index].cues.contains(where: { $0.id == cueID && $0.isManual })
+        else { return }
+        plans[index].move(cueID, to: point)
+        markCuesChanged()
+        scheduleSave()
+    }
+
+    /// Takes the track off an item added by hand, keeping the item. Not Clear Match: nothing was
+    /// confirmed by Cantator, so there is nothing to stop it doing again.
+    func clearTrack(planID: String, cueID: CueID) {
+        guard !show.showMode else { return }
+        updateCue(planID: planID, cueID: cueID) { cue in
+            guard cue.isManual else { return }
+            cue.trackID = nil
+            cue.autoConfirmed = false
+        }
+        rankAllPlans()
     }
 
     // MARK: Service load
@@ -1013,6 +1187,17 @@ final class AppModel {
 
     /// The services in the sidebar: hidden service types are left out, unless picked by hand or loaded.
     var sidebarPlans: [ServicePlan] { plans.filter { !settings.hides($0) || $0.id == loadedPlanID } }
+
+    /// Today's and later services, then the ones already over, which the sidebar folds away.
+    var upcomingSidebarPlans: [ServicePlan] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) >= today }
+    }
+
+    var pastSidebarPlans: [ServicePlan] {
+        let today = Calendar.current.startOfDay(for: Date())
+        return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) < today }.reversed()
+    }
 
     /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent past ones.
     var currentPlan: ServicePlan? {
@@ -1039,7 +1224,7 @@ final class AppModel {
 
             isLoadingService = false
             guard plans.contains(where: { $0.id == planID }) else {
-                alert = "That service is no longer in Planning Center, so it was not loaded."
+                alert = "That service is gone, so it was not loaded."
                 return
             }
             resident = decoded.0
@@ -1170,7 +1355,8 @@ final class AppModel {
             defer { isClassifying = false }
             let facts = await Task.detached(priority: .utility) { tracks.map { Self.facts(for: $0, roots: roots) } }.value
             var suggestions: [UUID: FileSuggestion] = [:]
-            var note: String? = useClaude ? nil : "Claude is turned off in Settings."
+            // With Claude off, a guess is simply how files are filed, so the pop-up says no more than that.
+            var note: String?
             if useClaude {
                 do {
                     let classifier = FileClassifier(runner: try await claudeAccount(), model: model)
@@ -1245,18 +1431,22 @@ final class AppModel {
         )
     }
 
-    /// The file the pop-up shows now, if it may show at all.
+    /// The file the pop-up shows now, if it may show at all. Handled quietly, files wait in the
+    /// sidebar until the operator clicks New Files.
     var newFileToPresent: NewFileItem? {
-        guard !newFilesSnoozed, alert == nil, newFilesCanAppear else { return nil }
+        guard !newFilesSnoozed, alert == nil, newFilesCanAppear, settings.hasChosenServiceSource, !showingNewService else { return nil }
+        guard settings.newFileHandling == .ask || reviewingNewFiles else { return nil }
         return inbox.ready.first
     }
 
     func reviewNewFiles() {
         newFilesSnoozed = false
+        reviewingNewFiles = true
     }
 
     func snoozeNewFiles() {
         newFilesSnoozed = true
+        reviewingNewFiles = false
     }
 
     /// The operator's answer from the pop-up. Matching a service item here is the operator confirming it.

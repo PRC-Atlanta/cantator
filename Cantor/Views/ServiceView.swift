@@ -1,48 +1,127 @@
 import CantorCore
 import SwiftUI
 
+/// A service cue dragged within its service, marked so it is told from a dragged library track.
+enum CueDrag {
+    private static let prefix = "cantator-cue:"
+
+    static func payload(_ id: CueID) -> String { prefix + id }
+
+    static func cueID(_ items: [String]) -> CueID? {
+        items.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+    }
+}
+
 struct ServiceView: View {
     @Environment(AppModel.self) private var model
     let planID: String
     @State private var selectedCue: CueID?
+    @State private var namingTemplate = false
+    @State private var templateName = ""
+    @State private var confirmingDelete = false
 
     private var plan: ServicePlan? { model.plans.first { $0.id == planID } }
+    private var locked: Bool { model.show.showMode }
 
     var body: some View {
         Group {
             if let plan {
                 table(plan)
                     .inspector(isPresented: .constant(true)) {
-                        CueInspector(plan: plan, cue: plan.cues.first { $0.id == selectedCue })
-                            .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
+                        Group {
+                            if let cue = plan.cues.first(where: { $0.id == selectedCue }) {
+                                CueInspector(plan: plan, cue: cue, deselect: { selectedCue = nil })
+                            } else if plan.isManual {
+                                ServiceInspector(plan: plan)
+                            } else {
+                                ContentUnavailableView("No Item Selected", systemImage: "music.note")
+                            }
+                        }
+                        .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
                     }
                     .navigationTitle(plan.dates.isEmpty ? plan.title : plan.dates)
-                    .navigationSubtitle("Synced \(plan.syncedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .navigationSubtitle(subtitle(plan))
                     .toolbar { toolbar(plan) }
+                    .alert("Save as Template", isPresented: $namingTemplate) {
+                        TextField("Name", text: $templateName)
+                        Button("Save") { model.saveTemplate(planID: plan.id, name: templateName) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("The sections and item titles are kept, never the tracks. New Service… can start from it.")
+                    }
+                    .alert("Delete this service?", isPresented: $confirmingDelete) {
+                        Button("Delete", role: .destructive) { model.deleteService(planID: plan.id) }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("\(plan.dates) · \(plan.title) is removed from the sidebar. Your tracks stay in the library.")
+                    }
             } else {
                 ContentUnavailableView("Service Not Found", systemImage: "calendar.badge.exclamationmark")
             }
         }
     }
 
+    private func subtitle(_ plan: ServicePlan) -> String {
+        guard plan.isManual else { return "Synced \(plan.syncedAt.formatted(date: .abbreviated, time: .shortened))" }
+        let needing = plan.playbackCues.filter { $0.itemType != "header" }
+        let ready = needing.filter { cue in cue.trackID.flatMap { model.library.track(id: $0) }.map { $0.isLocal } ?? false }.count
+        var parts = ["Built in Cantator", "\(ready) of \(needing.count) \(needing.count == 1 ? "track" : "tracks") ready"]
+        if model.loadedPlanID == plan.id { parts.append("Loaded for the show") }
+        return parts.joined(separator: " · ")
+    }
+
     @ToolbarContentBuilder
     private func toolbar(_ plan: ServicePlan) -> some ToolbarContent {
         ToolbarItemGroup {
-            Button {
-                model.refreshPlans(alsoRead: plan.id)
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(model.isSyncing)
-            .help("Pull the latest from Planning Center, then turn on and match lines from their notes and your library")
+            if plan.isManual {
+                Button {
+                    selectedCue = model.addCue(planID: plan.id, header: false, after: selectedCue)
+                } label: {
+                    Label("Add Item", systemImage: "plus")
+                }
+                .disabled(locked)
+                .help("Add an item after the selected one, or at the end")
 
-            Button {
-                model.runAIMatch(planID: plan.id)
-            } label: {
-                Label("Resolve Ambiguous", systemImage: "questionmark.diamond")
+                Button {
+                    selectedCue = model.addCue(planID: plan.id, header: true, after: selectedCue)
+                } label: {
+                    Label("Add Section", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                .disabled(locked)
+                .help("Add a section heading, such as Worship or Message")
+
+                Menu {
+                    Button("Duplicate for Next Week") { duplicate(plan) }
+                    Button("Save as Template…") {
+                        templateName = plan.title
+                        namingTemplate = true
+                    }
+                    Divider()
+                    Button("Delete Service…", role: .destructive) { confirmingDelete = true }
+                        .disabled(model.loadedPlanID == plan.id)
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .disabled(locked)
+            } else {
+                Button {
+                    model.refreshPlans(alsoRead: plan.id)
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isSyncing)
+                .help("Pull the latest from Planning Center, then turn on and match lines from their notes and your library")
             }
-            .disabled(model.isMatching)
-            .help("Ask Claude to rank ambiguous matches. You still confirm each one.")
+
+            if model.settings.llmEnabled {
+                Button {
+                    model.runAIMatch(planID: plan.id)
+                } label: {
+                    Label("Resolve Ambiguous", systemImage: "questionmark.diamond")
+                }
+                .disabled(model.isMatching)
+                .help("Ask Claude to rank ambiguous matches. You still confirm each one.")
+            }
 
             Button {
                 model.loadService(planID: plan.id)
@@ -55,38 +134,63 @@ struct ServiceView: View {
         }
     }
 
+    /// The same order, a week later, with no tracks. The date can be changed in the inspector.
+    private func duplicate(_ plan: ServicePlan) {
+        let date = Calendar.current.date(byAdding: .day, value: 7, to: plan.sortDate ?? Date()) ?? Date()
+        model.createService(title: plan.title, date: date, start: .copy(plan.id))
+    }
+
     private func table(_ plan: ServicePlan) -> some View {
-        Table(of: ServiceCue.self, selection: $selectedCue) {
+        let indented = plan.cues.contains { $0.itemType == "header" }
+        return Table(of: ServiceCue.self, selection: $selectedCue) {
             TableColumn("Item") { cue in
                 if cue.itemType == "header" {
                     // A section label, as in Planning Center, so the items under it read as a group.
-                    Text(cue.title)
-                        .font(.system(size: 11, weight: .bold))
-                        .textCase(.uppercase)
-                        .tracking(0.6)
-                        .foregroundStyle(Theme.cue)
-                        .lineLimit(1)
-                        .padding(.top, 10)
-                        .padding(.bottom, 2)
-                        .help(cue.title)
+                    if cue.isManual {
+                        TextField("Section", text: titleBinding(plan, cue))
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11, weight: .bold))
+                            .textCase(.uppercase)
+                            .foregroundStyle(Theme.cue)
+                            .disabled(locked)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+                    } else {
+                        Text(cue.title)
+                            .font(.system(size: 11, weight: .bold))
+                            .textCase(.uppercase)
+                            .tracking(0.6)
+                            .foregroundStyle(Theme.cue)
+                            .lineLimit(1)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+                            .help(cue.title)
+                    }
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(cue.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        let detail = cue.isManual
-                            ? ["Added in Cantator"]
-                            : [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
+                        if cue.isManual {
+                            TextField("Item", text: titleBinding(plan, cue))
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13, weight: .medium))
+                                .disabled(locked)
+                        } else {
+                            Text(cue.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        }
+                        let detail = [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
                         if !detail.isEmpty {
                             Text(detail.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                                 .help(cue.notes)
+                        } else if cue.isManual, !plan.isManual {
+                            Text("Added in Cantator").font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 3)
-                    .padding(.leading, plan.cues.contains { $0.itemType == "header" } ? 10 : 0)
+                    .padding(.leading, indented ? 10 : 0)
                 }
             }
             .width(min: 180, ideal: 240)
 
-            TableColumn("Needs") { cue in
+            TableColumn(plan.isManual ? "Track" : "Needs") { cue in
                 if cue.itemType != "header" {
                     Toggle("", isOn: Binding(
                         get: { cue.needsPlayback },
@@ -94,6 +198,8 @@ struct ServiceView: View {
                     ))
                     .labelsHidden()
                     .toggleStyle(.checkbox)
+                    .disabled(locked && plan.isManual)
+                    .help(plan.isManual ? "This item runs on a track" : "This item needs a playback track")
                 }
             }
             .width(46)
@@ -115,27 +221,93 @@ struct ServiceView: View {
             .width(52)
 
             TableColumn("State") { cue in
-                if cue.needsPlayback { StateChip(cue: cue) }
+                if cue.needsPlayback {
+                    if cue.isManual {
+                        ManualStateChip(cue: cue)
+                    } else {
+                        StateChip(cue: cue)
+                    }
+                }
             }
-            .width(min: 90, ideal: 110)
+            .width(min: 90, ideal: 120)
+
+            TableColumn("") { cue in
+                if cue.isManual {
+                    let ordered = plan.orderedCues
+                    let index = ordered.firstIndex { $0.id == cue.id } ?? 0
+                    HStack(spacing: 2) {
+                        Button {
+                            model.moveCue(planID: plan.id, cueID: cue.id, by: -1)
+                        } label: {
+                            Image(systemName: "chevron.up")
+                        }
+                        .disabled(locked || index == 0)
+                        .help("Move up")
+                        Button {
+                            model.moveCue(planID: plan.id, cueID: cue.id, by: 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                        }
+                        .disabled(locked || index == ordered.count - 1)
+                        .help("Move down")
+                        Button {
+                            if selectedCue == cue.id { selectedCue = nil }
+                            model.removeCue(planID: plan.id, cueID: cue.id)
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .disabled(locked)
+                        .help("Remove from the service")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .opacity(selectedCue == cue.id ? 1 : 0.4)
+                }
+            }
+            .width(plan.isManual ? 70 : 0)
         } rows: {
             ForEach(plan.orderedCues) { cue in
-                // Library tracks dropped on an item go right after it.
-                TableRow(cue).dropDestination(for: String.self) { items in
-                    model.addTracks(TrackDrag.trackIDs(items), to: plan.id, at: .after(cue.id))
-                }
+                // Library tracks dropped on an item go right after it; a dragged item lands there too.
+                TableRow(cue)
+                    .draggable(CueDrag.payload(cue.id))
+                    .dropDestination(for: String.self) { items in
+                        if let moved = CueDrag.cueID(items) {
+                            model.moveCue(planID: plan.id, cueID: moved, to: .after(cue.id))
+                        } else {
+                            model.addTracks(TrackDrag.trackIDs(items), to: plan.id, at: .after(cue.id))
+                        }
+                    }
             }
         }
         // Stripes fall on headers and items alike and blur the sections, so rows are left plain.
         .alternatingRowBackgrounds(.disabled)
+        .overlay {
+            if plan.cues.isEmpty {
+                ContentUnavailableView(
+                    "No Items Yet", systemImage: "music.note.list",
+                    description: Text("Use Add Item and Add Section, or drag tracks here from the Library.")
+                )
+                .allowsHitTesting(false)
+            }
+        }
+        .acceptsTracks { model.addTracks($0, to: plan.id, at: .end) }
+    }
+
+    private func titleBinding(_ plan: ServicePlan, _ cue: ServiceCue) -> Binding<String> {
+        Binding(
+            get: { plan.cues.first { $0.id == cue.id }?.title ?? cue.title },
+            set: { model.renameCue(planID: plan.id, cueID: cue.id, title: $0) }
+        )
     }
 
     private func fileName(_ cue: ServiceCue) -> String {
-        let id = cue.trackID ?? cue.candidates.first?.trackID
-        return id.flatMap { model.library.track(id: $0)?.primaryFilename } ?? "No match"
+        if let id = cue.trackID, let track = model.library.track(id: id) { return track.primaryFilename }
+        if cue.isManual { return cue.candidates.first.flatMap { model.library.track(id: $0.trackID)?.primaryFilename }.map { "Looks like \($0)" } ?? "No track" }
+        return cue.candidates.first.flatMap { model.library.track(id: $0.trackID)?.primaryFilename } ?? "No match"
     }
 }
 
+/// Planning Center items: what the matcher found and what the operator did about it.
 private struct StateChip: View {
     let cue: ServiceCue
 
@@ -161,45 +333,148 @@ private struct StateChip: View {
     }
 }
 
+/// Items added by hand: whether the track they were given is ready to play. Same colors as the show.
+private struct ManualStateChip: View {
+    @Environment(AppModel.self) private var model
+    let cue: ServiceCue
+
+    var body: some View {
+        if let id = cue.trackID, let track = model.library.track(id: id) {
+            if model.resident[id] != nil {
+                Label("Loaded", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.live)
+            } else if !track.isLocal {
+                Label(track.hasCloudOnlyCopy ? "Not downloaded" : "File missing", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
+            } else if track.endSec == nil {
+                Label("No end point", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
+                    .help("Set or accept an end point in Library. It plays to the end of the file until then.")
+            } else {
+                Label("Ready", systemImage: "checkmark.circle").foregroundStyle(Theme.live)
+            }
+        } else if cue.trackID != nil {
+            Label("File missing", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.danger)
+        } else if !cue.candidates.isEmpty {
+            Label("Suggested", systemImage: "circle.dashed").foregroundStyle(Theme.armed)
+                .help("A library track shares words with this title. Choose Use in the inspector to take it.")
+        } else {
+            Label("No track", systemImage: "xmark.circle").foregroundStyle(Theme.danger)
+        }
+    }
+}
+
+/// A service built in Cantator, when no item is selected: its name and date.
+private struct ServiceInspector: View {
+    @Environment(AppModel.self) private var model
+    let plan: ServicePlan
+
+    var body: some View {
+        Form {
+            Section("Service") {
+                TextField("Name", text: Binding(
+                    get: { plan.title },
+                    set: { model.updateManualPlan(planID: plan.id, title: $0, date: plan.sortDate ?? Date()) }
+                ))
+                DatePicker("Date", selection: Binding(
+                    get: { plan.sortDate ?? Date() },
+                    set: { model.updateManualPlan(planID: plan.id, title: plan.title, date: $0) }
+                ))
+                let items = plan.cues.filter { $0.itemType != "header" }
+                LabeledContent("Items", value: "\(items.count), \(items.filter(\.needsPlayback).count) on tracks")
+            }
+            Section {
+                Text("Select an item to give it a track, or drag tracks in from the Library. Add Item and Add Section are in the toolbar.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(model.show.showMode)
+    }
+}
+
 private struct CueInspector: View {
     @Environment(AppModel.self) private var model
     let plan: ServicePlan
-    let cue: ServiceCue?
+    let cue: ServiceCue
+    let deselect: () -> Void
     @State private var search = ""
 
+    private var locked: Bool { model.show.showMode }
+
     var body: some View {
-        if let cue, cue.itemType != "header" {
+        if cue.itemType == "header" {
+            Form {
+                Section("Section") {
+                    if cue.isManual {
+                        TextField("Title", text: Binding(
+                            get: { cue.title },
+                            set: { model.renameCue(planID: plan.id, cueID: cue.id, title: $0) }
+                        ))
+                        .disabled(locked)
+                        Button("Remove Section") {
+                            deselect()
+                            model.removeCue(planID: plan.id, cueID: cue.id)
+                        }
+                        .disabled(locked)
+                    } else {
+                        LabeledContent("Title", value: cue.title)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        } else {
             Form {
                 Section("Item") {
-                    LabeledContent("Title", value: cue.title)
-                    if !cue.arrangement.isEmpty { LabeledContent("Arrangement", value: cue.arrangement) }
-                    if let length = cue.lengthSec { LabeledContent("Length", value: TimeText.plain(length)) }
-                    if !cue.notes.isEmpty { Text(cue.notes).foregroundStyle(.secondary) }
+                    if cue.isManual {
+                        TextField("Title", text: Binding(
+                            get: { cue.title },
+                            set: { model.renameCue(planID: plan.id, cueID: cue.id, title: $0) }
+                        ))
+                        .disabled(locked)
+                        TextField("Notes", text: Binding(
+                            get: { cue.notes },
+                            set: { model.setCueNotes(planID: plan.id, cueID: cue.id, notes: $0) }
+                        ), prompt: Text("For the show, such as “starts after the prayer”"), axis: .vertical)
+                        .lineLimit(1...3)
+                        .disabled(locked)
+                    } else {
+                        LabeledContent("Title", value: cue.title)
+                        if !cue.arrangement.isEmpty { LabeledContent("Arrangement", value: cue.arrangement) }
+                        if let length = cue.lengthSec { LabeledContent("Length", value: TimeText.plain(length)) }
+                        if !cue.notes.isEmpty { Text(cue.notes).foregroundStyle(.secondary) }
+                    }
                 }
                 if let id = cue.trackID, let track = model.library.track(id: id) {
-                    Section(cue.autoConfirmed ? "Auto-confirmed" : "Confirmed") {
+                    Section(cue.isManual ? "Track" : (cue.autoConfirmed ? "Auto-confirmed" : "Confirmed")) {
                         LabeledContent("File", value: track.primaryFilename)
+                        LabeledContent("Length", value: TimeText.plain(track.durationSec))
+                        if !track.isLocal {
+                            Label(track.hasCloudOnlyCopy ? "Not downloaded. Use Make Local in Library." : "The file is missing.", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(Theme.armed)
+                        }
                         Button {
                             model.toggleAudition(track)
                         } label: {
                             Label(model.isAuditioning(track) ? "Stop Preview" : "Preview on Cue Output",
                                   systemImage: model.isAuditioning(track) ? "stop.fill" : "headphones")
                         }
+                        .disabled(!track.isLocal)
                         if cue.isManual {
-                            Button("Remove from Service") { model.removeManualCue(planID: plan.id, cueID: cue.id) }
-                                .disabled(model.show.showMode)
+                            Button("Change Track") { model.clearTrack(planID: plan.id, cueID: cue.id) }
+                                .disabled(locked)
                         } else {
                             Button("Clear Match") { model.clearMatch(planID: plan.id, cue: cue) }
                         }
                     }
                 }
-                Section("Candidates") {
-                    if cue.candidates.isEmpty {
-                        Text("No likely files. Search below.").foregroundStyle(.secondary)
-                    }
-                    ForEach(cue.candidates) { candidate in
-                        if let track = model.library.track(id: candidate.trackID) {
-                            candidateRow(cue: cue, candidate: candidate, track: track)
+                if cue.trackID == nil || !cue.isManual {
+                    Section(cue.isManual ? "Looks Like" : "Candidates") {
+                        if cue.candidates.isEmpty {
+                            Text(cue.isManual ? "No library track shares words with this title. Search below." : "No likely files. Search below.")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(cue.candidates) { candidate in
+                            if let track = model.library.track(id: candidate.trackID) {
+                                candidateRow(candidate: candidate, track: track)
+                            }
                         }
                     }
                 }
@@ -209,14 +484,23 @@ private struct CueInspector: View {
                         HStack {
                             Text(track.primaryFilename).lineLimit(1)
                             Spacer()
-                            Button("Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }
+                            Text(TimeText.plain(track.durationSec)).font(.caption).foregroundStyle(.secondary)
+                            Button(cue.isManual ? "Use" : "Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }
+                                .disabled(locked && cue.isManual)
                         }
+                    }
+                }
+                if cue.isManual {
+                    Section {
+                        Button("Remove Item", role: .destructive) {
+                            deselect()
+                            model.removeCue(planID: plan.id, cueID: cue.id)
+                        }
+                        .disabled(locked)
                     }
                 }
             }
             .formStyle(.grouped)
-        } else {
-            ContentUnavailableView("No Item Selected", systemImage: "music.note")
         }
     }
 
@@ -228,7 +512,7 @@ private struct CueInspector: View {
         }.prefix(12))
     }
 
-    private func candidateRow(cue: ServiceCue, candidate: MatchCandidate, track: Track) -> some View {
+    private func candidateRow(candidate: MatchCandidate, track: Track) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(track.primaryFilename).lineLimit(2)
@@ -254,7 +538,8 @@ private struct CueInspector: View {
                 .help(model.isAuditioning(track) ? "Stop the preview" : "Preview on the cue output")
                 .hoverBrighten()
                 .disabled(!track.isLocal)
-                Button("Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }
+                Button(cue.isManual ? "Use" : "Confirm") { model.confirm(planID: plan.id, cue: cue, track: track) }
+                    .disabled(locked && cue.isManual)
             }
         }
         .padding(.vertical, 2)

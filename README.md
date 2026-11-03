@@ -1,6 +1,6 @@
 # Cantator
 
-Native macOS playback for running choir and special-music tracks from the mixing console. It pulls the service from Planning Center, matches items to your files, and plays them through a two-step arm and go with clean, controlled endings.
+Native macOS playback for running choir and special-music tracks from the mixing console. You build the service in Cantator, or pull it from Planning Center, give each item its file, and play them through a two-step arm and go with clean, controlled endings. No account is needed: Planning Center and Claude are both optional.
 
 See [DESIGN.md](DESIGN.md) for how it works, [DECISIONS.md](DECISIONS.md) for the judgment calls, and [NEXT_STEPS.md](NEXT_STEPS.md) for known limitations.
 
@@ -69,9 +69,21 @@ Everything is in **Cantator > Settings**.
 
 While a service is loaded, Cantator moves macOS alert sounds and the default output off the house device, if that's where they are, and restores them afterward. Other apps' notifications can still make sound on other devices. Turn on Do Not Disturb before the service: macOS doesn't let apps do that.
 
+### Services
+
+The first launch asks one question: will you build services in Cantator, or sync them from Planning Center? The answer is in **Settings > Services** and can be changed any time. Building them here is the default for a fresh install. It needs no account, nothing leaves the Mac, and Planning Center and Claude stay out of the way: no Choose Service…, no sync button, no Planning Center or Claude panes. Choosing Planning Center brings them all back and turns Claude on; services can still be built by hand in that mode.
+
+**New Service…** at the top of the sidebar's Services list (also File > New Service…, Command-N) takes a name such as "Sunday Morning", a date and time, and a start point: blank, a copy of another service's order, or a template. A copy or a template brings the sections and item titles, never the tracks, so last week's song can't play by mistake. Dropping library tracks on New Service… starts the service with them, each as an item of its own, already matched.
+
+A service built here opens as an editor. **Add Item** and **Add Section** go after the selected row, or at the end. Titles and section names are typed in place, notes in the inspector. The **Track** checkbox says an item runs on a track. Rows move with the arrows at their right end, or by dragging one onto the row it should follow; the track travels with its item. Tracks come from the Library: drag one onto an item or onto the service, use **Add to Service** on a library track, or pick in the inspector. There, **Looks Like** lists library tracks that share words with the item's title, with the shared words as the reason, and **Use** takes one; search below it finds anything else. Nothing is assigned until you choose it. Each item shows **Ready**, **Loaded**, **Not downloaded**, **No end point**, **Suggested** or **No track**, in the show's colors.
+
+The toolbar's **More** menu has **Duplicate for Next Week**, **Save as Template…** and **Delete Service…**. The name and date can be changed in the inspector when no item is selected. Once a service is over it folds under **Past Services** in the sidebar, where it can be opened again or copied, and leaves after eight weeks (**Settings > Services** changes that). **Load Service** works the same for every service.
+
+The bottom of the sidebar always shows the house and cue outputs, amber until both are set, connected and different. Clicking it opens **Settings > Outputs**.
+
 ### Planning Center
 
-Cantator reads your upcoming services in one of two ways, chosen in **Settings > Planning Center**. Sync only runs when you choose **Sync Now** or **Refresh**.
+Shown when Planning Center is the chosen source. Cantator reads your upcoming services in one of two ways, chosen in **Settings > Planning Center**. Sync only runs when you choose **Sync Now** or **Refresh**.
 
 **Service Types** in the same pane lists every service type Cantator has seen. **Import all service types** is on at first. Turn it off and uncheck a type, such as weddings or funerals, and Sync Now skips it and the sidebar hides it. **Choose Service…** still lists every type, so one of those can be added by hand when it's needed, and it then stays in the sidebar.
 
@@ -97,6 +109,8 @@ Both values are stored only in the macOS Keychain.
 
 ### Claude (optional)
 
+Claude is its own switch in **Settings > Services**, in both modes: off by default when services are built here, on when Planning Center was chosen at first launch. Off, nothing about it is shown and Cantator guesses from names. On, the Claude pane, its status at the bottom of the sidebar and **Resolve Ambiguous** in the Service toolbar appear.
+
 Cantator uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
 
 ```bash
@@ -109,7 +123,9 @@ The **Claude** section at the bottom of the sidebar always shows whether Claude 
 
 Cantator watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
 
-When a new audio file arrives in a watched folder, Cantator asks Claude where it belongs and shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
+When a new audio file arrives in a watched folder, Cantator shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. With Claude on, Claude fills those in; otherwise they are guessed from the file name and folder, and the pop-up says so. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
+
+**Settings > Services** has a second way: **Add them to the library quietly**. Then no pop-up appears on its own; files wait under **New Files** in the sidebar for a week, where clicking reviews them, and after that they are ordinary library tracks.
 
 - The pop-up never appears while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
 - Files that arrive while Cantator is closed show up the next time it starts.

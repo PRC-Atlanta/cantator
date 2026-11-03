@@ -23,6 +23,8 @@ struct AddToServiceMenu: View {
 
     var body: some View {
         Menu {
+            Button("New Service with \(trackIDs.count == 1 ? "This Track" : "These Tracks")…") { model.startNewService(with: trackIDs) }
+            Divider()
             ForEach(model.sidebarPlans) { plan in
                 Menu(Self.name(plan)) {
                     Button("At the Start") { add(plan, .start) }
@@ -42,7 +44,7 @@ struct AddToServiceMenu: View {
         } label: {
             Label("Add to Service", systemImage: "text.badge.plus")
         }
-        .disabled(trackIDs.isEmpty || model.sidebarPlans.isEmpty || model.show.showMode)
+        .disabled(trackIDs.isEmpty || model.show.showMode)
         .help(model.show.showMode ? "Locked in Show Mode" : "Add to a service as an item of its own, already matched")
     }
 
@@ -51,7 +53,7 @@ struct AddToServiceMenu: View {
     }
 
     static func name(_ plan: ServicePlan) -> String {
-        "\(plan.dates.isEmpty ? plan.title : plan.dates) · \(plan.serviceTypeName)"
+        "\(plan.dates.isEmpty ? plan.title : plan.dates) · \(plan.isManual ? plan.title : plan.serviceTypeName)"
     }
 
     private struct CueSection {

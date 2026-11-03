@@ -124,7 +124,7 @@ private struct CueListPanel: View {
             if show.cues.isEmpty {
                 ContentUnavailableView(
                     "No Service Loaded", systemImage: "list.bullet.rectangle",
-                    description: Text("Open a service, confirm its matches, then choose Load Service.")
+                    description: Text("Open a service, give each item its track, then choose Load Service.")
                 )
             }
         }

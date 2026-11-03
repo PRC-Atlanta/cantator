@@ -16,6 +16,8 @@ These could not be tested in development.
 - **Keyboard control.** Key handling in the real window has not been exercised. Debug self-checks call the same controller directly. Confirm each key, and confirm that Stream Deck hotkeys arrive.
 - **Sleep prevention and system sound moves.** The sound guard's logic is unit tested with a fake. Neither has run against the live system settings.
 - **Sidebar and inspector appearance.** The self-capture cannot draw macOS glass materials, so these were not visually checked.
+- **Building a service.** New Service…, the editor's typed titles, Add Item and Add Section, the arrow buttons, Looks Like and Use, Duplicate, Save as Template and Delete were built against the model and compile, and the model is unit tested. Dragging a row onto another to reorder uses the Table's row drag with a string payload, the same mechanism as dragging a library track onto a service; confirm it works on the real rig. Confirm that clicking the outputs row at the bottom of the sidebar opens Settings on Outputs: it sends the standard `showSettingsWindow:` action.
+- **The first launch.** The Welcome sheet shows only when settings.json has no `hasChosenServiceSource`. Run once with a fresh home to see it.
 
 ## Known limits
 

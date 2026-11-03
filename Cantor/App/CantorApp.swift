@@ -84,6 +84,9 @@ private struct ImportMenu: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        Button("New Service…") { model.startNewService() }
+            .keyboardShortcut("n")
+            .disabled(model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
         Button("Import Audio…") { ImportButton.choose(model) }
             .keyboardShortcut("i")
             .disabled(!model.canImport)

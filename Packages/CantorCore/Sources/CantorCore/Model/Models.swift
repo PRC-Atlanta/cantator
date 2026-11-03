@@ -458,6 +458,87 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
 
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
 
+    // MARK: Services built in Cantator
+
+    /// The service type of every service built in Cantator. Planning Center ids are numbers, so this can't collide.
+    public static let manualServiceTypeID = "cantator"
+
+    /// Built in Cantator, not read from Planning Center. Every cue in it is manual.
+    public var isManual: Bool { serviceTypeID == Self.manualServiceTypeID }
+
+    /// A new, empty service for a date. `title` is what the operator calls it, such as "Sunday Morning".
+    public static func manual(title: String, date: Date, cues: [ServiceCue] = [], now: Date = Date()) -> ServicePlan {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var plan = ServicePlan(
+            id: "manual-\(UUID().uuidString)", serviceTypeID: manualServiceTypeID, serviceTypeName: name.isEmpty ? "Service" : name,
+            title: name.isEmpty ? "Service" : name, dates: dateLabel(date), sortDate: date, serviceTimes: [date], syncedAt: now
+        )
+        plan.cues = numbered(cues)
+        return plan
+    }
+
+    /// "Sun, Nov 8, 2026", so a hand-built service reads like a synced one in the sidebar.
+    public static func dateLabel(_ date: Date) -> String {
+        date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+    }
+
+    /// An item or section added by hand. Items run on a track until the operator says otherwise.
+    public static func manualCue(title: String, header: Bool = false, notes: String = "", needsPlayback: Bool = true) -> ServiceCue {
+        var cue = ServiceCue(
+            id: "\(header ? "header" : "manual")-\(UUID().uuidString)", position: 0, title: title,
+            itemType: header ? "header" : "item", notes: notes, needsPlayback: header ? false : needsPlayback, isManual: true
+        )
+        cue.operatorNeeds = header ? nil : needsPlayback
+        return cue
+    }
+
+    /// This service's order for another date: sections and items with new ids and no tracks, so
+    /// last week's song can't play by mistake.
+    public func copyingOrder(title: String, date: Date, now: Date = Date()) -> ServicePlan {
+        Self.manual(title: title, date: date, cues: orderedCues.map { cue in
+            Self.manualCue(title: cue.title, header: cue.itemType == "header", notes: cue.notes, needsPlayback: cue.needsPlayback)
+        }, now: now)
+    }
+
+    /// A template's order as fresh cues.
+    public static func cues(from template: ServiceTemplate) -> [ServiceCue] {
+        numbered(template.items.map { manualCue(title: $0.title, header: $0.isHeader, notes: $0.notes, needsPlayback: $0.needsPlayback) })
+    }
+
+    /// Moves a cue one place up (-1) or down (+1). Returns false at either end.
+    @discardableResult
+    public mutating func move(_ id: CueID, by offset: Int) -> Bool {
+        var ordered = orderedCues
+        guard let index = ordered.firstIndex(where: { $0.id == id }), ordered.indices.contains(index + offset) else { return false }
+        ordered.swapAt(index, index + offset)
+        cues = Self.numbered(ordered)
+        return true
+    }
+
+    /// Moves a cue to a point in the service, as a drag does. Dropping a cue on itself changes nothing.
+    public mutating func move(_ id: CueID, to point: InsertPoint) {
+        if case .after(let target) = point, target == id { return }
+        guard let moved = cues.first(where: { $0.id == id }) else { return }
+        cues.removeAll { $0.id == id }
+        insert([moved], at: point)
+    }
+
+    public mutating func remove(_ id: CueID) {
+        cues.removeAll { $0.id == id }
+        cues = Self.numbered(orderedCues)
+    }
+
+    /// Services built in Cantator leave the sidebar `keepWeeks` after their date, except the loaded
+    /// one. 0 keeps them forever. Synced services are kept or dropped by the sync.
+    public static func pruningPastManual(_ plans: [ServicePlan], keepWeeks: Int, loadedID: String?, now: Date = Date()) -> [ServicePlan] {
+        guard keepWeeks > 0 else { return plans }
+        let cutoff = now.addingTimeInterval(-Double(keepWeeks) * 7 * 24 * 3600)
+        return plans.filter { plan in
+            guard plan.isManual, plan.id != loadedID, let date = plan.sortDate else { return true }
+            return date >= cutoff
+        }
+    }
+
     /// Enough of the plan to read it again on its own. The item count is unknown, so a short read
     /// isn't caught; the connector's own page tokens still have to run out.
     public var summary: PlanSummary {
@@ -496,7 +577,8 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             // arrangement of the same title, so it waits for the operator. A file the operator chose
             // for this same song before still goes on: Planning Center lengths are often placeholders.
             // A file remembered only by title always waits.
-            guard cue.needsPlayback, cue.trackID == nil, !cue.matchCleared, !cue.removedInPCO,
+            // An item typed by hand waits for the operator too: they are choosing its track, not confirming a plan's.
+            guard cue.needsPlayback, cue.trackID == nil, !cue.matchCleared, !cue.removedInPCO, !cue.isManual,
                   MatchBand(candidates: cue.candidates) == .proposed, let top = cue.candidates.first,
                   top.source != .rememberedTitle, !top.durationMismatch || top.source == .remembered
             else { continue }
@@ -540,9 +622,9 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
 
     public var hasOperatorWork: Bool { cues.contains { $0.trackID != nil || $0.isManual } }
 
-    /// Applies a sync. A plan missing from the sync stays if it is loaded, holds operator work and is
-    /// under two weeks old (Planning Center stops listing a plan as future once it starts), or was
-    /// chosen in the service picker and is still inside its window.
+    /// Applies a sync. A plan missing from the sync stays if it was built in Cantator, is loaded,
+    /// holds operator work and is under two weeks old (Planning Center stops listing a plan as future
+    /// once it starts), or was chosen in the service picker and is still inside its window.
     public static func applySync(existing: [ServicePlan], fresh: [ServicePlan], loadedID: String?, now: Date = Date()) -> [ServicePlan] {
         let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let synced = fresh.compactMap { plan in
@@ -553,7 +635,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         let pickerStart = PlanSummary.window(now: now).lowerBound
         let kept = existing.filter { plan in
             guard !freshIDs.contains(plan.id) else { return false }
-            if plan.id == loadedID { return true }
+            if plan.isManual || plan.id == loadedID { return true }
             if plan.picked { return (plan.sortDate ?? now) >= pickerStart }
             return plan.hasOperatorWork && (plan.sortDate ?? now) >= cutoff
         }
@@ -798,6 +880,67 @@ public enum PlanningCenterSource: String, Codable, CaseIterable, Sendable {
     case token
 }
 
+/// Where services come from. Standalone needs no account: services are built in Cantator.
+public enum ServiceSource: String, Codable, CaseIterable, Sendable {
+    case standalone
+    case planningCenter
+}
+
+/// What happens when a new audio file arrives in a watched folder.
+public enum NewFileHandling: String, Codable, CaseIterable, Sendable {
+    /// The New File pop-up, once nothing is loaded or playing.
+    case ask
+    /// Files wait under New Files in the sidebar for a week, then are just library tracks.
+    case quiet
+}
+
+/// A service order saved to start new services from: sections and item titles, never tracks.
+public struct ServiceTemplate: Codable, Equatable, Identifiable, Sendable {
+    public struct Item: Codable, Equatable, Sendable {
+        public var title: String
+        public var isHeader: Bool
+        public var needsPlayback: Bool
+        public var notes: String
+
+        public init(title: String, isHeader: Bool = false, needsPlayback: Bool = true, notes: String = "") {
+            self.title = title
+            self.isHeader = isHeader
+            self.needsPlayback = needsPlayback
+            self.notes = notes
+        }
+    }
+
+    public var id: UUID
+    public var name: String
+    public var items: [Item]
+    public var savedAt: Date
+
+    public init(id: UUID = UUID(), name: String, items: [Item], savedAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.items = items
+        self.savedAt = savedAt
+    }
+
+    /// The plan's order without its tracks.
+    public init(plan: ServicePlan, name: String, now: Date = Date()) {
+        self.init(
+            name: name,
+            items: plan.orderedCues.map { cue in
+                Item(title: cue.title, isHeader: cue.itemType == "header", needsPlayback: cue.needsPlayback, notes: cue.notes)
+            },
+            savedAt: now
+        )
+    }
+
+    /// "3 sections, 6 items"
+    public var summary: String {
+        let headers = items.filter(\.isHeader).count
+        let count = items.count - headers
+        return "\(headers) \(headers == 1 ? "section" : "sections"), \(count) \(count == 1 ? "item" : "items")"
+    }
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public var routing = OutputRouting()
     public var folders: [String] = AppSettings.defaultFolders()
@@ -809,7 +952,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var llmModel = ""
     /// Empty looks in the usual install locations.
     public var claudePath = ""
-    public var llmEnabled = true
+    /// Off for a fresh install. Settings saved before this choice existed read as on, since Claude was always on then.
+    public var llmEnabled = false
+    /// Standalone for a fresh install. Settings saved before the choice existed read as Planning Center.
+    public var serviceSource = ServiceSource.standalone
+    /// False until the operator has answered the first-launch question. Older settings read as answered.
+    public var hasChosenServiceSource = false
+    public var newFileHandling = NewFileHandling.ask
+    /// How long services built in Cantator stay in the sidebar once they are over. 0 keeps them forever.
+    public var keepPastServicesWeeks = 8
+    public var templates: [ServiceTemplate] = []
     /// How Planning Center is read. The token is used whenever the connector can't be.
     public var planningCenterSource = PlanningCenterSource.connector
     public var isolateSystemSound = true
@@ -839,7 +991,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         normalize = try c.decodeIfPresent(Bool.self, forKey: .normalize) ?? normalize
         llmModel = try c.decodeIfPresent(String.self, forKey: .llmModel) ?? llmModel
         claudePath = try c.decodeIfPresent(String.self, forKey: .claudePath) ?? claudePath
-        llmEnabled = try c.decodeIfPresent(Bool.self, forKey: .llmEnabled) ?? llmEnabled
+        llmEnabled = try c.decodeIfPresent(Bool.self, forKey: .llmEnabled) ?? true
+        serviceSource = (try? c.decodeIfPresent(ServiceSource.self, forKey: .serviceSource)) ?? .planningCenter
+        hasChosenServiceSource = try c.decodeIfPresent(Bool.self, forKey: .hasChosenServiceSource) ?? true
+        newFileHandling = (try? c.decodeIfPresent(NewFileHandling.self, forKey: .newFileHandling)) ?? newFileHandling
+        keepPastServicesWeeks = try c.decodeIfPresent(Int.self, forKey: .keepPastServicesWeeks) ?? keepPastServicesWeeks
+        templates = try c.decodeIfPresent([ServiceTemplate].self, forKey: .templates) ?? templates
         planningCenterSource = (try? c.decodeIfPresent(PlanningCenterSource.self, forKey: .planningCenterSource)) ?? planningCenterSource
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
@@ -852,6 +1009,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// A service of a hidden type stays in the sidebar when it was picked by hand.
     public func hides(_ plan: ServicePlan) -> Bool {
         skippedServiceTypeIDs.contains(plan.serviceTypeID) && !plan.picked
+    }
+
+    public var usesPlanningCenter: Bool { serviceSource == .planningCenter }
+
+    /// The first-launch answer. Picking Planning Center turns Claude on, as it always was; building
+    /// services here leaves it off until the operator wants it.
+    public mutating func chooseServiceSource(_ source: ServiceSource) {
+        serviceSource = source
+        hasChosenServiceSource = true
+        llmEnabled = source == .planningCenter
     }
 
     /// Remembers the names of the service types in a sync or a picker list. Types are never

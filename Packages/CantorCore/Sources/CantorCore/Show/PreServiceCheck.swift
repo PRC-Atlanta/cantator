@@ -150,7 +150,7 @@ public enum PreServiceCheck {
             add(.warning, .systemSoundOnHouse, nil, "macOS sounds can reach the house output", "Connect a second output so Cantator can move alerts off the house.")
         }
 
-        if !input.plan.cues.allSatisfy(\.isManual), input.now.timeIntervalSince(input.plan.syncedAt) > staleAfter {
+        if !input.plan.isManual, !input.plan.cues.allSatisfy(\.isManual), input.now.timeIntervalSince(input.plan.syncedAt) > staleAfter {
             add(.warning, .staleSync, nil, "Planning Center data is more than 12 hours old", "Refresh while you have internet.")
         }
         if input.isOnBattery {

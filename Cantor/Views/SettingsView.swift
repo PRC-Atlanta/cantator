@@ -2,16 +2,117 @@ import AppKit
 import CantorCore
 import SwiftUI
 
+enum SettingsTab: Hashable {
+    case outputs, playback, services, folders, planningCenter, claude
+}
+
+/// Planning Center and Claude get a pane only while they are in use, chosen in Services.
 struct SettingsView: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
-        TabView {
-            OutputsSettings().tabItem { Label("Outputs", systemImage: "hifispeaker.2") }
-            PlaybackSettings().tabItem { Label("Playback", systemImage: "slider.horizontal.3") }
-            PlanningCenterSettings().tabItem { Label("Planning Center", systemImage: "calendar") }
-            ClaudeSettings().tabItem { Label("Claude", systemImage: "sparkle.magnifyingglass") }
-            FolderSettings().tabItem { Label("Folders", systemImage: "folder") }
+        @Bindable var model = model
+        TabView(selection: $model.settingsTab) {
+            OutputsSettings().tabItem { Label("Outputs", systemImage: "hifispeaker.2") }.tag(SettingsTab.outputs)
+            PlaybackSettings().tabItem { Label("Playback", systemImage: "slider.horizontal.3") }.tag(SettingsTab.playback)
+            ServicesSettings().tabItem { Label("Services", systemImage: "calendar.badge.plus") }.tag(SettingsTab.services)
+            FolderSettings().tabItem { Label("Folders", systemImage: "folder") }.tag(SettingsTab.folders)
+            if model.settings.usesPlanningCenter {
+                PlanningCenterSettings().tabItem { Label("Planning Center", systemImage: "calendar") }.tag(SettingsTab.planningCenter)
+            }
+            if model.settings.llmEnabled {
+                ClaudeSettings().tabItem { Label("Claude", systemImage: "sparkle.magnifyingglass") }.tag(SettingsTab.claude)
+            }
         }
-        .frame(width: 560, height: 520)
+        .frame(width: 560, height: 560)
+        .onChange(of: model.settings.usesPlanningCenter) { _, uses in
+            if !uses, model.settingsTab == .planningCenter { model.settingsTab = .services }
+        }
+        .onChange(of: model.settings.llmEnabled) { _, enabled in
+            if !enabled, model.settingsTab == .claude { model.settingsTab = .services }
+        }
+    }
+}
+
+/// Where services come from, whether Claude helps, what happens to new files, and the templates.
+private struct ServicesSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Services come from", selection: Binding(
+                    get: { model.settings.serviceSource },
+                    set: { value in model.updateSettings { $0.serviceSource = value } }
+                )) {
+                    Text("Built in Cantator").tag(ServiceSource.standalone)
+                    Text("Planning Center").tag(ServiceSource.planningCenter)
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text(model.settings.usesPlanningCenter
+                    ? "Sync plans from your Planning Center account and match their items to your files. Adds Choose Service… and the sync button to the sidebar, and the Planning Center pane here. Services can still be built by hand."
+                    : "No accounts and nothing leaves this Mac. New Service… in the sidebar builds a service, blank, from another service's order or from a template; tracks come from the Library. Planning Center stays out of the way.")
+            }
+            Section {
+                Toggle("Use Claude to file new files and rank ambiguous matches", isOn: Binding(
+                    get: { model.settings.llmEnabled },
+                    set: { value in model.updateSettings { $0.llmEnabled = value } }
+                ))
+            } header: {
+                Text("Claude (optional)")
+            } footer: {
+                Text("Works with services built here or synced. Uses the Claude account that Claude Code on this Mac is signed in to, and counts toward its usage. Claude gets file names, folder names, durations and item titles, never paths or audio, and nothing it suggests is applied until you accept it. On, it adds the Claude pane here, its status at the bottom of the sidebar and Resolve Ambiguous in the Service toolbar. Off, Cantator guesses from names.")
+            }
+            Section {
+                Picker("New files", selection: Binding(
+                    get: { model.settings.newFileHandling },
+                    set: { value in model.updateSettings { $0.newFileHandling = value } }
+                )) {
+                    Text("Ask me about each one").tag(NewFileHandling.ask)
+                    Text("Add them to the library quietly").tag(NewFileHandling.quiet)
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text(model.settings.newFileHandling == .ask
+                    ? "A New File pop-up with a title and category guessed from the name, once no service is loaded and nothing is playing."
+                    : "Files wait under New Files in the sidebar for \(NewFileInbox.quietWaitDays) days, so you can title and file them when you have time. After that they are ordinary library tracks.")
+            }
+            Section {
+                if model.settings.templates.isEmpty {
+                    Text("None yet. Save any service as a template from its toolbar.").foregroundStyle(.secondary)
+                }
+                ForEach(model.settings.templates) { template in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(template.name)
+                            Text("\(template.summary) · saved \(template.savedAt.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Delete") { model.deleteTemplate(template.id) }
+                    }
+                }
+            } header: {
+                Text("Templates")
+            } footer: {
+                Text("A template keeps the sections and item titles, never the tracks.")
+            }
+            Section {
+                Picker("Keep past services for", selection: Binding(
+                    get: { model.settings.keepPastServicesWeeks },
+                    set: { value in model.updateSettings { $0.keepPastServicesWeeks = value } }
+                )) {
+                    Text("4 weeks").tag(4)
+                    Text("8 weeks").tag(8)
+                    Text("6 months").tag(26)
+                    Text("Forever").tag(0)
+                }
+            } footer: {
+                Text("Services built in Cantator fold under Past Services once they are over, then leave after this long. Their play history stays with the tracks. Synced services come and go with the sync.")
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 
@@ -255,7 +356,7 @@ struct ClaudeSettings: View {
                     Text(model.claudeConnection.detail).foregroundStyle(.secondary)
                 }
             } footer: {
-                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths or audio, and nothing is applied until you accept it. When Planning Center syncs through the Claude connector, Claude also reads service items' titles and descriptions there.")
+                Text("Uses the Claude account that Claude Code is signed in to, and counts toward that account's usage. No API key is used. Claude gets filenames, the two folders above each file, durations, embedded tags, category names and service item titles. It never gets paths or audio, and nothing is applied until you accept it. When Planning Center syncs through the Claude connector, Claude also reads service items' titles and descriptions there. Turning this off hides this pane; turn it on again in Services.")
             }
             Section("Usage") {
                 LabeledContent("In Use") {

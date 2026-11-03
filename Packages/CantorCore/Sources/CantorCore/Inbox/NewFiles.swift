@@ -86,6 +86,18 @@ public struct NewFileInbox: Codable, Equatable, Sendable {
     public mutating func reconcile(replaced: [UUID: UUID], existing: Set<UUID>) {
         items.removeAll { replaced[$0.trackID] != nil || !existing.contains($0.trackID) }
     }
+
+    /// How long a file waits under New Files when the operator chose not to be asked about each one.
+    public static let quietWaitDays = 7
+
+    /// Files found more than a week ago stop waiting. They stay in the library as they are.
+    @discardableResult
+    public mutating func dropStale(now: Date = Date()) -> Int {
+        let cutoff = now.addingTimeInterval(-Double(Self.quietWaitDays) * 24 * 3600)
+        let before = items.count
+        items.removeAll { $0.detectedAt < cutoff }
+        return before - items.count
+    }
 }
 
 public enum NewFileDetector {

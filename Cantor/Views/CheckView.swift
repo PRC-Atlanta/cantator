@@ -17,7 +17,9 @@ struct CheckView: View {
             if plan == nil {
                 ContentUnavailableView(
                     "No Service", systemImage: "checklist",
-                    description: Text("Add your Planning Center token in Settings and refresh.")
+                    description: Text(model.settings.usesPlanningCenter
+                        ? "Sync Planning Center, or create a service with New Service… in the sidebar."
+                        : "Create a service with New Service… in the sidebar, then come back here before it starts.")
                 )
             }
         }
