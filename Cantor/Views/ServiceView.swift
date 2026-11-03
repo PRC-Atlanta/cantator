@@ -103,7 +103,7 @@ struct ServiceView: View {
                     Label("More", systemImage: "ellipsis.circle")
                 }
                 .disabled(locked)
-            } else {
+            } else if model.settings.usesPlanningCenter {
                 Button {
                     model.refreshPlans(alsoRead: plan.id)
                 } label: {
@@ -365,17 +365,20 @@ private struct ManualStateChip: View {
 private struct ServiceInspector: View {
     @Environment(AppModel.self) private var model
     let plan: ServicePlan
+    // Typed here first, so the field can be emptied on the way to a new name without the old one
+    // snapping back. The service takes each non-blank name as it is typed.
+    @State private var name = ""
 
     var body: some View {
         Form {
             Section("Service") {
-                TextField("Name", text: Binding(
-                    get: { plan.title },
-                    set: { model.updateManualPlan(planID: plan.id, title: $0, date: plan.sortDate ?? Date()) }
-                ))
+                TextField("Name", text: $name)
+                    .onAppear { name = plan.title }
+                    .onChange(of: plan.id) { name = plan.title }
+                    .onChange(of: name) { model.renameManualPlan(planID: plan.id, title: name) }
                 DatePicker("Date", selection: Binding(
                     get: { plan.sortDate ?? Date() },
-                    set: { model.updateManualPlan(planID: plan.id, title: plan.title, date: $0) }
+                    set: { model.moveManualPlan(planID: plan.id, to: $0) }
                 ))
                 let items = plan.cues.filter { $0.itemType != "header" }
                 LabeledContent("Items", value: "\(items.count), \(items.filter(\.needsPlayback).count) on tracks")

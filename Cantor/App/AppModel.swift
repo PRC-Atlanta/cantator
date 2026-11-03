@@ -35,7 +35,11 @@ final class AppModel {
     var makingLocal: Set<UUID> = []
     var unreadableFiles: [String] = []
     var systemSoundStuckOnHouse = false
-    var inbox: NewFileInbox
+    // However the last waiting file leaves, answered, excluded, folded into a track or dropped as
+    // stale, the review the operator opened from New Files is over, so quiet handling stays quiet.
+    var inbox: NewFileInbox {
+        didSet { if inbox.ready.isEmpty { reviewingNewFiles = false } }
+    }
     var isClassifying = false
     var claudeConnection = ClaudeConnection.checking
     /// What Claude is doing right now, if anything.
@@ -262,6 +266,7 @@ final class AppModel {
         let previousFolders = settings.folders
         let previousRouting = settings.routing
         let previousClaude = (settings.llmEnabled, settings.claudePath)
+        let previousKeep = settings.keepPastServicesWeeks
         change(&settings)
         if settings.routing.houseDeviceUID != previousRouting.houseDeviceUID || settings.routing.cueDeviceUID != previousRouting.cueDeviceUID {
             settings.routing.fitPairs(deviceChannels: Dictionary(devices.map { ($0.uid, $0.outputChannels) }, uniquingKeysWith: { a, _ in a }))
@@ -282,6 +287,16 @@ final class AppModel {
         }
         if settings.newFileHandling == .quiet, inbox.dropStale() > 0 { scheduleSave() }
         if !settings.usesPlanningCenter { showingServicePicker = false }
+        if settings.keepPastServicesWeeks != previousKeep { prunePastServices() }
+    }
+
+    /// Past services built here leave as soon as the keep-for setting is shortened, not at the next launch.
+    private func prunePastServices() {
+        let kept = ServicePlan.pruningPastManual(plans, keepWeeks: settings.keepPastServicesWeeks, loadedID: loadedPlanID)
+        guard kept.count != plans.count else { return }
+        if case .plan(let id) = selection, !kept.contains(where: { $0.id == id }) { selection = .show }
+        plans = kept
+        scheduleSave()
     }
 
     /// The first-launch answer, also changeable in Settings > Services.
@@ -659,7 +674,7 @@ final class AppModel {
     /// lines turn on and strong matches land at once. `alsoRead` is a service the sync may not cover,
     /// such as a past one, read on its own afterwards.
     func refreshPlans(alsoRead planID: String? = nil) {
-        guard !isSyncing, !show.showMode, !isLoadingService else { return }
+        guard settings.usesPlanningCenter, !isSyncing, !show.showMode, !isLoadingService else { return }
         rematchAllPlans()
         isSyncing = true
         Task {
@@ -1115,14 +1130,19 @@ final class AppModel {
         scheduleRank()
     }
 
-    /// Renames a service built in Cantator, or moves it to another date.
-    func updateManualPlan(planID: String, title: String, date: Date) {
+    /// Renames a service built in Cantator. A blank name is not a name, so it changes nothing.
+    func renameManualPlan(planID: String, title: String) {
         guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }), plans[index].isManual else { return }
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty {
-            plans[index].title = name
-            plans[index].serviceTypeName = name
-        }
+        guard !name.isEmpty, name != plans[index].title else { return }
+        plans[index].title = name
+        plans[index].serviceTypeName = name
+        scheduleSave()
+    }
+
+    /// Moves a service built in Cantator to another date.
+    func moveManualPlan(planID: String, to date: Date) {
+        guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }), plans[index].isManual else { return }
         plans[index].dates = ServicePlan.dateLabel(date)
         plans[index].sortDate = date
         plans[index].serviceTimes = [date]
@@ -1493,8 +1513,10 @@ final class AppModel {
         exclude(ids)
     }
 
-    /// Takes the tracks out of every service, then excludes them. Items added by hand, and removed
-    /// items kept only for their file, go; Planning Center's items stay, unmatched.
+    /// Takes the tracks out of every service, then excludes them. In a synced service, items added by
+    /// hand and removed items kept only for their file go, while Planning Center's items stay,
+    /// unmatched. Items of a service built here are the operator's: they keep their title and notes
+    /// and only lose the track.
     func confirmExclusion(_ pending: PendingExclusion) {
         pendingExclusion = nil
         guard !show.showMode else { return }
@@ -1504,7 +1526,9 @@ final class AppModel {
         }
         let uses = { (cue: ServiceCue) in cue.trackID.map(pending.trackIDs.contains) ?? false }
         for planIndex in plans.indices {
-            plans[planIndex].cues.removeAll { uses($0) && ($0.isManual || $0.removedInPCO) }
+            if !plans[planIndex].isManual {
+                plans[planIndex].cues.removeAll { uses($0) && ($0.isManual || $0.removedInPCO) }
+            }
             for cueIndex in plans[planIndex].cues.indices where uses(plans[planIndex].cues[cueIndex]) {
                 plans[planIndex].cues[cueIndex].trackID = nil
                 plans[planIndex].cues[cueIndex].changedSinceConfirm = false
@@ -1528,9 +1552,9 @@ final class AppModel {
             .map { "\($0.dates.isEmpty ? $0.title : $0.dates) (\($0.serviceTypeName))" }
         let names = services.joined(separator: ", ")
         if inUse.count == 1, let title = inUse.first.flatMap({ library.track(id: $0)?.title }) {
-            return "“\(title)” is used in \(names). Marking it Not a Playback takes it out of \(services.count == 1 ? "that service" : "those services")."
+            return "“\(title)” is used in \(names). Marking it Not a Playback takes it off \(services.count == 1 ? "that service" : "those services")."
         }
-        return "\(inUse.count) of these tracks are used in \(names). Marking them Not a Playback takes them out of \(services.count == 1 ? "that service" : "those services")."
+        return "\(inUse.count) of these tracks are used in \(names). Marking them Not a Playback takes them off \(services.count == 1 ? "that service" : "those services")."
     }
 
     func keepTracks(_ ids: Set<UUID>) {

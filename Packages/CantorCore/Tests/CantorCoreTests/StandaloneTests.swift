@@ -45,7 +45,7 @@ final class StandaloneSettingsTests: XCTestCase {
 }
 
 final class ManualServiceTests: XCTestCase {
-    private let sunday = Date(timeIntervalSince1970: 1_794_306_600) // Sun Nov 8 2026, 10:30 local-ish
+    private let sunday = Date(timeIntervalSince1970: 1_794_151_800) // Sun Nov 8 2026, 10:30 EST
 
     private func built() -> ServicePlan {
         var choir = ServicePlan.manualCue(title: "Choir: Total Praise")
