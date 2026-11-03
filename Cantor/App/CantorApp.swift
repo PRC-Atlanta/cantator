@@ -18,6 +18,7 @@ struct CantorApp: App {
                 .windowDismissBehavior(model.show.showMode || model.show.state.holdsHouseEngine ? .disabled : .automatic)
                 .onAppear {
                     delegate.model = model
+                    delegate.updates.model = model
                     KeyRouter.shared.install(model: model)
                     model.start()
                     #if DEBUG
@@ -27,6 +28,7 @@ struct CantorApp: App {
         }
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
+            CommandGroup(after: .appInfo) { UpdatesMenu(updates: delegate.updates).environment(model) }
             CommandGroup(replacing: .newItem) { ImportMenu().environment(model) }
             CommandMenu("Transport") { TransportMenu().environment(model) }
             CommandGroup(after: .sidebar) { ShowModeMenu().environment(model) }
@@ -60,6 +62,7 @@ struct CantorApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    @MainActor let updates = Updates()
 
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -78,6 +81,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+private struct UpdatesMenu: View {
+    @Environment(AppModel.self) private var model
+    let updates: Updates
+
+    var body: some View {
+        Button("Check for Updates…") { updates.checkForUpdates() }
+            .disabled(!updates.canCheck || updates.showIsBusy)
+    }
 }
 
 private struct ImportMenu: View {
