@@ -450,7 +450,7 @@ final class ShowControllerTests: XCTestCase {
         show.movePointer(by: 1)
         XCTAssertNil(show.playNow(cue("x")))
         XCTAssertEqual(show.state, .live("x"))
-        XCTAssertTrue(show.showMode)
+        XCTAssertFalse(show.showMode)
         XCTAssertEqual(show.activeCue?.title, "x")
         XCTAssertEqual(show.cues.map(\.id), ["a", "b"])
         XCTAssertEqual(played, ["x"])
@@ -533,10 +533,14 @@ final class ShowControllerTests: XCTestCase {
         XCTAssertNil(show.activeCue)
     }
 
-    func testArmRefusedOutsideShowMode() {
+    func testArmAndGoWorkOutsideShowMode() {
         let show = controller()
-        XCTAssertEqual(show.arm(), .notInShowMode)
-        XCTAssertEqual(house.starts, 0)
+        XCTAssertNil(show.arm())
+        XCTAssertEqual(show.state, .armed("a"))
+        time += 1
+        show.go()
+        XCTAssertEqual(show.state, .live("a"))
+        XCTAssertFalse(show.showMode)
     }
 
     func testGoWithoutArmDoesNothing() {

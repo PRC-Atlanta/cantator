@@ -1,8 +1,8 @@
 import AppKit
 import CantorCore
 
-/// Sees every key before the responder chain. In Show Mode, keys aimed at the main window drive the
-/// transport and go nowhere else. A key for any other window, a sheet, a dialog or a text field is
+/// Sees every key before the responder chain. In the Show view, or anywhere in Show Mode, keys aimed
+/// at the main window drive the transport and go nowhere else. A key for any other window, a sheet, a dialog or a text field is
 /// left alone, so typing can never arm or start a cue. Esc is panic everywhere.
 @MainActor
 final class KeyRouter {
@@ -31,7 +31,7 @@ final class KeyRouter {
             return true
         }
 
-        guard show.showMode, !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+        guard show.showMode || model.selection == .show, !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
             return false
         }
         guard let window = event.window, window === mainWindow, window.attachedSheet == nil, NSApp.modalWindow == nil,

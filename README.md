@@ -167,7 +167,8 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 1. Choose **Load Service** to load every cue into memory.
 2. Open **Pre-Service Check** and clear everything under **Must Fix**.
 3. Plug in the Mac and keep the lid open. Closing the lid sleeps it.
-4. Press Command-Shift-L to enter Show Mode. This locks editing, except the EQ, and enables the house transport.
+4. Open **Show**. Arm and GO work there right away. Clicking anything else in the sidebar disarms an armed cue.
+5. To lock editing too, press Command-Shift-L for Show Mode. It locks everything except the EQ and keeps the sidebar closed.
 
 **During the service**
 

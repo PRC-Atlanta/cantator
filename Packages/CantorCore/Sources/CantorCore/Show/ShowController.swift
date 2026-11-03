@@ -23,12 +23,11 @@ public struct ShowCue: Identifiable, Sendable {
 }
 
 public enum ArmRefusal: Equatable, Sendable {
-    case notInShowMode, noCue, noHouseOutput, sameOutput, notLoaded(String), notIdle, deviceFailed(String), emptyRange(String)
+    case noCue, noHouseOutput, sameOutput, notLoaded(String), notIdle, deviceFailed(String), emptyRange(String)
     case showChanged(String)
 
     public var message: String {
         switch self {
-        case .notInShowMode: "Turn on Show Mode to arm."
         case .noCue: "No cue selected."
         case .noHouseOutput: "House output is not available."
         case .sameOutput: "House and cue must be different devices."
@@ -165,7 +164,6 @@ public final class ShowController {
     }
 
     private func attemptArm() -> ArmRefusal? {
-        guard showMode else { return .notInShowMode }
         guard case .idle = state else { return .notIdle }
         guard let cue = pointedCue else { return .noCue }
         return start(cue)
@@ -179,9 +177,8 @@ public final class ShowController {
 
     public var moment: Moment { Moment(state: state, showMode: showMode) }
 
-    /// Emergency: arms a track from outside the cue list and plays it at once. It skips the Show Mode
-    /// requirement and the arm-to-GO delay, then turns Show Mode on so F, P and the Show view's
-    /// buttons control it. Anything armed is disarmed first. It never cuts off a cue that is sounding.
+    /// Emergency: arms a track from outside the cue list and plays it at once, skipping the arm-to-GO
+    /// delay. Anything armed is disarmed first. It never cuts off a cue that is sounding.
     ///
     /// `pressedAt` is the show as it was when the operator asked. A track can take seconds to load,
     /// and if the operator armed a cue, entered Show Mode or a fault came in meanwhile, the request
@@ -206,7 +203,6 @@ public final class ShowController {
             notice = refusal.message
             return refusal
         }
-        showMode = true
         apply(.go)
         log?.record("play-now", cue: cue.title)
         if let track = cue.track { onPlayed?(track) }
@@ -271,7 +267,7 @@ public final class ShowController {
 
     /// `isRepeat` comes from the key event. A held key must never start a track.
     public func go(isRepeat: Bool = false) {
-        guard showMode, goGuard.allowsGo(at: clock(), isRepeat: isRepeat) else { return }
+        guard goGuard.allowsGo(at: clock(), isRepeat: isRepeat) else { return }
         let isNewStart: Bool
         switch state {
         case .armed: isNewStart = true
@@ -287,13 +283,12 @@ public final class ShowController {
     }
 
     public func hold() {
-        guard showMode, kernel?.phase != .fading else { return }
+        guard kernel?.phase != .fading else { return }
         apply(.hold)
         goGuard.noteArmed(at: clock())
     }
 
     public func fadeOut() {
-        guard showMode else { return }
         if case .fading = state, !stopping {
             // F during the automatic end fade: the operator is ending it now, and `]` must not undo that.
             startFade()

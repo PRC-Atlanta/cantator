@@ -594,6 +594,9 @@ final class AppModel {
             )
             if let refusal = show.playNow(cue, pressedAt: pressedAt) {
                 alert = refusal.message
+            } else {
+                // The Show view has the controls that stop it.
+                selection = .show
             }
         }
     }

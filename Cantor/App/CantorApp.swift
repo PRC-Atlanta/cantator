@@ -15,7 +15,7 @@ struct CantorApp: App {
                 .tint(Theme.neutralAccent)
                 .frame(minWidth: 1370, minHeight: 700)
                 .background(WindowCapture())
-                .windowDismissBehavior(model.show.showMode ? .disabled : .automatic)
+                .windowDismissBehavior(model.show.showMode || model.show.state.holdsHouseEngine ? .disabled : .automatic)
                 .onAppear {
                     delegate.model = model
                     KeyRouter.shared.install(model: model)
@@ -121,17 +121,17 @@ private struct TransportMenu: View {
 
     var body: some View {
         let show = model.show
-        Button("Arm Next Cue (A)") { show.arm() }.disabled(!show.showMode)
-        Button("Disarm (D)") { show.disarm() }.disabled(!show.showMode)
-        Button("GO (Space)") { show.go() }.disabled(!show.showMode)
+        Button("Arm Next Cue (A)") { show.arm() }
+        Button("Disarm (D)") { show.disarm() }
+        Button("GO (Space)") { show.go() }
         Divider()
-        Button("Hold (P)") { show.hold() }.disabled(!show.showMode)
-        Button("End of Song Fade (F)") { show.fadeOut() }.disabled(!show.showMode)
+        Button("Hold (P)") { show.hold() }
+        Button("End of Song Fade (F)") { show.fadeOut() }
         Button("Panic Fade (Esc)") { show.panicPressed() }.disabled(!show.state.holdsHouseEngine)
         Divider()
-        Button("Next Marker (M)") { show.jumpMarker(forward: true) }.disabled(!show.showMode)
-        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }.disabled(!show.showMode)
-        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }.disabled(!show.showMode)
-        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }.disabled(!show.showMode)
+        Button("Next Marker (M)") { show.jumpMarker(forward: true) }
+        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }
+        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }
+        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }
     }
 }

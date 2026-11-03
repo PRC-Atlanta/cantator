@@ -30,6 +30,10 @@ struct RootView: View {
             // The sidebar leads to text fields, so it stays closed in Show Mode.
             if model.show.showMode, value != .detailOnly { columns = .detailOnly }
         }
+        .onChange(of: model.selection) { _, item in
+            // Leaving the Show view lets go of an armed cue, so nothing waits on a GO no one can see.
+            if item != .show, case .armed = model.show.state { model.show.disarm() }
+        }
         .onChange(of: model.show.showMode) { _, locked in
             if locked {
                 model.showingServicePicker = false
@@ -57,8 +61,8 @@ struct RootView: View {
         } message: { pending in
             Text(pending.message)
         }
-        // An alert is a sheet, which would take the transport keys. Show Mode puts it in the Show view instead.
-        .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode }, set: { if !$0 { model.alert = nil } })) {
+        // An alert is a sheet, which would take the transport keys. The Show view shows it inline instead.
+        .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode && model.selection != .show }, set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.alert ?? "")

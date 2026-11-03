@@ -37,7 +37,7 @@ struct ShowView: View {
                 }
                 .toggleStyle(.button)
                 .disabled((show.cues.isEmpty || model.isLoadingService) && !show.showMode)
-                .help("Show Mode enables the house transport and locks editing (Command-Shift-L)")
+                .help("Show Mode locks editing, except the EQ, and closes the sidebar (Command-Shift-L)")
 
                 if model.loadedPlanID != nil {
                     Button("Unload") { model.unloadService() }
@@ -270,7 +270,7 @@ private struct NextCueLine: View {
                 Spacer()
                 Label(notice, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed).font(.system(size: 14, weight: .medium))
             }
-            if show.showMode, let alert = model.alert {
+            if let alert = model.alert {
                 Spacer()
                 Label(alert, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(Theme.armed)
@@ -291,11 +291,10 @@ private struct TransportButtons: View {
 
     var body: some View {
         let show = model.show
-        let enabled = show.showMode
         HStack(spacing: 8) {
-            control("Arm", "A", enabled && show.state == .idle) { show.arm() }
+            control("Arm", "A", show.state == .idle) { show.arm() }
             // Also clears a mid-track start while idle, like D.
-            control("Disarm", "D", isArmedOrHeld || (enabled && show.resumeSec != nil)) { show.disarm() }
+            control("Disarm", "D", isArmedOrHeld || show.resumeSec != nil) { show.disarm() }
             Spacer().frame(width: 34)
             control("GO", "Space", isArmedOrHeld) { show.go() }
             control("Hold", "P", isLive) { show.hold() }
@@ -309,7 +308,6 @@ private struct TransportButtons: View {
     }
 
     private var isArmedOrHeld: Bool {
-        guard model.show.showMode else { return false }
         switch model.show.state {
         case .armed, .held: return true
         default: return false
@@ -317,7 +315,7 @@ private struct TransportButtons: View {
     }
 
     private var isLive: Bool {
-        guard model.show.showMode, case .live = model.show.state else { return false }
+        guard case .live = model.show.state else { return false }
         return true
     }
 

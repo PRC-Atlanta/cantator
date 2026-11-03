@@ -67,7 +67,7 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 2. Selection never plays. Clicks, double-clicks, Return, and drag and drop have no audio effect anywhere in the app.
 3. The app launches idle. It never auto-arms, never auto-advances, and never auto-resumes after a device change or wake.
 4. `go` needs a cue armed for at least 300 ms, and key repeats are ignored. Arm and Go are different keys and different buttons.
-5. House transport needs Show Mode (Cmd-Shift-L; Cmd-L locks the screen on some Macs). In Show Mode, library and plan editing are off except the EQ, the sidebar stays closed and the window cannot be closed. Show Mode cannot be left and the app cannot quit silently while a cue is armed or live.
+5. The house transport works in the Show view, with or without Show Mode. Leaving the Show view through the sidebar disarms an armed cue. Show Mode (Cmd-Shift-L; Cmd-L locks the screen on some Macs) is an optional lock: library and plan editing are off except the EQ, the sidebar stays closed and the window cannot be closed. Show Mode cannot be left, the window cannot be closed and the app cannot quit silently while a cue is armed or live.
 6. Esc fades everything (1.5 s). Esc twice within 1 s stops hard. This works in every view and whether or not Show Mode is on.
 7. House device loss during playback stops immediately, retains position, and shows a red fault. Cantator never rebinds to another device by itself.
 8. House and cue must be different devices. Audition is unavailable until a cue device is set.
@@ -76,7 +76,7 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 11. If the Cantator window is not key while armed or live, the state bar says KEYS NOT FOCUSED.
 12. Cue-to-house level: static gain only, no limiter, no gain change while playing.
 
-## Keyboard (Show Mode)
+## Keyboard (Show view or Show Mode)
 
 | Key | Action |
 | --- | --- |
@@ -135,7 +135,7 @@ Dark by default with an adaptive light appearance. Color is used only for state.
 | House interface unplugged | Instant stop, FAULT with the reason, position kept. Re-arm is manual and shows where it will start. D clears it to start from the top. A loss during F or a panic keeps nothing, and a kept position inside the end fade is dropped at arm. |
 | Cue interface unplugged | Audition stops. Show continues. |
 | House output pair missing | Arm refuses and names the pair and the device's output count. Audio is never moved to another pair. |
-| Alert while in Show Mode | Shown in the Show view with Dismiss, never as a sheet, so the transport keys keep working. |
+| Alert while in the Show view or Show Mode | Shown in the Show view with Dismiss, never as a sheet, so the transport keys keep working. |
 | Service item removed in Planning Center | A confirmed cue is kept and marked removed, or moves to the one re-added item for the same song. |
 | Sample-rate change | Treated as device loss. |
 | Sleep | Power assertions while a service is loaded. Wake always returns idle. Check warns about battery power and lid close. |
