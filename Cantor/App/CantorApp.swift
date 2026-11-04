@@ -7,6 +7,14 @@ struct CantorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel()
 
+    init() {
+        // A sidebar wider than the width it opens at lays its contents out wider still, centered and
+        // cut off on the left (since 1.0), and macOS reopens a saved width wider than it was. Each
+        // launch starts from the column's own width instead, before any window opens. Dragging the
+        // sidebar wider still shows it.
+        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames main, SidebarNavigationSplitView")
+    }
+
     var body: some Scene {
         Window("Cantator", id: "main") {
             RootView()
@@ -63,10 +71,6 @@ struct CantorApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     @MainActor let updates = Updates()
-
-    /// Settings and the sidebar button need this much beside the window buttons, or they go to the
-    /// toolbar's overflow menu. Both views' sidebars have it as their minimum.
-    static let sidebarMinWidth: CGFloat = 200
 
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

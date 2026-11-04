@@ -12,62 +12,26 @@ struct SimpleRootView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             SimpleTagList()
-                // The column width alone isn't kept for the first of three columns.
-                .frame(minWidth: AppDelegate.sidebarMinWidth)
-                .navigationSplitViewColumnWidth(min: AppDelegate.sidebarMinWidth, ideal: 220, max: 260)
-                .toolbar(removing: .sidebarToggle)
-                .toolbar { OperatorModeToolbarItem(columns: $columns, collapsed: .doubleColumn, inSidebar: true) }
+                .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
+                .toolbar { OperatorModeToolbarItem() }
         } content: {
             SimpleSongList()
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 420)
         } detail: {
             SimpleShowView()
         }
-        .toolbar { OperatorModeToolbarItem(columns: $columns, collapsed: .doubleColumn, inSidebar: false) }
     }
 }
 
-/// Settings, the sidebar button and the switch below, in the title bar beside the window buttons, so
-/// they are on every screen of both views. The sidebar button is Cantor's own rather than the
-/// system's, which macOS keeps in a slot of its own, so it and Settings sit at icon spacing. The
-/// icons sit in the sidebar's part of the title bar while it is shown, and in the window's when it
-/// is hidden, since an item of a hidden sidebar goes to the overflow menu.
+/// Settings and the switch below, in the sidebar's part of the title bar beside the window buttons,
+/// so both are on every screen of both views. Settings sits before the system's sidebar button.
 struct OperatorModeToolbarItem: ToolbarContent {
-    @Binding var columns: NavigationSplitViewVisibility
-    /// What hiding the sidebar shows: the detail alone with two columns, two of three with three.
-    let collapsed: NavigationSplitViewVisibility
-    var showsSidebarButton = true
-    /// True on the sidebar column, false on the split view.
-    let inSidebar: Bool
-
     var body: some ToolbarContent {
-        let shown = columns != collapsed
-        if inSidebar {
-            if shown { ToolbarItem(placement: .automatic) { icons(shown: true) } }
-        } else {
-            if !shown { ToolbarItem(placement: .navigation) { icons(shown: false) } }
-            ToolbarItem(placement: .navigation) { OperatorModeToggle() }
-        }
-    }
-
-    /// One item, so the two icons sit at icon-button spacing rather than in two toolbar slots.
-    private func icons(shown: Bool) -> some View {
-        HStack(spacing: 11) {
+        ToolbarItem(placement: .automatic) {
             SettingsLink { Label("Settings", systemImage: "gearshape") }
                 .help("Settings (Command-,)")
-            if showsSidebarButton {
-                Button {
-                    withAnimation { columns = shown ? collapsed : .all }
-                } label: {
-                    Label(shown ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.left")
-                }
-                .help(shown ? "Hide Sidebar" : "Show Sidebar")
-            }
         }
-        .buttonStyle(.borderless)
-        .imageScale(.large)
-        .labelStyle(.iconOnly)
-        .frame(height: 28)
+        ToolbarItem(placement: .navigation) { OperatorModeToggle() }
     }
 }
 
