@@ -7,21 +7,16 @@ struct CantorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel()
 
-    init() {
-        // A sidebar wider than the width it opens at lays its contents out wider still, centered and
-        // cut off on the left (since 1.0), and macOS reopens a saved width wider than it was. Each
-        // launch starts from the column's own width instead, before any window opens. Dragging the
-        // sidebar wider still shows it.
-        UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames main, SidebarNavigationSplitView")
-    }
-
     var body: some Scene {
         Window("Cantator", id: "main") {
             RootView()
                 .environment(model)
                 .preferredColorScheme(colorScheme)
                 .tint(Theme.neutralAccent)
-                .frame(minWidth: 1370, minHeight: 700)
+                // The split views set the minimum width: the sidebar as wide as it is now, plus the
+                // narrowest the view beside it can be. A fixed width here held the window narrower
+                // than a widened sidebar needed.
+                .frame(minHeight: 700)
                 .background(WindowCapture())
                 .windowDismissBehavior(model.show.showMode || model.show.state.holdsHouseEngine ? .disabled : .automatic)
                 .onAppear {
