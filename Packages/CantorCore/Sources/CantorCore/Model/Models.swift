@@ -539,6 +539,13 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    /// The end of a window `weeks` weeks ahead of today: the start of the day after the same weekday
+    /// that many weeks out, so a service on that day still counts. Nil for 0, which ends nowhere.
+    public static func upcomingWindowEnd(weeks: Int, now: Date = Date(), calendar: Calendar = .current) -> Date? {
+        guard weeks > 0 else { return nil }
+        return calendar.date(byAdding: .day, value: 7 * weeks + 1, to: calendar.startOfDay(for: now))
+    }
+
     /// Enough of the plan to read it again on its own. The item count is unknown, so a short read
     /// isn't caught; the connector's own page tokens still have to run out.
     public var summary: PlanSummary {
@@ -990,6 +997,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var newFileHandling = NewFileHandling.ask
     /// How long services built in Cantator stay in the sidebar once they are over. 0 keeps them forever.
     public var keepPastServicesWeeks = 8
+    /// How many weeks ahead the sidebar lists services, counted from today so the window moves with
+    /// the date. 0 lists them all.
+    public var upcomingServicesWeeks = 0
     public var templates: [ServiceTemplate] = []
     public var isolateSystemSound = true
     public var appearance = "dark"
@@ -1025,6 +1035,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         hasChosenServiceSource = try c.decodeIfPresent(Bool.self, forKey: .hasChosenServiceSource) ?? true
         newFileHandling = (try? c.decodeIfPresent(NewFileHandling.self, forKey: .newFileHandling)) ?? newFileHandling
         keepPastServicesWeeks = try c.decodeIfPresent(Int.self, forKey: .keepPastServicesWeeks) ?? keepPastServicesWeeks
+        upcomingServicesWeeks = try c.decodeIfPresent(Int.self, forKey: .upcomingServicesWeeks) ?? upcomingServicesWeeks
         templates = try c.decodeIfPresent([ServiceTemplate].self, forKey: .templates) ?? templates
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance

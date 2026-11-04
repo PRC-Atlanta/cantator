@@ -175,3 +175,45 @@ final class ManualServiceTests: XCTestCase {
         XCTAssertEqual(inbox.items.count, 1)
     }
 }
+
+/// The sidebar's rolling window of upcoming services.
+final class UpcomingWindowTests: XCTestCase {
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        return calendar
+    }
+
+    private func date(_ day: Int, _ hour: Int = 10) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour))!
+    }
+
+    func testAllShowsEverything() {
+        XCTAssertNil(ServicePlan.upcomingWindowEnd(weeks: 0, now: date(4), calendar: calendar))
+    }
+
+    func testTwoWeeksTakesInTheWholeDayTwoWeeksOut() throws {
+        // Wednesday, November 4: two weeks reaches Wednesday the 18th, all of it, and not the 19th.
+        let end = try XCTUnwrap(ServicePlan.upcomingWindowEnd(weeks: 2, now: date(4, 15), calendar: calendar))
+        XCTAssertLessThan(date(18, 19), end)
+        XCTAssertLessThan(date(18, 23), end)
+        XCTAssertGreaterThanOrEqual(date(19, 0), end)
+        XCTAssertGreaterThanOrEqual(date(22), end, "the Sunday after is outside")
+    }
+
+    func testTheWindowMovesWithTheDate() throws {
+        // A week later, the Sunday that was outside comes in.
+        let end = try XCTUnwrap(ServicePlan.upcomingWindowEnd(weeks: 2, now: date(11), calendar: calendar))
+        XCTAssertLessThan(date(22), end)
+        XCTAssertLessThan(date(25, 19), end)
+        XCTAssertGreaterThanOrEqual(date(26, 0), end)
+    }
+
+    func testTheSettingDefaultsToAllAndIsSaved() throws {
+        XCTAssertEqual(AppSettings().upcomingServicesWeeks, 0)
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).upcomingServicesWeeks, 0)
+        var settings = AppSettings()
+        settings.upcomingServicesWeeks = 2
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings)).upcomingServicesWeeks, 2)
+    }
+}

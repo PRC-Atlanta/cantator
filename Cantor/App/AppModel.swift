@@ -1320,6 +1320,13 @@ final class AppModel {
         return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) >= today }
     }
 
+    /// The upcoming services inside the sidebar's rolling window, which moves on with the date. The
+    /// loaded service and one with no date always show.
+    var shownUpcomingPlans: [ServicePlan] {
+        guard let end = ServicePlan.upcomingWindowEnd(weeks: settings.upcomingServicesWeeks) else { return upcomingSidebarPlans }
+        return upcomingSidebarPlans.filter { ($0.sortDate.map { $0 < end } ?? true) || $0.id == loadedPlanID }
+    }
+
     var pastSidebarPlans: [ServicePlan] {
         let today = Calendar.current.startOfDay(for: Date())
         return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) < today }.reversed()

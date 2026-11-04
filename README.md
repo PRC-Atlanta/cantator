@@ -101,7 +101,9 @@ A service built here opens as an editor. **Add Item** and **Add Section** go aft
 
 The toolbar's **More** menu has **Duplicate for Next Week**, **Save as Template…** and **Delete Service…**. The name and date can be changed in the inspector when no item is selected. Once a service is over it folds under **Past Services** in the sidebar, where it can be opened again or copied, and leaves after eight weeks (**Settings > Services** changes that). **Load Service** works the same for every service.
 
-The bottom of the sidebar always shows the house and cue outputs, amber until both are set, connected and different. Clicking it opens **Settings > Outputs**.
+The filter button beside **Services** in the sidebar limits the list to the next one, two, three, four or eight weeks. The window is counted from today, so it moves on by itself: with two weeks chosen, the sidebar always shows today through the same weekday two weeks out, and a line under the list says how many later services are not shown. The loaded service always shows. **All Upcoming** shows every service again.
+
+Show and Pre-Service Check stay at the top of the sidebar and the library at the bottom, with only the services scrolling between them. Under it the sidebar always shows the house and cue outputs, amber until both are set, connected and different. Clicking it opens **Settings > Outputs**.
 
 ### Planning Center
 
@@ -131,7 +133,7 @@ Both values are stored only in the macOS Keychain.
 
 ### Claude (optional)
 
-Claude is its own switch in **Settings > Services**, in both modes: off by default when services are built here, on when Planning Center was chosen at first launch. Off, nothing about it is shown and Cantator guesses from names. On, the Claude pane, its status at the bottom of the sidebar and **Resolve Ambiguous** in the Service toolbar appear.
+Claude is its own switch in **Settings > Services**, in both modes: off by default when services are built here, on when Planning Center was chosen at first launch. Off, nothing about it is shown and Cantator guesses from names. On, the Claude pane and **Resolve Ambiguous** in the Service toolbar appear.
 
 Cantator uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
 
@@ -139,7 +141,7 @@ Cantator uses your Claude account, through Claude Code, for two things: filing n
 claude auth login
 ```
 
-The **Claude** section at the bottom of the sidebar always shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Click it to check again. Cantator also checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. **Settings > Claude** shows the same status, plus a Usage section: whether Claude is in use (and if not, why and what Cantator does instead), what it is doing right now, the last request with its time and result, and how many requests Cantator has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths or audio, and nothing it suggests is applied until you accept it. When Planning Center syncs through the connector, Claude also reads item titles and descriptions there. Without Claude, new files are guessed from their names and matching works by name.
+**Settings > Claude** shows whether Claude is connected, signed out, not found, turned off or at its usage limit, with what to do about it. Cantator checks at launch, when you switch back to it (for example after signing in in Terminal), every five minutes, and after every Claude request. It also has a Usage section: whether Claude is in use (and if not, why and what Cantator does instead), what it is doing right now, the last request with its time and result, and how many requests Cantator has made since it opened. No API key is involved, and requests count toward your Claude account's usage. Claude never gets file paths or audio, and nothing it suggests is applied until you accept it. When Planning Center syncs through the connector, Claude also reads item titles and descriptions there. Without Claude, new files are guessed from their names and matching works by name.
 
 ### Folders and new files
 

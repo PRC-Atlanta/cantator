@@ -1,22 +1,42 @@
 import CantorCore
+import Combine
 import SwiftUI
 
-/// The sidebar while preparing: a system sidebar list, so macOS draws the Liquid Glass panel, the
-/// selection and the row sizes, and the panel stays against the window's leading edge. Claude and
-/// the outputs sit in a bar pinned under the list, always in view.
+/// The sidebar while preparing: system sidebar lists, so macOS draws the Liquid Glass panel, the
+/// selection and the row sizes, and the panel stays against the window's leading edge. Only the
+/// services scroll: the service sits in a bar pinned above them, and the library and the outputs in
+/// one pinned under them, always in view.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Binding var selection: SidebarItem?
     @State private var pastOpen = false
+    /// Which services are upcoming, and inside the rolling window, depends on the date.
+    @State private var today = Date()
+    @State private var height: CGFloat = 0
 
     var body: some View {
+        let _ = today
         List(selection: $selection) {
-            serviceSection
             servicesSection
-            librarySection
         }
         .listStyle(.sidebar)
-        .sidebarBar { SidebarStatusBar() }
+        .sidebarBar(.top) {
+            PinnedSidebarList(selection: $selection) { serviceSection }
+        }
+        .sidebarBar(.bottom) {
+            VStack(spacing: 0) {
+                // Never more than half the sidebar, so a long tag list can't push the services out.
+                PinnedSidebarList(selection: $selection, maxHeight: max(height / 2, 120)) { librarySection }
+                OutputsStatusRow()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // The window rolls on at midnight even while nothing else changes.
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
+            today = Date()
+        }
     }
 
     private var serviceSection: some View {
@@ -40,7 +60,7 @@ struct SidebarView: View {
     }
 
     private var servicesSection: some View {
-        Section("Services") {
+        Section {
             let busy = model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService
             Button {
                 model.startNewService()
@@ -65,12 +85,22 @@ struct SidebarView: View {
                     UpdateServicesButton()
                 }
             }
-            ForEach(model.upcomingSidebarPlans) { plan in
+            let shown = model.shownUpcomingPlans
+            ForEach(shown) { plan in
                 planRow(plan)
             }
-            if model.upcomingSidebarPlans.isEmpty {
-                Text(model.sidebarPlans.isEmpty ? (model.plans.isEmpty ? "No services yet" : "None of the shown types") : "Nothing coming up")
+            let weeks = model.settings.upcomingServicesWeeks
+            if shown.isEmpty {
+                Text(model.sidebarPlans.isEmpty ? (model.plans.isEmpty ? "No services yet" : "None of the shown types")
+                    : model.upcomingSidebarPlans.isEmpty ? "Nothing coming up" : "Nothing in the \(UpcomingFilterMenu.name(weeks).lowercased())")
                     .foregroundStyle(.secondary)
+            }
+            let later = model.upcomingSidebarPlans.count - shown.count
+            if later > 0 {
+                Text("\(later) later \(later == 1 ? "service" : "services") not shown")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("The filter beside Services shows the \(UpcomingFilterMenu.name(weeks).lowercased()). Choose All Upcoming to see every service.")
             }
             let past = model.pastSidebarPlans
             if !past.isEmpty {
@@ -83,6 +113,12 @@ struct SidebarView: View {
                         .badge(past.count)
                         .help("Services already over. Open one to run it again or copy its order.")
                 }
+            }
+        } header: {
+            HStack(spacing: 4) {
+                Text("Services")
+                Spacer(minLength: 4)
+                UpcomingFilterMenu()
             }
         }
     }
@@ -110,6 +146,13 @@ struct SidebarView: View {
             libraryRow("Duplicates", "square.on.square", .duplicates, library.duplicateGroups.count)
             libraryRow("Excluded", "eye.slash", .excluded, library.excludedTracks.count)
         }
+    }
+
+    /// A count is left out at zero, as a badge is.
+    private func libraryRow(_ title: String, _ symbol: String, _ filter: LibraryFilter, _ count: Int) -> some View {
+        Label(title, systemImage: symbol)
+            .badge(count)
+            .tag(SidebarItem.library(filter))
     }
 
     /// The date, and the service type or a built service's name under it.
@@ -140,28 +183,70 @@ struct SidebarView: View {
         .tag(SidebarItem.plan(plan.id))
         .acceptsTracks(open: { selection = .plan(plan.id) }) { model.addTracks($0, to: plan.id, at: .end) }
     }
+}
 
-    /// A count is left out at zero, as a badge is.
-    private func libraryRow(_ title: String, _ symbol: String, _ filter: LibraryFilter, _ count: Int) -> some View {
-        Label(title, systemImage: symbol)
-            .badge(count)
-            .tag(SidebarItem.library(filter))
+/// How far ahead the sidebar lists services. The window is counted from today, so it moves on
+/// as the weeks pass: two weeks always means the next two weeks.
+private struct UpcomingFilterMenu: View {
+    @Environment(AppModel.self) private var model
+
+    static let choices = [0, 1, 2, 3, 4, 8]
+
+    static func name(_ weeks: Int) -> String {
+        switch weeks {
+        case 0: "All Upcoming"
+        case 1: "Next Week"
+        default: "Next \(weeks) Weeks"
+        }
+    }
+
+    var body: some View {
+        let weeks = model.settings.upcomingServicesWeeks
+        HStack(spacing: 4) {
+            if weeks > 0 {
+                Text(Self.name(weeks))
+            }
+            Menu {
+                Picker("Show", selection: Binding(
+                    get: { weeks },
+                    set: { value in model.updateSettings { $0.upcomingServicesWeeks = value } }
+                )) {
+                    ForEach(Self.choices, id: \.self) { choice in
+                        Text(Self.name(choice)).tag(choice)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: weeks > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(weeks > 0 ? "Showing services in the \(Self.name(weeks).lowercased()), counted from today" : "Show only the services in the next few weeks")
+            .accessibilityLabel("Filter Services")
+        }
     }
 }
 
-/// Claude, when it is on, and the house and cue outputs, pinned under the sidebar list.
-private struct SidebarStatusBar: View {
-    @Environment(AppModel.self) private var model
+/// A sidebar list pinned above or below the services, sharing their selection. As tall as its
+/// rows, so it does not scroll, up to `maxHeight`.
+private struct PinnedSidebarList<Content: View>: View {
+    @Binding var selection: SidebarItem?
+    var maxHeight: CGFloat = .infinity
+    @ViewBuilder var content: Content
+    /// Measured from the rows once the list lays them out.
+    @State private var contentHeight: CGFloat = 200
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if model.settings.llmEnabled {
-                ClaudeStatusRow()
-            }
-            OutputsStatusRow()
+        List(selection: $selection) {
+            content
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .listStyle(.sidebar)
+        .scrollDisabled(contentHeight <= maxHeight)
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+            contentHeight = height
+        }
+        .frame(height: min(contentHeight, maxHeight))
     }
 }
 
@@ -192,40 +277,6 @@ private struct UpdateServicesButton: View {
         guard !skipped.isEmpty else { return "Update services from Planning Center: all service types" }
         let types = model.knownServiceTypes.filter { !skipped.contains($0.id) }.map(\.name)
         return "Update services from Planning Center: \(types.isEmpty ? "no types are checked in Settings" : types.joined(separator: ", "))"
-    }
-}
-
-/// Claude status. Click to check again.
-private struct ClaudeStatusRow: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let connection = model.claudeConnection
-        HStack(alignment: .firstTextBaseline) {
-            Button {
-                model.refreshClaudeConnection()
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    ClaudeStatusLabel(connection: connection)
-                    if let hint = connection.hint {
-                        Text(hint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("\(connection.detail) Click to check again.")
-            SettingsLink {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .help("Claude settings")
-        }
-        .statusRowPadding()
     }
 }
 
@@ -312,18 +363,19 @@ private extension View {
 }
 
 extension View {
-    /// Pins `bar` under a sidebar list. On macOS 26 it is a bar the list scrolls under, with a hard
-    /// scroll edge so the rows never show through the status.
+    /// Pins `bar` above or under a sidebar list. On macOS 26 it is a bar the list scrolls under, with
+    /// a hard scroll edge so the rows never show through it.
     @ViewBuilder
-    func sidebarBar(@ViewBuilder _ bar: () -> some View) -> some View {
+    func sidebarBar(_ edge: VerticalEdge, @ViewBuilder _ bar: () -> some View) -> some View {
         if #available(macOS 26, *) {
-            safeAreaBar(edge: .bottom, spacing: 0, content: bar)
-                .scrollEdgeEffectStyle(.hard, for: .bottom)
+            safeAreaBar(edge: edge, spacing: 0, content: bar)
+                .scrollEdgeEffectStyle(.hard, for: edge == .top ? .top : .bottom)
         } else {
-            safeAreaInset(edge: .bottom, spacing: 0) {
+            safeAreaInset(edge: edge, spacing: 0) {
                 VStack(spacing: 0) {
-                    Divider()
+                    if edge == .bottom { Divider() }
                     bar()
+                    if edge == .top { Divider() }
                 }
                 .background(.bar)
             }
