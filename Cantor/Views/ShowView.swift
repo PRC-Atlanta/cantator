@@ -9,27 +9,12 @@ struct ShowView: View {
 
     var body: some View {
         let show = model.show
-        VStack(spacing: 0) {
-            StateBar()
-            Divider()
-            GeometryReader { geometry in
-                // The meters give up width first, then the cue list.
-                let listWidth = min(320, max(240, geometry.size.width - 1 - CurrentCuePanel.minWidth))
-                let meterSpace = geometry.size.width - 1 - listWidth - CurrentCuePanel.widthWithoutMeters
-                HStack(spacing: 0) {
-                    CueListPanel()
-                        .frame(width: listWidth)
-                    Divider()
-                    CurrentCuePanel(meterWidth: min(190, max(110, meterSpace / 2)))
-                }
-            }
-            Divider()
-            KeyLegend()
-        }
-        .frame(minWidth: Self.minWidth)
+        FullShowView()
+            .frame(minWidth: Self.minWidth)
         .background(Theme.showBackground)
         .navigationTitle(model.loadedPlan.map { $0.dates.isEmpty ? $0.title : $0.dates } ?? "Show")
         .toolbar {
+            ToolbarItem(placement: .principal) { OperatorModeToggle() }
             ToolbarItemGroup(placement: .primaryAction) {
                 Toggle(isOn: Binding(get: { show.showMode }, set: { show.setShowMode($0) })) {
                     Label("Show Mode", systemImage: show.showMode ? "lock.fill" : "lock.open")
@@ -49,7 +34,32 @@ struct ShowView: View {
     }
 }
 
-private struct StateBar: View {
+/// The Advanced view: the cue list with its pointer, the current cue's waveform, EQ, readouts and
+/// meters, and every key.
+private struct FullShowView: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            StateBar()
+            Divider()
+            GeometryReader { geometry in
+                // The meters give up width first, then the cue list.
+                let listWidth = min(320, max(240, geometry.size.width - 1 - CurrentCuePanel.minWidth))
+                let meterSpace = geometry.size.width - 1 - listWidth - CurrentCuePanel.widthWithoutMeters
+                HStack(spacing: 0) {
+                    CueListPanel()
+                        .frame(width: listWidth)
+                    Divider()
+                    CurrentCuePanel(meterWidth: min(190, max(110, meterSpace / 2)))
+                }
+            }
+            Divider()
+            KeyLegend()
+        }
+    }
+}
+
+/// Shared with the Simple Show view.
+struct StateBar: View {
     @Environment(AppModel.self) private var model
     @Environment(\.controlActiveState) private var activeState
 
@@ -62,11 +72,11 @@ private struct StateBar: View {
                 .font(.system(size: 40, weight: .heavy))
                 .labelStyle(.titleAndIcon)
                 .frame(minWidth: 250, alignment: .leading)
-            Text(show.activeCue?.title ?? show.pointedCue?.title ?? "No service loaded")
+            Text(model.frontCue?.title ?? (model.isSimple ? "No song picked" : "No service loaded"))
                 .font(.system(size: 22, weight: .semibold))
                 .lineLimit(1)
             Spacer()
-            if let cue = show.activeCue ?? show.pointedCue, let track = cue.track {
+            if let cue = model.frontCue, let track = cue.track {
                 VStack(alignment: .trailing, spacing: 0) {
                     Text("REMAINING").font(.system(size: 10, weight: .semibold)).opacity(0.7)
                     Text(TimeText.tenths(CurrentCuePanel.remaining(track, show: show)))
@@ -75,6 +85,8 @@ private struct StateBar: View {
                         .contentTransition(.identity)
                         .monospacedDigit()
                 }
+                // The time is never cut short; the title gives way first in the narrower Simple pane.
+                .fixedSize()
                 .accessibilityElement(children: .combine)
             }
             if activeState != .key, show.state.holdsHouseEngine {
@@ -88,9 +100,15 @@ private struct StateBar: View {
             }
             VStack(alignment: .trailing, spacing: 2) {
                 Label(model.deviceName(model.settings.routing.houseDeviceUID), systemImage: "hifispeaker.2")
-                Label(show.showMode ? "Show Mode on" : "Show Mode off", systemImage: show.showMode ? "lock.fill" : "lock.open")
+                if model.isSimple {
+                    Label("Simple view", systemImage: "square.grid.2x2")
+                } else {
+                    Label(show.showMode ? "Show Mode on" : "Show Mode off", systemImage: show.showMode ? "lock.fill" : "lock.open")
+                }
             }
             .font(.system(size: 13, weight: .medium))
+            .lineLimit(1)
+            .fixedSize()
         }
         .foregroundStyle(foreground)
         .padding(.horizontal, 20)
@@ -258,7 +276,8 @@ private extension View {
     }
 }
 
-private struct NextCueLine: View {
+/// Shared with the Simple Show view.
+struct NextCueLine: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -293,7 +312,7 @@ private struct TransportButtons: View {
     var body: some View {
         let show = model.show
         HStack(spacing: 8) {
-            control("Arm", "A", show.state == .idle) { show.arm() }
+            control("Arm", "A", show.state == .idle) { model.arm() }
             // Also clears a mid-track start while idle, like D.
             control("Disarm", "D", isArmedOrHeld || show.resumeSec != nil) { show.disarm() }
             Spacer().frame(width: 34)

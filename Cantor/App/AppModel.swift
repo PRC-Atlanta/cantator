@@ -69,8 +69,11 @@ final class AppModel {
         var trackID: UUID
         var fromSec: Double?
     }
-    /// The track Play Now is decoding before it starts.
+    /// The track Play Now, or the Simple view's Arm, is decoding before it starts.
     var playNowLoading: UUID?
+    /// The Simple view: the song picked in its list, and the tag its list is narrowed to.
+    var simpleTrackID: UUID?
+    var simpleTag: String?
 
     let show: ShowController
     let cueBus = CueBus()
@@ -634,6 +637,65 @@ final class AppModel {
     /// Emergency: plays a library track on the house output straight away, outside any service.
     /// The Show view takes over from there.
     func playNow(_ track: Track) {
+        engage(track, andGo: true)
+    }
+
+    // MARK: Simple view
+
+    var isSimple: Bool { settings.operatorMode == .simple }
+
+    /// The song the Simple view is on.
+    var simpleTrack: Track? { simpleTrackID.flatMap { library.track(id: $0) } }
+
+    /// The song the Simple view is on, as the cue its state bar and card describe. No buffer: the
+    /// one that plays is built when Arm is pressed, from the decoded audio.
+    var simpleCue: ShowCue? {
+        simpleTrack.map { ShowCue(id: "simple-\($0.id.uuidString)", title: $0.title, track: $0, buffer: nil, gainDb: gainDb(for: $0)) }
+    }
+
+    /// The cue the state bar names: the one engaged, else the one Arm would take.
+    var frontCue: ShowCue? { show.activeCue ?? (isSimple ? simpleCue : show.pointedCue) }
+
+    /// Picks a song in the Simple view and decodes it ahead, so Arm is instant. Selecting never plays.
+    func selectSimpleTrack(_ id: UUID?) {
+        simpleTrackID = id
+        preparePlayNow(simpleTrack)
+    }
+
+    /// Arm, from the A key, the Transport menu and the big button: the pointed cue in Advanced, the
+    /// picked song in Simple.
+    func arm() {
+        if isSimple {
+            guard let track = simpleTrack else {
+                alert = "Pick a song first."
+                return
+            }
+            engage(track, andGo: false)
+        } else {
+            show.arm()
+        }
+    }
+
+    /// Switches between the Advanced and Simple views. Refused while a cue is armed or playing, since
+    /// the two views arm different things, and it leaves Show Mode, which has nothing to lock in Simple.
+    func setOperatorMode(_ mode: OperatorMode) {
+        guard mode != settings.operatorMode else { return }
+        guard !show.state.holdsHouseEngine else {
+            alert = "Stop the cue before switching views."
+            return
+        }
+        if show.showMode, !show.setShowMode(false) { return }
+        stopAudition()
+        updateSettings { $0.operatorMode = mode }
+        selection = .show
+        if mode == .simple, simpleTrackID == nil || simpleTrack == nil {
+            selectSimpleTrack(library.playbackTracks.sorted { $0.title < $1.title }.first?.id)
+        }
+    }
+
+    /// Decodes a library track if it is not in RAM yet, then arms it outside the cue list, and plays
+    /// it at once for Play Now. The Show view, or the Simple view, has the controls from there.
+    private func engage(_ track: Track, andGo: Bool) {
         guard let file = track.bestFile() else {
             alert = "\(track.title) is not on this Mac yet."
             return
@@ -655,14 +717,18 @@ final class AppModel {
                 }
             }
             guard let buffer, playNowRequest == request else { return }
+            // A Simple arm that outlived the switch to Advanced would arm something that view
+            // never shows; the operator arms again from the cue list instead.
+            guard andGo || isSimple else { return }
             playNowCache = [track.id: buffer]
             // Edits made while it decoded are heard too.
             let current = library.track(id: track.id) ?? track
             let cue = ShowCue(
-                id: "play-now-\(request.uuidString)", title: current.title, track: current, buffer: buffer,
+                id: "\(andGo ? "play-now" : "simple")-\(request.uuidString)", title: current.title, track: current, buffer: buffer,
                 gainDb: gainDb(for: current)
             )
-            if let refusal = show.playNow(cue, pressedAt: pressedAt) {
+            let refusal = andGo ? show.playNow(cue, pressedAt: pressedAt) : show.armStandalone(cue, pressedAt: pressedAt)
+            if let refusal {
                 alert = refusal.message
             } else {
                 // The Show view has the controls that stop it.

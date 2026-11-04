@@ -18,24 +18,32 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView(columnVisibility: $columns) {
-            Group {
-                // Show Mode trades the sidebar's links, which lead to text fields, for the program.
-                if model.show.showMode {
-                    ProgramSidebar()
-                } else {
-                    SidebarView(selection: $model.selection)
+        Group {
+            if model.isSimple {
+                // The Simple view: library tags, songs, and the song on the right. The sheets and
+                // alerts below still belong to the window.
+                SimpleRootView()
+            } else {
+                NavigationSplitView(columnVisibility: $columns) {
+                    Group {
+                        // Show Mode trades the sidebar's links, which lead to text fields, for the program.
+                        if model.show.showMode {
+                            ProgramSidebar()
+                        } else {
+                            SidebarView(selection: $model.selection)
+                        }
+                    }
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                } detail: {
+                    detail
+                        .sheet(isPresented: $model.showingServicePicker) { ServicePickerSheet() }
+                }
+                .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
+                .onChange(of: columns) { _, value in
+                    // The program stays in view in Show Mode.
+                    if model.show.showMode, value != .all { columns = .all }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
-        } detail: {
-            detail
-                .sheet(isPresented: $model.showingServicePicker) { ServicePickerSheet() }
-        }
-        .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
-        .onChange(of: columns) { _, value in
-            // The program stays in view in Show Mode.
-            if model.show.showMode, value != .all { columns = .all }
         }
         .onChange(of: model.selection) { _, item in
             // Leaving the Show view lets go of an armed cue, so nothing waits on a GO no one can see.

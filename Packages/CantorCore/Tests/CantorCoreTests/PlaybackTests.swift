@@ -423,6 +423,32 @@ final class ShowControllerTests: XCTestCase {
         show.go()
     }
 
+    func testArmStandaloneLeavesTheTrackArmedForGo() {
+        let show = controller()
+        XCTAssertNil(show.arm(), "a cue from the list is armed first")
+        XCTAssertNil(show.armStandalone(cue("x")), "a library song replaces an armed cue, like Play Now")
+        XCTAssertEqual(show.state, .armed("x"))
+        XCTAssertEqual(show.activeCue?.id, "x")
+        XCTAssertEqual(show.nextIndex, 0, "the cue list's pointer is untouched")
+        XCTAssertEqual(played, [], "arming plays nothing")
+        show.go()
+        XCTAssertEqual(show.state, .armed("x"), "GO keeps its dwell after a standalone arm")
+        time += 1
+        show.go()
+        XCTAssertEqual(show.state, .live("x"))
+        XCTAssertEqual(played, ["x"])
+        XCTAssertEqual(show.armStandalone(cue("y")), .notIdle, "never over a song that is sounding")
+        XCTAssertEqual(show.state, .live("x"))
+        let stale = ShowController.Moment(state: .idle, showMode: false)
+        show.panicPressed()
+        time += 0.2
+        show.panicPressed()
+        XCTAssertEqual(show.state, .idle)
+        XCTAssertNil(show.arm())
+        XCTAssertEqual(show.armStandalone(cue("y"), pressedAt: stale), .showChanged("y"), "a load that outlived an arm is dropped")
+        XCTAssertEqual(show.state, .armed("a"))
+    }
+
     func testEQEditIsHeardOnThePlayingCueOnly() throws {
         let show = controller()
         armAndGo(show)

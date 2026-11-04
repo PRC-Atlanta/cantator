@@ -38,23 +38,28 @@ final class KeyRouter {
               !(window.firstResponder is NSText)
         else { return false }
 
+        // In Simple, the keys for Hold, markers, end nudges and audition do nothing, so a stray press
+        // can neither silence a track nor move its ending. They are swallowed, not passed on. The
+        // arrow keys are the one exception: Simple leaves them to its song list, which only selects.
+        let answers = { (key: TransportKey) in model.settings.operatorMode.answers(key) }
         switch event.keyCode {
-        case KeyCode.space: show.go(isRepeat: event.isARepeat)
-        case KeyCode.up: show.movePointer(by: -1)
-        case KeyCode.down: show.movePointer(by: 1)
+        case KeyCode.space: if answers(.go) { show.go(isRepeat: event.isARepeat) }
+        case KeyCode.up, KeyCode.down:
+            guard answers(.pointer) else { return false }
+            show.movePointer(by: event.keyCode == KeyCode.up ? -1 : 1)
         case KeyCode.returnKey:
-            if case .faulted = show.state { show.acknowledgeFault() }
+            if case .faulted = show.state, answers(.acknowledge) { show.acknowledgeFault() }
         default:
             guard !event.isARepeat else { return true }
             switch event.charactersIgnoringModifiers?.lowercased() {
-            case "a": show.arm()
-            case "d": show.disarm()
-            case "f": show.fadeOut()
-            case "p": show.hold()
-            case "m": show.jumpMarker(forward: !flags.contains(.shift))
-            case "[": show.nudgeEnd(seconds: -1)
-            case "]": show.nudgeEnd(seconds: 1)
-            case "h": toggleAudition(model)
+            case "a": if answers(.arm) { model.arm() }
+            case "d": if answers(.disarm) { show.disarm() }
+            case "f": if answers(.fade) { show.fadeOut() }
+            case "p": if answers(.hold) { show.hold() }
+            case "m": if answers(.marker) { show.jumpMarker(forward: !flags.contains(.shift)) }
+            case "[": if answers(.nudgeEnd) { show.nudgeEnd(seconds: -1) }
+            case "]": if answers(.nudgeEnd) { show.nudgeEnd(seconds: 1) }
+            case "h": if answers(.audition) { toggleAudition(model) }
             default: break
             }
         }

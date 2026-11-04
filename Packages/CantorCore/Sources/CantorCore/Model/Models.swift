@@ -886,6 +886,35 @@ public enum ServiceSource: String, Codable, CaseIterable, Sendable {
     case planningCenter
 }
 
+/// How much of the transport the Show view puts in front of the operator. Both modes drive the
+/// same `ShowController`; Simple only shows less and answers fewer keys.
+public enum OperatorMode: String, Codable, CaseIterable, Sendable {
+    /// The cue list with a pointer, the waveform, EQ, meters and every transport key.
+    case full
+    /// A plain list with Arm on each row and four buttons: Arm, Disarm, GO and Fade.
+    case simple
+
+    /// Whether this mode answers a transport key. Simple keeps Arm, GO, Fade, Disarm, Esc and the
+    /// fault acknowledgement. Hold, markers, end nudges and audition stay keys for Full, so a stray
+    /// press in Simple cannot silence a track or move its ending. The arrow keys are the Full view's
+    /// pointer; in Simple they belong to the song list, which selects and never plays.
+    public func answers(_ key: TransportKey) -> Bool {
+        switch self {
+        case .full: return true
+        case .simple:
+            switch key {
+            case .arm, .disarm, .go, .fade, .panic, .acknowledge: return true
+            case .hold, .marker, .nudgeEnd, .audition, .pointer: return false
+            }
+        }
+    }
+}
+
+/// The transport actions a key can ask for.
+public enum TransportKey: CaseIterable, Sendable {
+    case arm, disarm, go, fade, hold, panic, marker, nudgeEnd, audition, pointer, acknowledge
+}
+
 /// What happens when a new audio file arrives in a watched folder.
 public enum NewFileHandling: String, Codable, CaseIterable, Sendable {
     /// The New File pop-up, once nothing is loaded or playing.
@@ -966,6 +995,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var planningCenterSource = PlanningCenterSource.connector
     public var isolateSystemSound = true
     public var appearance = "dark"
+    /// Advanced (Full) for a fresh install and for settings saved before the choice existed.
+    public var operatorMode = OperatorMode.full
     /// When Cantor started watching each folder. Only files that arrive later count as new.
     public var watchedSince: [String: Date] = [:]
     /// Every service type seen in Planning Center, name by id, so Settings can list them all.
@@ -1000,6 +1031,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         planningCenterSource = (try? c.decodeIfPresent(PlanningCenterSource.self, forKey: .planningCenterSource)) ?? planningCenterSource
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
+        operatorMode = (try? c.decodeIfPresent(OperatorMode.self, forKey: .operatorMode)) ?? operatorMode
         watchedSince = try c.decodeIfPresent([String: Date].self, forKey: .watchedSince) ?? watchedSince
         serviceTypes = try c.decodeIfPresent([String: String].self, forKey: .serviceTypes) ?? serviceTypes
         importAllServiceTypes = try c.decodeIfPresent(Bool.self, forKey: .importAllServiceTypes) ?? importAllServiceTypes

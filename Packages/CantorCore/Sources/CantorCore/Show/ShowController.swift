@@ -185,6 +185,18 @@ public final class ShowController {
     /// is out of date: playing it would replace what they chose since, so it is cancelled.
     @discardableResult
     public func playNow(_ cue: ShowCue, pressedAt: Moment? = nil) -> ArmRefusal? {
+        engage(cue, pressedAt: pressedAt, andGo: true)
+    }
+
+    /// The Simple view's Arm: arms a library track from outside the cue list and leaves it armed, so
+    /// GO keeps its dwell and its own button. Like Play Now it replaces anything armed, never
+    /// anything sounding, and is dropped when the show changed while the track loaded.
+    @discardableResult
+    public func armStandalone(_ cue: ShowCue, pressedAt: Moment? = nil) -> ArmRefusal? {
+        engage(cue, pressedAt: pressedAt, andGo: false)
+    }
+
+    private func engage(_ cue: ShowCue, pressedAt: Moment?, andGo: Bool) -> ArmRefusal? {
         if let pressedAt, pressedAt != moment {
             notice = ArmRefusal.showChanged(cue.title).message
             return .showChanged(cue.title)
@@ -203,9 +215,11 @@ public final class ShowController {
             notice = refusal.message
             return refusal
         }
-        apply(.go)
-        log?.record("play-now", cue: cue.title)
-        if let track = cue.track { onPlayed?(track) }
+        if andGo {
+            apply(.go)
+            log?.record("play-now", cue: cue.title)
+            if let track = cue.track { onPlayed?(track) }
+        }
         notice = nil
         return nil
     }

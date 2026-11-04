@@ -115,7 +115,11 @@ private struct ShowModeMenu: View {
         }
         // Not Command-L, which locks the screen on some Macs.
         .keyboardShortcut("l", modifiers: [.command, .shift])
-        .disabled((model.show.cues.isEmpty || model.isLoadingService) && !model.show.showMode)
+        .disabled((model.show.cues.isEmpty || model.isLoadingService || model.isSimple) && !model.show.showMode)
+        Button(model.isSimple ? "Advanced View" : "Simple View") {
+            model.setOperatorMode(model.isSimple ? .full : .simple)
+        }
+        .disabled(model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
     }
 }
 
@@ -139,17 +143,19 @@ private struct TransportMenu: View {
         let show = model.show
         // Like the keys: only where the Show view, and so the state of the show, is on screen.
         let inShow = show.showMode || model.selection == .show
-        Button("Arm Next Cue (A)") { show.arm() }.disabled(!inShow)
-        Button("Disarm (D)") { show.disarm() }.disabled(!inShow)
-        Button("GO (Space)") { show.go() }.disabled(!inShow)
+        // The same gate as the keys: Simple leaves Hold, markers and end nudges to Full.
+        let allows = { (key: TransportKey) in inShow && model.settings.operatorMode.answers(key) }
+        Button(model.isSimple ? "Arm Picked Song (A)" : "Arm Next Cue (A)") { model.arm() }.disabled(!allows(.arm))
+        Button("Disarm (D)") { show.disarm() }.disabled(!allows(.disarm))
+        Button("GO (Space)") { show.go() }.disabled(!allows(.go))
         Divider()
-        Button("Hold (P)") { show.hold() }.disabled(!inShow)
-        Button("End of Song Fade (F)") { show.fadeOut() }.disabled(!inShow)
+        Button("Hold (P)") { show.hold() }.disabled(!allows(.hold))
+        Button("End of Song Fade (F)") { show.fadeOut() }.disabled(!allows(.fade))
         Button("Panic Fade (Esc)") { show.panicPressed() }.disabled(!show.state.holdsHouseEngine)
         Divider()
-        Button("Next Marker (M)") { show.jumpMarker(forward: true) }.disabled(!inShow)
-        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }.disabled(!inShow)
-        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }.disabled(!inShow)
-        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }.disabled(!inShow)
+        Button("Next Marker (M)") { show.jumpMarker(forward: true) }.disabled(!allows(.marker))
+        Button("Previous Marker (Shift-M)") { show.jumpMarker(forward: false) }.disabled(!allows(.marker))
+        Button("End Point 1 s Earlier ([)") { show.nudgeEnd(seconds: -1) }.disabled(!allows(.nudgeEnd))
+        Button("End Point 1 s Later (])") { show.nudgeEnd(seconds: 1) }.disabled(!allows(.nudgeEnd))
     }
 }

@@ -50,6 +50,9 @@ final class LenientDecodingTests: XCTestCase {
     func testSettingsWithPartialRoutingAndAliasesLoad() throws {
         let settings = try decode(AppSettings.self, #"{"routing":{"houseDeviceUID":"h"}}"#)
         XCTAssertEqual(settings.routing, OutputRouting(houseDeviceUID: "h"))
+        XCTAssertEqual(settings.operatorMode, .full, "settings saved before the choice existed read as Full")
+        XCTAssertEqual(try decode(AppSettings.self, #"{"operatorMode":"simple"}"#).operatorMode, .simple)
+        XCTAssertEqual(try decode(AppSettings.self, #"{"operatorMode":"expert"}"#).operatorMode, .full, "an unknown mode reads as Full")
         XCTAssertEqual(try decode(AliasMemory.self, #"{"confirmed":{"song:1":"abc"}}"#).confirmed, ["song:1": "abc"])
     }
 
