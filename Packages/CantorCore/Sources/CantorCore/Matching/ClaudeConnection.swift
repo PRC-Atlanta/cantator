@@ -63,7 +63,7 @@ public enum ClaudeConnection: Equatable, Sendable {
         switch self {
         case .checking, .connected, .off: nil
         case .notInstalled: "Set its path in Settings"
-        case .signedOut: "Run claude auth login in Terminal"
+        case .signedOut: "Sign in again in Settings"
         case .usesAPIKey: "Sign in with your Claude account"
         case .limitReached: "Try again later"
         case .unavailable: "Click to check again"

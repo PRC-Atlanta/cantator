@@ -158,6 +158,30 @@ final class PlanningCenterConnectorTests: XCTestCase {
         XCTAssertTrue(arguments.contains("stream-json"))
     }
 
+    /// An expired login prints this and lists no connectors, while `auth status` says signed in.
+    func testSignInProbeReadsAnExpiredLogin() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        func stub(_ result: String) throws -> ClaudeCLI {
+            let url = folder.appendingPathComponent(UUID().uuidString)
+            try Data("#!/bin/sh\ncat >/dev/null\necho '\(result)'\n".utf8).write(to: url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            return ClaudeCLI(path: url.path)
+        }
+        let signedOut = try stub(#"{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}"#)
+        do {
+            try await signedOut.verifySignIn()
+            XCTFail("expected failure")
+        } catch {
+            XCTAssertEqual(error as? LLMError, .notLoggedIn)
+        }
+        try await stub(#"{"type":"result","is_error":false,"result":"OK"}"#).verifySignIn()
+        // Any other failure is not a sign-in problem, so the connector message stands.
+        try await stub(#"{"type":"result","is_error":true,"result":"Overloaded"}"#).verifySignIn()
+        XCTAssertFalse(ClaudeCLI.signInProbeArguments.contains("--allowedTools"))
+    }
+
     // MARK: Service picker
 
     /// November 2, 2026 at noon UTC: the window runs from September 21 to November 23.

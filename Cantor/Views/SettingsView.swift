@@ -349,7 +349,10 @@ struct ClaudeSettings: View {
                 LabeledContent("Claude Account") {
                     HStack {
                         ClaudeStatusLabel(connection: model.claudeConnection)
-                        Button("Check") { model.refreshClaudeConnection() }
+                        Button("Check") { model.refreshClaudeConnection(verify: true) }
+                        if model.claudeConnection == .signedOut {
+                            Button("Sign In…") { model.signInToClaude() }
+                        }
                     }
                 }
                 if model.claudeConnection != .connected {

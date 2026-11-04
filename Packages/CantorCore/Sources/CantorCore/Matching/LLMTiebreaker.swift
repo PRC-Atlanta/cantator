@@ -12,7 +12,7 @@ public enum LLMError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .notInstalled: "Claude Code is not installed, or Cantator could not find it. Set its path in Settings."
-        case .notLoggedIn: "Claude Code is not signed in. Run claude auth login in Terminal, then try again."
+        case .notLoggedIn: "Claude Code on this Mac is signed out, or its sign-in has expired. Choose Sign In to Claude, or run claude auth login in Terminal, then try again."
         case .usesAPIKey: "Claude Code is set up with an API key. Sign in with your Claude account instead."
         case .limitReached: "Your Claude usage limit has been reached. Try again later, or match by name."
         case .timedOut: "Claude took too long to answer."

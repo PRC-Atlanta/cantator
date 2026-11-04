@@ -93,6 +93,38 @@ public struct ClaudeCLI: ClaudeRunner {
         MCPServerStatus.parse(String(decoding: try await execute(arguments: ["mcp", "list"], input: ""), as: UTF8.self))
     }
 
+    /// `auth status` only checks that a login is saved, so an expired one still reads as signed in,
+    /// while `mcp list` quietly drops every connector. A one-word request tells them apart: signed
+    /// out, it fails at once without reaching Claude.
+    public func verifySignIn() async throws {
+        let data = try await execute(arguments: Self.signInProbeArguments, input: "Reply with the word OK.")
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], root["is_error"] as? Bool == true else { return }
+        if case .notLoggedIn = Self.failure(root["result"] as? String ?? "") { throw LLMError.notLoggedIn }
+    }
+
+    static let signInProbeArguments = [
+        "-p", "--output-format", "json", "--tools", "", "--effort", "low", "--no-session-persistence",
+        "--strict-mcp-config", "--setting-sources", "", "--model", "haiku",
+    ]
+
+    /// Opens Terminal running `claude auth login`, which signs in through the browser.
+    public func openSignInInTerminal() throws {
+        let quoted = "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = """
+        #!/bin/zsh
+        clear
+        echo "Signing Claude Code in for Cantator. Finish in the browser, then return to Cantator."
+        \(quoted) auth login && echo && echo "Signed in. You can close this window."
+        """
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Cantator Claude Sign In.command")
+        try Data(script.utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        let open = Process()
+        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        open.arguments = ["-a", "Terminal", url.path]
+        try open.run()
+    }
+
     public func accountStatus() async throws -> ClaudeAccountStatus {
         let data = try await execute(arguments: ["auth", "status"], input: "")
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LLMError.malformed }

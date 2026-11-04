@@ -930,7 +930,14 @@ final class AppModel {
     private func runConnector(prompt: String, purpose: String, timeout: TimeInterval) async throws -> Data {
         guard settings.llmEnabled else { throw PlanningCenterConnectorError.claudeOff }
         var cli = try await claudeAccount()
-        let server = try PlanningCenterConnector.server(in: try await cli.mcpServers())
+        let server: MCPServerStatus
+        do {
+            server = try PlanningCenterConnector.server(in: try await cli.mcpServers())
+        } catch PlanningCenterConnectorError.notConnected {
+            // An expired login hides every connector, so check it before blaming the connector.
+            try await cli.verifySignIn()
+            throw PlanningCenterConnectorError.notConnected
+        }
         cli.timeout = timeout
         let model = settings.llmModel
         return try await usingClaude(purpose) {
@@ -1039,8 +1046,22 @@ final class AppModel {
         }
     }
 
-    /// Runs `claude auth status`, which needs no network and uses no account usage.
-    func refreshClaudeConnection() {
+    /// Opens Terminal on `claude auth login`. Coming back to Cantor checks the status again.
+    func signInToClaude() {
+        guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
+            alert = LLMError.notInstalled.localizedDescription
+            return
+        }
+        do {
+            try ClaudeCLI(path: path).openSignInInTerminal()
+        } catch {
+            alert = "Couldn't open Terminal. Run claude auth login there yourself. \(error.localizedDescription)"
+        }
+    }
+
+    /// Runs `claude auth status`, which needs no network and uses no account usage. `verify`, for a
+    /// check the operator asked for, also sends a one-word request, since a saved login can have expired.
+    func refreshClaudeConnection(verify: Bool = false) {
         guard settings.llmEnabled else {
             claudeConnection = .off
             return
@@ -1050,7 +1071,12 @@ final class AppModel {
         isCheckingClaude = true
         Task {
             defer { isCheckingClaude = false }
-            _ = try? await claudeAccount()
+            guard let cli = try? await claudeAccount(), verify else { return }
+            do {
+                try await cli.verifySignIn()
+            } catch {
+                noteClaudeFailure(error)
+            }
         }
     }
 
