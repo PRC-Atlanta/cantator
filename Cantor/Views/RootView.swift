@@ -33,12 +33,16 @@ struct RootView: View {
                             SidebarView(selection: $model.selection)
                         }
                     }
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
+                    // The column width alone isn't kept when an older, narrower width was saved.
+                    .frame(minWidth: AppDelegate.sidebarMinWidth)
+                    .navigationSplitViewColumnWidth(min: AppDelegate.sidebarMinWidth, ideal: 230, max: 300)
+                    .toolbar(removing: .sidebarToggle)
+                    .toolbar { OperatorModeToolbarItem(columns: $columns, collapsed: .detailOnly, showsSidebarButton: !model.show.showMode, inSidebar: true) }
                 } detail: {
                     detail
                         .sheet(isPresented: $model.showingServicePicker) { ServicePickerSheet() }
                 }
-                .toolbar(removing: model.show.showMode ? .sidebarToggle : nil)
+                .toolbar { OperatorModeToolbarItem(columns: $columns, collapsed: .detailOnly, showsSidebarButton: !model.show.showMode, inSidebar: false) }
                 .onChange(of: columns) { _, value in
                     // The program stays in view in Show Mode.
                     if model.show.showMode, value != .all { columns = .all }

@@ -14,7 +14,6 @@ struct ShowView: View {
         .background(Theme.showBackground)
         .navigationTitle(model.loadedPlan.map { $0.dates.isEmpty ? $0.title : $0.dates } ?? "Show")
         .toolbar {
-            ToolbarItem(placement: .principal) { OperatorModeToggle() }
             ToolbarItemGroup(placement: .primaryAction) {
                 Toggle(isOn: Binding(get: { show.showMode }, set: { show.setShowMode($0) })) {
                     Label("Show Mode", systemImage: show.showMode ? "lock.fill" : "lock.open")

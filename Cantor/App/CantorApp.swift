@@ -64,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     @MainActor let updates = Updates()
 
+    /// Settings and the sidebar button need this much beside the window buttons, or they go to the
+    /// toolbar's overflow menu. Both views' sidebars have it as their minimum.
+    static let sidebarMinWidth: CGFloat = 200
+
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
