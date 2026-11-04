@@ -26,7 +26,7 @@ struct ServicePickerSheet: View {
 
     private var reading: PlanSummary? { model.pickerServices.first { $0.id == model.readingServiceID } }
     private var choice: PlanSummary? { model.pickerServices.first { $0.id == selected } }
-    private var viaClaude: Bool { model.settings.planningCenterSource == .connector }
+    private var viaClaude: Bool { model.planningCenterSource == .connector }
 
     var body: some View {
         VStack(spacing: 0) {

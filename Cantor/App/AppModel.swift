@@ -892,35 +892,40 @@ final class AppModel {
         }
     }
 
-    /// One Planning Center read: through the connector when that is the chosen source, and with the
-    /// token otherwise or whenever the connector can't be used. The notes say what went wrong.
+    /// Where the next Planning Center read goes first: the token whenever one is saved, since it is
+    /// faster, gives attachment filenames and uses no Claude usage. The connector otherwise.
+    var planningCenterSource: PlanningCenterSource { hasPCOCredentials() ? .token : .connector }
+
+    /// One Planning Center read: with the token when one is saved, and through the connector
+    /// otherwise or whenever the token can't be used and Claude is on. The notes say what went wrong.
     private func readPlanningCenter<T>(
         connector: @escaping (Data) throws -> T, prompt: String, purpose: String, timeout: TimeInterval,
         token: (PCOClient) async throws -> T
     ) async -> (T?, [String]) {
         var notes: [String] = []
-        if settings.planningCenterSource == .connector {
-            do {
-                let stream = try await runConnector(prompt: prompt, purpose: purpose, timeout: timeout)
-                let value = try connector(stream)
-                lastPlanningCenterSource = .connector
-                return (value, notes)
-            } catch {
-                noteClaudeFailure(error)
-                notes.append(error.localizedDescription)
-            }
-        }
         do {
-            guard let appID = try Keychain.lookup(.pcoAppID), let secret = try Keychain.lookup(.pcoSecret) else {
-                notes.append(notes.isEmpty ? "Add your Planning Center token in Settings." : "Add a Planning Center token in Settings to read it without the connector.")
-                return (nil, notes)
+            if let appID = try Keychain.lookup(.pcoAppID), let secret = try Keychain.lookup(.pcoSecret) {
+                let value = try await token(PCOClient(appID: appID, secret: secret))
+                lastPlanningCenterSource = .token
+                return (value, notes)
             }
-            let value = try await token(PCOClient(appID: appID, secret: secret))
-            lastPlanningCenterSource = .token
-            if !notes.isEmpty { notes.append("Used the API token instead.") }
-            return (value, notes)
         } catch {
             notes.append(error.localizedDescription)
+        }
+        guard settings.llmEnabled else {
+            if notes.isEmpty { notes.append("Add your Planning Center token in Settings.") }
+            return (nil, notes)
+        }
+        do {
+            let stream = try await runConnector(prompt: prompt, purpose: purpose, timeout: timeout)
+            let value = try connector(stream)
+            lastPlanningCenterSource = .connector
+            if !notes.isEmpty { notes.append("Used the Claude connector instead.") }
+            return (value, notes)
+        } catch {
+            noteClaudeFailure(error)
+            notes.append(error.localizedDescription)
+            if !hasPCOCredentials() { notes.append("Add a Planning Center token in Settings to read it without the connector.") }
             return (nil, notes)
         }
     }

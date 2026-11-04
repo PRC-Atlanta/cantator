@@ -267,21 +267,14 @@ private struct PlanningCenterSettings: View {
     var body: some View {
         Form {
             Section {
-                Picker("Sync With", selection: Binding(
-                    get: { model.settings.planningCenterSource },
-                    set: { value in model.updateSettings { $0.planningCenterSource = value } }
-                )) {
-                    Text("Claude Connector").tag(PlanningCenterSource.connector)
-                    Text("API Token").tag(PlanningCenterSource.token)
-                }
-                .pickerStyle(.radioGroup)
+                LabeledContent("Sync With", value: model.planningCenterSource == .token ? "API token" : "Claude connector")
                 if let source = model.lastPlanningCenterSource {
                     LabeledContent("Last sync", value: source == .connector ? "Claude connector" : "API token")
                 }
             } footer: {
-                Text(model.settings.planningCenterSource == .connector
-                    ? "Reads the next \(PlanningCenterConnector.plansPerType) plans of each service type through the Planning Center connector on your Claude account, using Claude Code. Claude can only use the connector's read-only Services tools, and Cantator reads the plans from the connector's own answers. Claude does see item titles and descriptions, which can include names. It can take a few minutes and counts toward your Claude usage. Attachment filenames aren't available this way, so matching keeps the ones from the last token sync. If the connector can't be used, the token below is used instead."
-                    : "Reads Planning Center directly with the token below. Claude isn't involved.")
+                Text(model.planningCenterSource == .token
+                    ? "Reads Planning Center directly with the token below. Claude isn't involved. If the token stops working and Claude is on, the Planning Center connector on your Claude account is used instead."
+                    : "With no token below, reads the next \(PlanningCenterConnector.plansPerType) plans of each service type through the Planning Center connector on your Claude account, using Claude Code. Claude can only use the connector's read-only Services tools, and Cantator reads the plans from the connector's own answers. Claude does see item titles and descriptions, which can include names. It can take a few minutes and counts toward your Claude usage. Attachment filenames aren't available this way, so matching keeps the ones from the last token sync. Add a token to read Planning Center directly instead.")
             }
             Section {
                 let types = model.knownServiceTypes

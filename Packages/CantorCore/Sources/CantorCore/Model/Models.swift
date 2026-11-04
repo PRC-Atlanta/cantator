@@ -991,8 +991,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// How long services built in Cantator stay in the sidebar once they are over. 0 keeps them forever.
     public var keepPastServicesWeeks = 8
     public var templates: [ServiceTemplate] = []
-    /// How Planning Center is read. The token is used whenever the connector can't be.
-    public var planningCenterSource = PlanningCenterSource.connector
     public var isolateSystemSound = true
     public var appearance = "dark"
     /// Advanced (Full) for a fresh install and for settings saved before the choice existed.
@@ -1028,7 +1026,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
         newFileHandling = (try? c.decodeIfPresent(NewFileHandling.self, forKey: .newFileHandling)) ?? newFileHandling
         keepPastServicesWeeks = try c.decodeIfPresent(Int.self, forKey: .keepPastServicesWeeks) ?? keepPastServicesWeeks
         templates = try c.decodeIfPresent([ServiceTemplate].self, forKey: .templates) ?? templates
-        planningCenterSource = (try? c.decodeIfPresent(PlanningCenterSource.self, forKey: .planningCenterSource)) ?? planningCenterSource
         isolateSystemSound = try c.decodeIfPresent(Bool.self, forKey: .isolateSystemSound) ?? isolateSystemSound
         appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? appearance
         operatorMode = (try? c.decodeIfPresent(OperatorMode.self, forKey: .operatorMode)) ?? operatorMode

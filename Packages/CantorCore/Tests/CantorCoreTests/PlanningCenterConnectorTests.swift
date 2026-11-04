@@ -262,9 +262,9 @@ final class PlanningCenterConnectorTests: XCTestCase {
         XCTAssertTrue(ServicePlan.applySync(existing: picked, fresh: [fresh], loadedID: nil, now: pickerNow)[0].picked)
     }
 
-    func testOlderSettingsDefaultToTheConnector() throws {
-        let settings = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
-        XCTAssertEqual(settings.planningCenterSource, .connector)
+    func testOlderSettingsImportEveryServiceType() throws {
+        // Settings saved with the old source picker still read.
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"planningCenterSource":"connector"}"#.utf8))
         XCTAssertTrue(settings.importAllServiceTypes)
         XCTAssertTrue(settings.hiddenServiceTypeIDs.isEmpty)
     }
