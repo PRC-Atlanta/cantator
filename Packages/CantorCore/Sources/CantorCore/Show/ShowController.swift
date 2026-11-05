@@ -72,8 +72,8 @@ public final class ShowController {
     @ObservationIgnored private var runEndFrame = 0
     /// F or panic was sent. The operator is ending the cue, so no nudge or resume may bring it back.
     @ObservationIgnored private var stopping = false
-    /// When the last cue let go of the house. A `[` or `]` meant for a cue that has just ended must
-    /// not land on the next one, which the pointer has moved to.
+    /// When the last cue finished. A `[` or `]` meant for a cue that has just ended must not land on
+    /// the next one, which the pointer has moved to.
     @ObservationIgnored private var releasedAt: TimeInterval?
     @ObservationIgnored private let house: HouseOutput
     @ObservationIgnored private let clock: () -> TimeInterval
@@ -473,7 +473,6 @@ public final class ShowController {
                 kernel?.stop()
                 log?.record("hard-stop", cue: finishedCue?.title)
             case .teardown:
-                releasedAt = clock()
                 house.stop()
                 kernel = nil
                 playNowCue = nil
@@ -485,6 +484,9 @@ public final class ShowController {
                 refreshTelemetry()
             }
         }
+        // A cue that played to its end, faded or stopped moved the pointer on, so a `[` or `]` still
+        // meant for it must wait. A disarm or hard stop leaves the pointer where it was.
+        if event == .finished { releasedAt = clock() }
         if event == .finished, let finishedCue {
             log?.record("finished", cue: finishedCue.title)
             if let index = cues.firstIndex(where: { $0.id == finishedCue.id }), index + 1 < cues.count {

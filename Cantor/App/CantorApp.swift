@@ -151,7 +151,7 @@ private struct TransportMenu: View {
         // The same gate as the keys: Simple leaves Hold, markers and end nudges to Full.
         let allows = { (key: TransportKey) in inShow && model.settings.operatorMode.answers(key) }
         Button(model.isSimple ? "Arm Picked Song (A)" : "Arm Next Cue (A)") { model.arm() }.disabled(!allows(.arm))
-        Button("Disarm (D)") { show.disarm() }.disabled(!allows(.disarm))
+        Button("Disarm (D)") { model.disarm() }.disabled(!allows(.disarm))
         Button("GO (Space)") { show.go() }.disabled(!allows(.go))
         Divider()
         Button("Hold (P)") { show.hold() }.disabled(!allows(.hold))

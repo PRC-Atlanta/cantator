@@ -128,9 +128,20 @@ public struct ClaudeCLI: ClaudeRunner {
     /// while `mcp list` quietly drops every connector. A one-word request tells them apart: signed
     /// out, it fails at once without reaching Claude.
     public func verifySignIn() async throws {
+        _ = try await signInWorks()
+    }
+
+    /// Sends a one-word request. True when it was answered, false when it failed for a reason that
+    /// says nothing about the login (offline, overloaded, unreadable output). Throws `.notLoggedIn`
+    /// only when the login itself was refused.
+    public func signInWorks() async throws -> Bool {
         let data = try await execute(arguments: Self.signInProbeArguments, input: "Reply with the word OK.")
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], root["is_error"] as? Bool == true else { return }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let isError = root["is_error"] as? Bool else {
+            return false
+        }
+        guard isError else { return true }
         if case .notLoggedIn = Self.failure(root["result"] as? String ?? "") { throw LLMError.notLoggedIn }
+        return false
     }
 
     static let signInProbeArguments = [

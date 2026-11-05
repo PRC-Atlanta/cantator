@@ -179,6 +179,12 @@ final class PlanningCenterConnectorTests: XCTestCase {
         try await stub(#"{"type":"result","is_error":false,"result":"OK"}"#).verifySignIn()
         // Any other failure is not a sign-in problem, so the connector message stands.
         try await stub(#"{"type":"result","is_error":true,"result":"Overloaded"}"#).verifySignIn()
+        let answered = try await stub(#"{"type":"result","is_error":false,"result":"OK"}"#).signInWorks()
+        XCTAssertTrue(answered)
+        let overloaded = try await stub(#"{"type":"result","is_error":true,"result":"Overloaded"}"#).signInWorks()
+        XCTAssertFalse(overloaded, "an overloaded answer says nothing about the login")
+        let unreadable = try await stub("not json").signInWorks()
+        XCTAssertFalse(unreadable)
         XCTAssertFalse(ClaudeCLI.signInProbeArguments.contains("--allowedTools"))
     }
 

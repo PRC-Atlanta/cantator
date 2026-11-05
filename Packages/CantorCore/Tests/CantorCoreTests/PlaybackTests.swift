@@ -1103,6 +1103,15 @@ extension ShowControllerTests {
         XCTAssertEqual(show.pointedCue?.track?.endSec, 5)
     }
 
+    func testNudgeRightAfterADisarmStillWorks() {
+        let show = controller(cues: [cue("a", endSec: 6)])
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        show.disarm()
+        show.nudgeEnd(seconds: -1)
+        XCTAssertEqual(show.pointedCue?.track?.endSec, 5, "a disarm leaves the pointer where it was")
+    }
+
     func testNudgeWhileIdleThenArmPlaysToNewEnd() {
         let show = controller(cues: [cue("a", endSec: 6)])
         show.nudgeEnd(seconds: -2)

@@ -100,8 +100,9 @@ final class LibraryMergeTests: XCTestCase {
 
         library.merge(scan: [file("/a/Song.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file("/b/Song.mp3", id: "x")])
         XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio)
-        library.merge(scan: [file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x 2.mp3", id: "x")])
-        XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio, "two copies in ~/Music/Cantor are one too many")
+        var managedOnly = Library()
+        managedOnly.merge(scan: [file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x 2.mp3", id: "x")])
+        XCTAssertEqual(managedOnly.duplicateGroups.first?.kind, .sameAudio, "two copies in ~/Music/Cantor are one too many")
     }
 
     func testMovingAFileKeepsCuePoints() {

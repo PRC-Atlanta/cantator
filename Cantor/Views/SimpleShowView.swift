@@ -127,8 +127,9 @@ private struct SimpleSongList: View {
         }
         .navigationTitle(model.simpleTag?.capitalized ?? "All Songs")
         // The keys don't work while the search field has focus, and the big buttons don't take it,
-        // so arming lets go of it: Space must be GO, not a space in the search.
-        .onChange(of: model.show.state) { _, state in if state != .idle { searching = false } }
+        // so pressing Arm lets go of it: Space must be GO, not a space in the search. Only Arm does,
+        // never a change of state, which could take the field away mid-word and turn typing into keys.
+        .onChange(of: model.simpleArmPresses) { searching = false }
     }
 }
 
@@ -276,7 +277,7 @@ private struct SimpleTransportBar: View {
             .frame(minHeight: 20)
             HStack(alignment: .bottom, spacing: 12) {
                 bigButton("Arm", "A", enabled: canArm) { model.arm() }
-                bigButton("Disarm", "D", enabled: isArmedOrHeld) { show.disarm() }
+                bigButton("Disarm", "D", enabled: isArmedOrHeld || model.playNowLoading != nil) { model.disarm() }
                 Spacer().frame(width: 24)
                 bigButton("GO", "Space", enabled: isArmedOrHeld, prominent: true) { show.go() }
                 bigButton("Fade", "F", enabled: isLiveOrHeld) { show.fadeOut() }

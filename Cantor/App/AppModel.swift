@@ -76,6 +76,9 @@ final class AppModel {
     var playNowLoading: UUID?
     /// The Simple view: the song picked in its list, and the tag its list is narrowed to.
     var simpleTrackID: UUID?
+    /// Counts Arm presses in Simple, so its search field lets go of the keys on an arm the operator
+    /// asked for, and only then: a field that lost focus mid-word would turn typing into transport keys.
+    var simpleArmPresses = 0
     var simpleTag: String?
 
     let show: ShowController
@@ -696,6 +699,12 @@ final class AppModel {
             var replacesArmed = false
             if case .armed = show.state { replacesArmed = show.activeCue?.track?.id != track.id }
             guard playNowLoading != track.id, replacesArmed || !show.state.holdsHouseEngine else { return }
+            // A song that can't load leaves the armed one armed.
+            guard track.bestFile() != nil else {
+                alert = "\(track.title) is not on this Mac yet."
+                return
+            }
+            simpleArmPresses += 1
             // The old song lets go at once, so a GO while the new one loads plays nothing rather
             // than the song the operator just moved away from.
             if replacesArmed { show.disarm() }
@@ -703,6 +712,16 @@ final class AppModel {
         } else {
             show.arm()
         }
+    }
+
+    /// Disarm, from the D key, the Transport menu and the big button. In Simple it also drops a song
+    /// still loading, which would otherwise arm once it is in.
+    func disarm() {
+        if isSimple, playNowLoading != nil {
+            playNowRequest = nil
+            playNowLoading = nil
+        }
+        show.disarm()
     }
 
     /// Switches between the Advanced and Simple views. Refused while a cue is armed or playing, since
@@ -813,7 +832,7 @@ final class AppModel {
                 notes.append("Using saved plans.")
             }
             if let planID, fresh?.contains(where: { $0.id == planID }) != true,
-               let plan = plans.first(where: { $0.id == planID }), !show.showMode {
+               let plan = plans.first(where: { $0.id == planID }), !show.showMode, !show.state.holdsHouseEngine {
                 let (one, oneNotes) = await readService(plan.summary)
                 if let one, let index = plans.firstIndex(where: { $0.id == planID }), !show.showMode {
                     plans[index] = plans[index].merging(fresh: one)
@@ -977,7 +996,7 @@ final class AppModel {
             // Only a login problem replaces the connector message; a probe that fails otherwise
             // says nothing about the connector.
             do {
-                try await cli.verifySignIn()
+                if try await cli.signInWorks() { noteSignInWorks() }
             } catch LLMError.notLoggedIn {
                 throw LLMError.notLoggedIn
             } catch {}
@@ -1015,6 +1034,7 @@ final class AppModel {
     }
 
     func runAIMatch(planID: String) {
+        guard !show.state.holdsHouseEngine else { return }
         guard settings.llmEnabled else {
             alert = "AI matching is turned off in Settings. Matching by name still works."
             return
@@ -1076,16 +1096,19 @@ final class AppModel {
         defer { claudeWorking = nil }
         do {
             let result = try await work()
-            if loginExpired {
-                loginExpired = false
-                if settings.llmEnabled { claudeConnection = .connected }
-            }
+            if loginExpired { noteSignInWorks() }
             lastClaudeUse = ClaudeUse(purpose: purpose)
             return result
         } catch {
             lastClaudeUse = ClaudeUse(purpose: purpose, failure: error.localizedDescription)
             throw error
         }
+    }
+
+    /// A request was answered, so the login works, whatever an earlier one found.
+    private func noteSignInWorks() {
+        loginExpired = false
+        if settings.llmEnabled { claudeConnection = .connected }
     }
 
     /// A request that failed after the account check, such as a usage limit, also changes the status.
@@ -1100,6 +1123,8 @@ final class AppModel {
 
     /// Opens Terminal on `claude auth login`. Coming back to Cantor checks the status again.
     func signInToClaude() {
+        // Terminal would come forward and take the transport keys.
+        guard !show.showMode, !show.state.holdsHouseEngine else { return }
         guard let path = ClaudeCLI.locate(override: settings.claudePath) else {
             alert = LLMError.notInstalled.localizedDescription
             return
@@ -1127,12 +1152,12 @@ final class AppModel {
             // signing in in Terminal shows connected without pressing Check.
             guard let cli = try? await claudeAccount(), verify || loginExpired else { return }
             do {
-                try await cli.verifySignIn()
-                loginExpired = false
-                claudeConnection = .connected
+                if try await cli.signInWorks() { noteSignInWorks() }
             } catch {
                 noteClaudeFailure(error)
             }
+            // No clear answer (offline, overloaded) leaves an expired login as it was, not checking.
+            if loginExpired, settings.llmEnabled { claudeConnection = .signedOut }
         }
     }
 
@@ -1393,12 +1418,13 @@ final class AppModel {
         return sidebarPlans.filter { !$0.pinned && $0.id != loadedPlanID && ($0.sortDate ?? .distantFuture) < today }.reversed()
     }
 
-    /// The loaded service, else the next one from today on, pinned or not: a pinned Sunday service
-    /// is still Sunday's. Plans are sorted by date and keep recent past ones. Only the fallback to
-    /// the latest past service leaves pinned ones out, since a practice list is no one's last service.
+    /// The loaded service, else the next one from today on. A pinned Planning Center service still
+    /// counts by its date, since pinning Sunday's service keeps it Sunday's; a pinned one built here
+    /// is a practice list and never stands in for a service. Plans are sorted by date and keep recent
+    /// past ones.
     var currentPlan: ServicePlan? {
         let today = Calendar.current.startOfDay(for: Date())
-        return loadedPlan ?? sidebarPlans.first { ($0.sortDate ?? .distantFuture) >= today }
+        return loadedPlan ?? sidebarPlans.first { (!$0.pinned || !$0.isManual) && ($0.sortDate ?? .distantFuture) >= today }
             ?? sidebarPlans.last { !$0.pinned } ?? sidebarPlans.last
     }
 

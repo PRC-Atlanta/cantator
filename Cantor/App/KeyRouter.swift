@@ -54,7 +54,7 @@ final class KeyRouter {
             guard !event.isARepeat else { return true }
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "a": if answers(.arm) { model.arm() }
-            case "d": if answers(.disarm) { show.disarm() }
+            case "d": if answers(.disarm) { model.disarm() }
             case "f": if answers(.fade) { show.fadeOut() }
             case "p": if answers(.hold) { show.hold() }
             case "m": if answers(.marker) { show.jumpMarker(forward: !flags.contains(.shift)) }
