@@ -11,7 +11,7 @@ struct LibraryView: View {
     @State private var sortOrder = [KeyPathComparator(\Track.title)]
 
     static func needsAttention(_ track: Track) -> Bool {
-        track.endSec == nil || !track.isLocal || !track.isAnalyzed
+        track.needsEndPoint || !track.isLocal || !track.isAnalyzed
     }
 
     private var tracks: [Track] {
@@ -58,8 +58,11 @@ struct LibraryView: View {
             }
             .width(44)
             TableColumn("End") { (track: Track) in
-                Image(systemName: track.endSec == nil ? "circle" : "checkmark.circle")
+                Image(systemName: track.endSec != nil ? "checkmark.circle" : track.needsEndPoint ? "circle" : "minus.circle")
                     .foregroundStyle(track.endSec == nil ? Color.secondary : Color.primary)
+                    .help(track.endSec != nil ? "End point set"
+                        : track.needsEndPoint ? "No end point, and the file ends in silence"
+                        : "No end point needed: the sound runs to the end of the file")
             }
             .width(36)
             TableColumn("LUFS") { (track: Track) in

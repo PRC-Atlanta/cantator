@@ -130,6 +130,18 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
     public var isAnalyzed: Bool { integratedLUFS != nil }
     public var primaryFilename: String { (bestFile() ?? files.first)?.filename ?? title }
     public var isExcluded: Bool { exclusion != nil }
+
+    /// Silence at least this long at the end of a file is worth an end point. A file with sound in
+    /// its last two seconds ends with the music, so playing to the end is fine.
+    public static let trailingSilenceForEndSec = 2.0
+
+    /// No end point is set and the file ends in silence, so it would play dead air. A file not
+    /// analyzed yet counts, since its ending is not known, and so does one with no sound at all.
+    public var needsEndPoint: Bool {
+        guard endSec == nil else { return false }
+        guard isAnalyzed, durationSec > 0, let lastSound = suggestedEndSec else { return true }
+        return durationSec - lastSound >= Self.trailingSilenceForEndSec
+    }
 }
 
 // A field added in a later version must not make an existing library unreadable.

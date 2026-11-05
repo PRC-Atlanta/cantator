@@ -440,6 +440,25 @@ final class PreServiceCheckTests: XCTestCase {
         XCTAssertTrue(kinds(input(track: goodTrack(), resident: false)).contains(.notInMemory))
     }
 
+    func testAnEndPointIsOnlyNeededBeforeTrailingSilence() {
+        var track = goodTrack()
+        track.endSec = nil
+        track.durationSec = 240
+        track.suggestedEndSec = 238.5
+        XCTAssertFalse(track.needsEndPoint, "sound in the last two seconds: the file ends with the music")
+        XCTAssertFalse(kinds(input(track: track)).contains(.noEndPoint))
+        track.suggestedEndSec = 238
+        XCTAssertTrue(track.needsEndPoint, "two seconds of silence")
+        XCTAssertTrue(kinds(input(track: track)).contains(.noEndPoint))
+        track.suggestedEndSec = nil
+        XCTAssertTrue(track.needsEndPoint, "no sound at all")
+        track.suggestedEndSec = 239
+        track.integratedLUFS = nil
+        XCTAssertTrue(track.needsEndPoint, "not analyzed, so the ending is unknown")
+        track.endSec = 200
+        XCTAssertFalse(track.needsEndPoint)
+    }
+
     func testMissingEndPointAndLevel() {
         var track = goodTrack()
         track.endSec = nil

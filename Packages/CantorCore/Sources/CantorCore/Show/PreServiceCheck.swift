@@ -108,8 +108,8 @@ public enum PreServiceCheck {
             if isEmptyRange(track, length: input.residentLengths[trackID]) {
                 add(.blocking, .emptyRange, cue, "\(name): nothing to play between start and end", "Fix the start and end points in Library.")
             }
-            if track.endSec == nil {
-                add(.warning, .noEndPoint, cue, "\(name): no end point set", "Set or accept an end point in Library.")
+            if track.needsEndPoint {
+                add(.warning, .noEndPoint, cue, "\(name): no end point set", "The file ends in silence. Set or accept an end point in Library.")
             }
             if let lufs = track.integratedLUFS, let peak = track.truePeakDb {
                 if LoudnessMeter.gain(lufs: lufs, truePeakDb: peak, targetLUFS: input.targetLUFS).capped {
