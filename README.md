@@ -208,7 +208,7 @@ Some playbacks are mixed better than others. Each track has its own EQ, saved wi
 
 1. Select the service in the sidebar and choose **Refresh** to pull the latest plan. If it isn't there, use **Choose Service…**.
 2. Review each item that needs a track. Items whose notes say "tracks" are checked for you, and a strong match is put on them as **Auto-confirmed**. Check **Needs** for other items with playback, preview a candidate on your headphones, then choose **Confirm**. To change an automatic match, confirm another file or choose **Clear Match**.
-3. In Library, set each track's end point and fade. Use **Preview Ending** to hear the last 15 seconds, and **Use** to accept the suggested end.
+3. In Library, set each track's end point and fade. A track that ends in two seconds or more of silence shows an amber **End Point** panel under its waveform with the last 20 seconds drawn large: click or drag there to set the end, **Preview End** to hear it, or **Use** to end where the sound stops. A track with sound to its last two seconds needs no end point.
 
 Every preview button, including the headphones on a candidate, becomes **Stop** while it plays: press it again to stop.
 4. To play a track the plan doesn't list, add it from Library: **Add to Service** in the right-click menu or the track's details picks the service and the spot, or drag it onto a service in the sidebar to add it at the end. Hold the drag there for a moment and the service opens, so you can drop it on the item it should follow. **Remove from Service** in the item's details takes it out again.

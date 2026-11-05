@@ -339,6 +339,9 @@ private struct TrackInspector: View {
     @Environment(\.openWindow) private var openWindow
     let track: Track
     @State private var tagText = ""
+    /// The track the end point panel is open for. It opens for a track that ends in silence with
+    /// no end point and stays open while the end is set, so it never vanishes mid-drag.
+    @State private var endPanelFor: UUID?
 
     private var editing: Bool { !model.show.showMode }
 
@@ -377,6 +380,12 @@ private struct TrackInspector: View {
                     }
                 }
                 .disabled(!track.isLocal)
+            }
+
+            if endPanelFor == track.id {
+                Section("End Point") {
+                    EndPointPanel(track: track)
+                }
             }
 
             Section("EQ") {
@@ -486,6 +495,14 @@ private struct TrackInspector: View {
         }
         .formStyle(.grouped)
         .disabled(!editing)
+        .onAppear(perform: openEndPanel)
+        .onChange(of: track.id) { openEndPanel() }
+        // Analysis can finish while the track is shown.
+        .onChange(of: track.needsEndPoint) { if track.needsEndPoint { openEndPanel() } }
+    }
+
+    private func openEndPanel() {
+        endPanelFor = track.needsEndPoint && track.isAnalyzed ? track.id : nil
     }
 
     private func stringBinding(_ path: WritableKeyPath<Track, String>) -> Binding<String> {
@@ -540,6 +557,107 @@ private struct WaveformEditor: View {
                 case nil: break
                 }
             }.onEnded { _ in dragging = nil })
+        }
+    }
+}
+
+/// The last 20 seconds of a track, drawn large so its end is easy to place. A click or drag sets
+/// the end there.
+private struct EndPointPanel: View {
+    @AppEnvironment private var model
+    let track: Track
+
+    static let windowSec = 20.0
+
+    private var window: ClosedRange<Double> {
+        let upper = max(track.durationSec, 0.1)
+        return min(max(upper - Self.windowSec, track.startSec, 0), upper - 0.1)...upper
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let end = track.endSec {
+                Label("Ends at \(TimeText.tenths(end))", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            } else {
+                Label("Set where this song ends", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundStyle(Theme.armed)
+                Text(explanation).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            EndWaveform(track: track, window: window)
+                .frame(height: 90)
+            HStack {
+                Text(TimeText.tenths(window.lowerBound))
+                Spacer()
+                Text("Last \(Int(window.upperBound - window.lowerBound)) seconds")
+                Spacer()
+                Text(TimeText.tenths(window.upperBound))
+            }
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            HStack {
+                if track.endSec == nil, let suggested = track.suggestedEndSec {
+                    Button("Use \(TimeText.tenths(suggested))") { model.updateTrack(track.id) { $0.endSec = suggested } }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.armed)
+                        .help("Where the sound stops: the last point above -50 dBFS")
+                }
+                let from = max((track.endSec ?? track.suggestedEndSec ?? track.durationSec) - 8, track.startSec)
+                Button {
+                    model.toggleAudition(track, fromSec: from)
+                } label: {
+                    let on = model.isAuditioning(track, fromSec: from)
+                    Label(on ? "Stop" : "Preview End", systemImage: on ? "stop.fill" : "headphones")
+                }
+                .disabled(!track.isLocal)
+                if let position = model.auditionPositionSec, model.cueBus.trackID == track.id {
+                    Button("Set End Here") { model.updateTrack(track.id) { $0.endSec = position } }
+                }
+                Spacer()
+            }
+        }
+        .padding(10)
+        // Amber, the show's color for something to fix, until the end is set.
+        .background(RoundedRectangle(cornerRadius: 8).fill(track.needsEndPoint ? Theme.armed.opacity(0.12) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(track.needsEndPoint ? Theme.armed : .clear, lineWidth: 1.5))
+    }
+
+    private var explanation: String {
+        guard let lastSound = track.suggestedEndSec else {
+            return "No sound was found in this file. Click in the waveform where it should end."
+        }
+        let silence = track.durationSec - lastSound
+        return "The sound stops at \(TimeText.tenths(lastSound)), then the file runs \(String(format: "%.1f", silence)) seconds of silence. Click or drag in the waveform to set the end, or use where the sound stops."
+    }
+}
+
+private struct EndWaveform: View {
+    @AppEnvironment private var model
+    let track: Track
+    let window: ClosedRange<Double>
+
+    var body: some View {
+        GeometryReader { geometry in
+            let span = window.upperBound - window.lowerBound
+            WaveformCanvas(
+                peaks: model.peaks(for: track.id), durationSec: track.durationSec, startSec: track.startSec,
+                endSec: track.endSec, fadeSec: track.fadeOutSec, markers: track.markers, window: window
+            )
+            .overlay(alignment: .topLeading) {
+                if let position = model.auditionPositionSec, model.cueBus.trackID == track.id, window.contains(position) {
+                    Rectangle().fill(Theme.cue).frame(width: 2)
+                        .offset(x: geometry.size.width * CGFloat((position - window.lowerBound) / span))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+            .pointerStyle(model.show.showMode ? .default : .columnResize)
+            .help("Click or drag to set the end")
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                guard !model.show.showMode, geometry.size.width > 0 else { return }
+                let seconds = window.lowerBound + Double(value.location.x / geometry.size.width) * span
+                model.updateTrack(track.id) { $0.endSec = min(max(seconds, $0.startSec + 0.1), $0.durationSec) }
+            })
         }
     }
 }

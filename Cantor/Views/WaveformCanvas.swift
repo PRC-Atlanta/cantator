@@ -13,12 +13,16 @@ struct WaveformCanvas: View, Equatable {
     var background = Theme.panel
     var fill = Theme.waveform
     var dimFill = Theme.waveformDim
+    /// The part of the track to draw, such as the last 20 seconds. Nil draws all of it.
+    var window: ClosedRange<Double>? = nil
 
     var body: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(background))
             guard durationSec > 0 else { return }
-            let x = { (seconds: Double) in CGFloat(seconds / durationSec) * size.width }
+            let view = window ?? 0...durationSec
+            let span = max(view.upperBound - view.lowerBound, 0.001)
+            let x = { (seconds: Double) in CGFloat((seconds - view.lowerBound) / span) * size.width }
             let end = endSec ?? durationSec
             let midY = size.height / 2
 
@@ -27,10 +31,10 @@ struct WaveformCanvas: View, Equatable {
                 var active = Path()
                 var dim = Path()
                 for column in 0..<max(count, 1) {
-                    let index = column * peaks.count / max(count, 1)
+                    let seconds = view.lowerBound + Double(column) / Double(max(count, 1)) * span
+                    let index = min(max(Int(seconds / durationSec * Double(peaks.count)), 0), peaks.count - 1)
                     let height = max(CGFloat(peaks[index]) * size.height * 0.92, 1)
                     let rect = CGRect(x: CGFloat(column), y: midY - height / 2, width: 1, height: height)
-                    let seconds = Double(column) / Double(count) * durationSec
                     if seconds >= startSec && seconds <= end {
                         active.addRect(rect)
                     } else {
