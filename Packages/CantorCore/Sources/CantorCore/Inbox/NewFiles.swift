@@ -40,6 +40,34 @@ public struct FileSuggestion: Codable, Equatable, Sendable {
     }
 }
 
+/// The operator's answer for one file in the New Files list. It starts as the suggestion.
+public struct NewFileAnswer: Equatable, Sendable {
+    public var trackID: UUID
+    public var isPlayback: Bool
+    public var title: String
+    public var category: String
+    public var serviceItem: ServiceItemRef?
+
+    public init(trackID: UUID, isPlayback: Bool, title: String, category: String, serviceItem: ServiceItemRef? = nil) {
+        self.trackID = trackID
+        self.isPlayback = isPlayback
+        self.title = title
+        self.category = category
+        self.serviceItem = serviceItem
+    }
+
+    /// `openItem` says whether a service item still needs a file, so an answer never offers one
+    /// that was filled since Claude suggested it.
+    public init(item: NewFileItem, currentTitle: String, openItem: (ServiceItemRef) -> Bool) {
+        let suggestion = item.suggestion
+        self.init(
+            trackID: item.trackID, isPlayback: suggestion?.isPlayback ?? true,
+            title: suggestion.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? currentTitle,
+            category: suggestion?.category ?? "", serviceItem: suggestion?.serviceItem.flatMap { openItem($0) ? $0 : nil }
+        )
+    }
+}
+
 public struct NewFileItem: Codable, Equatable, Identifiable, Sendable {
     public var trackID: UUID
     public var detectedAt: Date
@@ -151,9 +179,9 @@ public enum PlaybackCategory {
         ("walk-in", ["walk in", "walkin", "countdown"]),
     ]
 
-    /// Every category worth offering: the defaults plus what the library already uses.
-    public static func all(libraryTags: [String]) -> [String] {
-        var result = defaults
+    /// Every category worth offering: the operator's tag list plus what the library already uses.
+    public static func all(saved: [String] = defaults, libraryTags: [String]) -> [String] {
+        var result = saved
         for tag in libraryTags where !result.contains(tag) { result.append(tag) }
         return result
     }

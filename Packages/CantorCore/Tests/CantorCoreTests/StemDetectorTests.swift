@@ -18,6 +18,24 @@ final class StemDetectorTests: XCTestCase {
         XCTAssertNil(reasons[playback.id])
     }
 
+    func testPracticePartsAndDemosAreNotPlaybacks() {
+        let soprano = track("/Drive/Thou Oh Lord/04 Thou Oh Lord - Practice Trax/01 Thou Oh Lord - S PTX.mp3", 300)
+        let alto = track("/Drive/Thou Oh Lord/Parts/02 Thou Oh Lord - A PTX.mp3", 301)
+        let inFolder = track("/Drive/Thou Oh Lord/Practice Trax/Tenor.mp3", 302)
+        let demo = track("/Drive/Redeemed/I Stand Redeemed ENGLISH DEMO.mp3", 240)
+        let listening = track("/Drive/Great I AM/Great_I_AM_-_III_Listening_Demo_B_flat.mp3", 250)
+        let split = track("/Drive/Thou Oh Lord/12_ThouOhLord_0500_Split.mp3", 303)
+        let inKey = track("/Drive/Redeemed/Am_fost_salavat-Cmaj.mp3", 241)
+        let reasons = StemDetector.detect(tracks: [soprano, alto, inFolder, demo, listening, split, inKey])
+        XCTAssertEqual(reasons[soprano.id], "Name says PTX")
+        XCTAssertEqual(reasons[alto.id], "Name says PTX")
+        XCTAssertEqual(reasons[inFolder.id], "In a folder named Practice Trax")
+        XCTAssertEqual(reasons[demo.id], "Name says Demo")
+        XCTAssertEqual(reasons[listening.id], "Name says Demo")
+        XCTAssertNil(reasons[split.id], "a split track is a playback")
+        XCTAssertNil(reasons[inKey.id])
+    }
+
     func testOnlyNearbyFoldersCount() {
         let nested = track("/Music/Stems/Way Maker/Way Maker.wav")
         let distant = track("/Music/Old Stems/Choir/November/Be Still.wav")

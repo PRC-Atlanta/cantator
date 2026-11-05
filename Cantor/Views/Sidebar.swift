@@ -152,7 +152,10 @@ struct SidebarView: View {
             let library = model.library
             libraryRow("All Tracks", "music.note.list", .all, library.playbackTracks.count)
             ForEach(library.allTags, id: \.self) { tag in
-                libraryRow(tag.capitalized, "tag", .tag(tag), library.playbackTracks.filter { $0.tags.contains(tag) }.count)
+                libraryRow(PlaybackCategory.display(tag), "tag", .tag(tag), library.playbackTracks.filter { $0.tags.contains(tag) }.count)
+                    .contextMenu {
+                        Button("Edit Tags…") { model.showingTagEditor = true }.disabled(model.show.showMode)
+                    }
             }
             if !model.inbox.items.isEmpty {
                 Button {

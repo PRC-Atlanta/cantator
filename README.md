@@ -149,21 +149,28 @@ claude auth login
 
 Cantator watches `~/Downloads`, `~/Desktop` and any Google Drive folders under `~/Library/CloudStorage`. Add others in **Settings > Folders**. The first scan makes macOS ask for permission to each location: allow these before a service.
 
-When a new audio file arrives in a watched folder, Cantator shows a **New File** pop-up with a title, a category (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. With Claude on, Claude fills those in; otherwise they are guessed from the file name and folder, and the pop-up says so. Change anything, then **Accept**, **Later**, or **Not a Playback**. Accepting a service item confirms that match. Not a Playback moves the file to **Excluded**.
+When new audio files arrive in a watched folder, Cantator lists them all in one **New Files** window. Each row has a **Playback** checkbox, a title, a tag (Choir, Special, Offertory and so on, the same tags as the library sidebar), and the upcoming service item it looks like it's for. With Claude on, Claude fills those in and says why in the last column; otherwise they are guessed from the file name and folder. Rows are grouped by folder, so a song's playback, parts and demo sit together. Change any row, or select several (Shift-click, Command-click, or Command-A) and use **Selected** or right-click to mark them **Playback** or **Not a Playback** or give them a tag. **Show** narrows the list to playbacks or to the rest. **Apply** files every row at once: playbacks get their title and tag, a service item confirms that match, and the rest move to **Excluded**. **Later** keeps them waiting.
 
-**Settings > Services** has a second way: **Add them to the library quietly**. Then no pop-up appears on its own; files wait under **New Files** in the sidebar for a week, where clicking reviews them, and after that they are ordinary library tracks.
+With **Copy playbacks into ~/Music/Cantor** checked, as it is unless you uncheck it (Cantator remembers), Apply also copies every playback into `~/Music/Cantor`, downloading it from Drive first if it's only there, so it plays even if the original is moved or deleted. Copies run one at a time, wait while a cue is armed or playing, and the Library title says how many are left. A file that can't be copied still plays from where it is, and one alert at the end lists them. The originals stay where they are, and a copy is part of the same track, not a duplicate. Files marked Not a Playback are never copied.
 
-- The pop-up never appears while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
+**Sort with Claude** in the Library toolbar, or right-click, sends the selected tracks through the same window. Use it for files that were already in a folder when Cantator started watching it, which are never treated as new: select **All Tracks**, press Command-A, and choose **Sort with Claude**. The window opens at once and fills in as Claude answers, 25 files at a time. Tracks a service uses are playbacks already, so they are left out. Without Claude the button says **Sort**, and titles and tags are guessed from names.
+
+**Settings > Services** has a second way: **Add them to the library quietly**. Then the window doesn't open on its own; files wait under **New Files** in the sidebar for a week, where clicking reviews them, and after that they are ordinary library tracks.
+
+- The window never opens while a service is loaded, a cue is armed or playing, or a preview is playing. Files wait in **New Files** in the sidebar until you unload.
 - Files that arrive while Cantator is closed show up the next time it starts.
-- Files already in a folder when you add it are not treated as new.
-- Claude gets the filename, the two folders above it, the duration, embedded tags, the category names and the titles of upcoming items that still need a file.
+- Claude gets the filename, the two folders above it, the duration, embedded tags, the tag names and the titles of upcoming items that still need a file.
+
+### Tags
+
+Tags group the library in the sidebar and the Simple view. **Tag** in the Library toolbar adds a tag to the selected tracks, or removes it when they all have it; **New Tag…** there makes a tag and adds it to them. **Edit Tags…**, in the same menu, in **File**, or on a tag in the sidebar, lists every tag with how many tracks have it: click a name to rename it, the trash button deletes it, and the field at the bottom adds one. A rename or delete changes every track that has the tag, and renaming onto another tag merges the two. Deleting a tag never removes tracks.
 
 ### Stems
 
-Stems and click tracks often sit in the same folders as playbacks. Cantator leaves them out of matching, the library lists and the New File pop-up. It treats a file as a stem when:
+Stems, click tracks, practice parts and demos often sit in the same folders as playbacks. Cantator leaves them out of matching, the library lists and New Files, without asking Claude. It treats a file as one when:
 
-- its name says click, stems, BGVs, vox, drums, snare and so on,
-- it is in a folder named Stems or Multitracks, or the folder above it is, or
+- its name says click, stems, BGVs, vox, drums, snare and so on, or PTX, practice, rehearsal or demo, as in "Thou Oh Lord - S PTX" or "Listening Demo",
+- it is in a folder named Stems, Multitracks, Practice or Rehearsal, or the folder above it is, or
 - it is one of three or more files in one folder with the same length, and its name says bass, keys, guide, vocals and so on, or at least two files in that set are named as stems.
 
 A name that says mix, full, master, playback, accompaniment, instrumental, split, key, with, without or no is never treated as a stem, so "Way Maker - Full Mix" and "Holy Forever No BGVs" stay in. Neither does a track confirmed for a service.
@@ -182,7 +189,7 @@ Some file types, such as MKV, AVI, WebM, OGG and WMA, need FFmpeg. When FFmpeg i
 
 While it converts, the Import button and the Library's subtitle show the file and how far it has got, such as "Importing 2 of 5 · 43%". Files are converted one at a time; files chosen while others convert are added to the end. A file already converting finishes, but the next one waits while a cue is armed or playing or Show Mode is on, and the button shows "Import paused" until the show is idle.
 
-Imported files then show in the **New File** pop-up like any new arrival, and wait in **New Files** while a service is loaded. Import can't be started in Show Mode or while a cue is armed or playing.
+Imported files then show in **New Files** like any new arrival, and wait in **New Files** while a service is loaded. Import can't be started in Show Mode or while a cue is armed or playing.
 
 ## EQ
 

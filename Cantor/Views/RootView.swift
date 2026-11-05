@@ -15,6 +15,7 @@ enum SidebarItem: Hashable {
 struct RootView: View {
     @AppEnvironment private var model
     @State private var columns = NavigationSplitViewVisibility.all
+    @State private var newTagName = ""
 
     var body: some View {
         @Bindable var model = model
@@ -75,14 +76,29 @@ struct RootView: View {
         .sheet(isPresented: $model.showingNewService) { NewServiceSheet() }
         // The first-launch question. Older installs answered it by having used Planning Center.
         .sheet(isPresented: Binding(get: { !model.settings.hasChosenServiceSource }, set: { _ in })) { WelcomeSheet() }
-        .sheet(item: Binding(
-            get: { model.newFileToPresent },
-            set: { value in
+        .sheet(isPresented: Binding(
+            get: { model.showsNewFiles },
+            set: { shown in
                 // Esc or a close counts as Later. A sheet closed because playback started is not a choice.
-                if value == nil, model.newFileToPresent != nil { model.snoozeNewFiles() }
+                if !shown, model.showsNewFiles { model.snoozeNewFiles() }
             }
-        )) { item in
-            NewFileSheet(item: item)
+        )) {
+            NewFilesSheet()
+        }
+        .sheet(isPresented: $model.showingTagEditor) { TagEditor() }
+        .alert("New Tag", isPresented: Binding(
+            get: { model.newTagTrackIDs != nil },
+            set: { if !$0 { model.newTagTrackIDs = nil } }
+        )) {
+            TextField("Name", text: $newTagName)
+            Button("Add") {
+                model.addTag(newTagName, to: model.newTagTrackIDs ?? [])
+                newTagName = ""
+            }
+            Button("Cancel", role: .cancel) { newTagName = "" }
+        } message: {
+            let count = model.newTagTrackIDs?.count ?? 0
+            Text(count == 0 ? "The tag is added to the list." : "The tag is added to the \(count == 1 ? "selected track" : "\(count) selected tracks").")
         }
         .alert("Not a Playback?", isPresented: Binding(
             get: { model.pendingExclusion != nil },

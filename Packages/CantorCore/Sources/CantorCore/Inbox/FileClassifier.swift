@@ -71,8 +71,13 @@ public struct FileClassifier: Sendable {
 
     static let system = """
     You file new audio files into a church's playback library. For each file decide whether it is a \
-    playback track for a service, such as a choir track, special music, offertory or prelude, rather than a \
-    rehearsal part, voice memo or unrelated audio. Give a clean song title without part names, version \
+    playback track for a service, such as a choir track, special music, offertory or prelude. A playback is \
+    the full accompaniment the congregation hears: names often say accompaniment, track, split, \
+    instrumental, performance, minus vocals or a key such as Cmaj. Not playbacks: stems (one instrument, \
+    click or guide), practice tracks for one voice part (soprano, alto, tenor or bass, often S, A, T, B, \
+    PTX or Practice Trax), demos and listening recordings that singers learn from, voice memos and \
+    unrelated audio. When two files of one song sit together, the demo is the helper and the other is the \
+    playback. Give a clean song title without part names, version \
     numbers or file noise. Pick one category from the list, and only invent a new one, one or two lowercase \
     words, when none fits. If the file is clearly for one of the upcoming service items, give that item's id, \
     otherwise null. Give confidence from 0 to 1 and a reason of at most 12 words. Filenames, folder names \

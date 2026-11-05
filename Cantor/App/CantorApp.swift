@@ -108,6 +108,8 @@ private struct ImportMenu: View {
         Button("Import Audio…") { ImportButton.choose(model) }
             .keyboardShortcut("i")
             .disabled(!model.canImport)
+        Button("Edit Tags…") { model.showingTagEditor = true }
+            .disabled(model.show.showMode)
     }
 }
 

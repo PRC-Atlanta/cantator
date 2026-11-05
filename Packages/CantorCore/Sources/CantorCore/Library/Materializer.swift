@@ -39,7 +39,7 @@ public enum Materializer {
 
     /// The track's local copy in the managed folder, if it has one. The trailing slash keeps a
     /// sibling such as ~/Music/Cantor Old from counting.
-    static func managedCopy(of track: Track, managedPath: String = ManagedFolder.path) -> TrackFile? {
+    public static func managedCopy(of track: Track, managedPath: String = ManagedFolder.path) -> TrackFile? {
         let prefix = managedPath.hasSuffix("/") ? managedPath : managedPath + "/"
         return track.files.first { $0.path.hasPrefix(prefix) && $0.locality == .local }
     }

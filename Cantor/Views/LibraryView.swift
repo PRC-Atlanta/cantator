@@ -150,6 +150,9 @@ struct LibraryView: View {
             return status.paused ? "Import paused until the show is idle" : "Importing \(status.filename) · \(status.percent)%"
         }
         if model.isScanning { return "Scanning" }
+        if model.copiesLeft > 0 {
+            return model.show.state.holdsHouseEngine ? "Copying paused until the show is idle" : "Copying \(model.copiesLeft) to ~/Music/Cantor"
+        }
         if model.analyzingCount > 0 { return "Analyzing \(model.analyzingCount)" }
         if filter == .excluded { return "\(model.library.excludedTracks.count) left out of matching" }
         return "\(model.library.playbackTracks.count) tracks"
@@ -270,27 +273,25 @@ private struct TrackActions: View {
         .help("This is a playback: bring back from Excluded")
 
         Button {
-            for track in tracks where !model.makingLocal.contains(track.id) { model.makeLocal(track) }
+            model.queueCopies(tracks.map(\.id))
         } label: {
             Label("Make Local", systemImage: "arrow.down.circle")
         }
         .disabled(tracks.isEmpty)
         .help("Copy to ~/Music/Cantor, downloading from Drive if needed")
 
-        Menu {
-            ForEach(PlaybackCategory.all(libraryTags: model.library.allTags), id: \.self) { tag in
-                let all = !tracks.isEmpty && tracks.allSatisfy { $0.tags.contains(tag) }
-                Button {
-                    model.toggleTag(tag, on: ids)
-                } label: {
-                    if all { Label(PlaybackCategory.display(tag), systemImage: "checkmark") } else { Text(PlaybackCategory.display(tag)) }
-                }
-            }
+        TagMenu(ids: ids)
+
+        Button {
+            model.sortWithClaude(included)
+            clearSelection()
         } label: {
-            Label("Tag", systemImage: "tag")
+            Label(model.settings.llmEnabled ? "Sort with Claude" : "Sort", systemImage: "sparkle")
         }
-        .disabled(tracks.isEmpty || locked)
-        .help("Add a tag to the selected tracks, or remove it when they all have it")
+        .disabled(included.isEmpty || locked)
+        .help(model.settings.llmEnabled
+            ? "Ask Claude which are playbacks, with a title and tag for each, and review them all in one list"
+            : "Review the selected tracks in one list, with titles and tags guessed from their names. Turn on Claude in Settings for better suggestions.")
     }
 }
 
@@ -453,21 +454,18 @@ private struct TrackInspector: View {
                 TextField("Title", text: stringBinding(\.title))
                 TextField("Key", text: stringBinding(\.key))
                 TextField("Notes", text: stringBinding(\.notes), axis: .vertical).lineLimit(2...4)
-                HStack {
-                    tagToggle("choir")
-                    tagToggle("special")
-                    tagToggle("offertory")
+                LabeledContent("Tags") {
+                    HStack {
+                        Text(track.tags.isEmpty ? "None" : track.tags.map(PlaybackCategory.display).joined(separator: ", "))
+                            .foregroundStyle(.secondary)
+                        TagMenu(ids: [track.id]).labelStyle(.iconOnly).fixedSize()
+                    }
                 }
                 TextField("Add tag", text: $tagText)
                     .onSubmit {
-                        let tag = tagText.trimmingCharacters(in: .whitespaces).lowercased()
-                        guard !tag.isEmpty else { return }
-                        model.updateTrack(track.id) { if !$0.tags.contains(tag) { $0.tags.append(tag) } }
+                        model.addTag(tagText, to: [track.id])
                         tagText = ""
                     }
-                if !track.tags.isEmpty {
-                    LabeledContent("Tags", value: track.tags.joined(separator: ", "))
-                }
             }
 
             Section("Files") {
@@ -489,19 +487,6 @@ private struct TrackInspector: View {
 
     private func stringBinding(_ path: WritableKeyPath<Track, String>) -> Binding<String> {
         Binding(get: { track[keyPath: path] }, set: { value in model.updateTrack(track.id) { $0[keyPath: path] = value } })
-    }
-
-    private func tagToggle(_ tag: String) -> some View {
-        Toggle(tag.capitalized, isOn: Binding(
-            get: { track.tags.contains(tag) },
-            set: { on in
-                model.updateTrack(track.id) {
-                    $0.tags.removeAll { $0 == tag }
-                    if on { $0.tags.append(tag) }
-                }
-            }
-        ))
-        .toggleStyle(.checkbox)
     }
 
     private func secondsField(_ title: String, value: Double, set: @escaping (Double) -> Void) -> some View {

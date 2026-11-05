@@ -1032,6 +1032,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var importAllServiceTypes = true
     /// Service types left unchecked. The service picker still lists them.
     public var hiddenServiceTypeIDs: Set<String> = []
+    /// The tags offered for tracks, in order. A tag a track still has is offered too.
+    public var tags: [String] = PlaybackCategory.defaults
+    /// Applying New Files copies each playback into ~/Music/Cantor, downloading it from Drive if
+    /// needed, so it plays even if the original moves or is deleted.
+    public var copyPlaybacksToCantor = true
 
     /// The service types Sync Now skips.
     public var skippedServiceTypeIDs: Set<String> { importAllServiceTypes ? [] : hiddenServiceTypeIDs }
@@ -1062,6 +1067,28 @@ public struct AppSettings: Codable, Equatable, Sendable {
         serviceTypes = try c.decodeIfPresent([String: String].self, forKey: .serviceTypes) ?? serviceTypes
         importAllServiceTypes = try c.decodeIfPresent(Bool.self, forKey: .importAllServiceTypes) ?? importAllServiceTypes
         hiddenServiceTypeIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenServiceTypeIDs) ?? hiddenServiceTypeIDs
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? tags
+        copyPlaybacksToCantor = try c.decodeIfPresent(Bool.self, forKey: .copyPlaybacksToCantor) ?? copyPlaybacksToCantor
+    }
+
+    /// Adds a tag to the list and returns its cleaned name, or nil when nothing is left of it.
+    @discardableResult
+    public mutating func addTag(_ name: String) -> String? {
+        let tag = FileClassifier.cleanCategory(name)
+        guard !tag.isEmpty else { return nil }
+        if !tags.contains(tag) { tags.append(tag) }
+        return tag
+    }
+
+    /// Renames in place, keeping the tag's position. Renaming onto a tag already listed merges them.
+    public mutating func renameTag(_ old: String, to new: String) {
+        guard old != new, !new.isEmpty else { return }
+        if let index = tags.firstIndex(of: old), !tags.contains(new) {
+            tags[index] = new
+        } else {
+            tags.removeAll { $0 == old }
+            if !tags.contains(new) { tags.append(new) }
+        }
     }
 
     /// A service of a hidden type stays in the sidebar when it was picked by hand or pinned.

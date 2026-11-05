@@ -1,13 +1,15 @@
 import Foundation
 
-/// Finds stems and click tracks that share folders with playbacks, from filenames, folder names and
-/// sets of files with the same length. It only proposes exclusions. The operator can bring any track back.
+/// Finds stems, click tracks, practice parts and demos that share folders with playbacks, from
+/// filenames, folder names and sets of files with the same length. It only proposes exclusions. The operator can bring any track back.
 public enum StemDetector {
-    static let folderWords: Set<String> = ["stem", "stems", "multitrack", "multitracks", "multis"]
+    static let folderWords: Set<String> = ["stem", "stems", "multitrack", "multitracks", "multis", "practice", "rehearsal", "ptx"]
     /// Words that mark a stem on their own.
     static let strongWords: Set<String> = [
         "click", "clicktrack", "metronome", "stem", "stems", "multitrack", "multitracks", "bgv", "bgvs", "vox",
         "drums", "kick", "snare", "toms", "overheads", "perc", "percussion",
+        // A part to learn from, such as "S PTX", "Practice Trax" or a listening demo, is never played in a service.
+        "ptx", "practice", "rehearsal", "demo", "demos",
     ]
     /// Words that also appear in song titles and playback names, so they count only inside a same-length set.
     static let weakWords: Set<String> = [
@@ -62,7 +64,7 @@ public enum StemDetector {
         let words = nameWords(in: file.filename)
         guard words.isDisjoint(with: keepWords) else { return nil }
         if let word = words.intersection(strongWords).sorted().first {
-            return "Name says \(word.capitalized)"
+            return "Name says \(display(word))"
         }
         // Only the folder the file is in and the one above it, as in Stems/Song or Song/Stems.
         let folders = file.url.deletingLastPathComponent().pathComponents.suffix(2)
@@ -70,6 +72,10 @@ public enum StemDetector {
             return "In a folder named \(folder)"
         }
         return nil
+    }
+
+    static func display(_ word: String) -> String {
+        word == "ptx" ? "PTX" : word.capitalized
     }
 
     /// Tokens, plus pairs run back together when that makes a stem word, since "MultiTracks" and

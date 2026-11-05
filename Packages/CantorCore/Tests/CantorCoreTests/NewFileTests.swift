@@ -283,7 +283,57 @@ final class FileClassifierTests: XCTestCase {
 
     func testCategoryListAddsLibraryTags() {
         XCTAssertEqual(PlaybackCategory.all(libraryTags: ["choir", "easter"]).last, "easter")
+        XCTAssertEqual(PlaybackCategory.all(saved: ["youth", "choir"], libraryTags: ["choir", "easter"]), ["youth", "choir", "easter"])
         XCTAssertEqual(PlaybackCategory.display(""), "Uncategorized")
+    }
+
+    func testAnswerStartsFromTheSuggestion() {
+        let open = ServiceItemRef(planID: "1", cueID: "a")
+        let filled = ServiceItemRef(planID: "1", cueID: "b")
+        var item = NewFileItem(trackID: UUID())
+        let unanswered = NewFileAnswer(item: item, currentTitle: "Track 3", openItem: { _ in true })
+        XCTAssertTrue(unanswered.isPlayback)
+        XCTAssertEqual(unanswered.title, "Track 3")
+
+        item.suggestion = FileSuggestion(title: "Thou, O Lord", category: "choir", isPlayback: false, serviceItem: open)
+        let answer = NewFileAnswer(item: item, currentTitle: "Track 3", openItem: { $0 == open })
+        XCTAssertFalse(answer.isPlayback)
+        XCTAssertEqual(answer.title, "Thou, O Lord")
+        XCTAssertEqual(answer.category, "choir")
+        XCTAssertEqual(answer.serviceItem, open)
+
+        item.suggestion = FileSuggestion(title: "", category: "", serviceItem: filled)
+        let late = NewFileAnswer(item: item, currentTitle: "Track 3", openItem: { $0 == open })
+        XCTAssertEqual(late.title, "Track 3", "an empty title keeps the track's")
+        XCTAssertNil(late.serviceItem, "an item filled since Claude answered is not offered")
+    }
+
+    func testTagsCanBeAddedRenamedAndRemoved() throws {
+        var settings = AppSettings()
+        XCTAssertEqual(settings.tags, PlaybackCategory.defaults)
+        XCTAssertEqual(settings.addTag("  Youth Choir! "), "youth choir")
+        XCTAssertNil(settings.addTag(" ?! "))
+        settings.renameTag("special", to: "special music")
+        XCTAssertEqual(settings.tags[1], "special music", "a rename keeps its place")
+        settings.renameTag("prelude", to: "choir")
+        XCTAssertEqual(settings.tags.filter { $0 == "choir" }.count, 1, "renaming onto a listed tag merges")
+        XCTAssertFalse(settings.tags.contains("prelude"))
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.tags, settings.tags)
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).tags, PlaybackCategory.defaults, "older settings offer the defaults")
+
+        var library = Library()
+        var both = Track(title: "Both")
+        both.tags = ["prelude", "choir", "easter"]
+        var one = Track(title: "One")
+        one.tags = ["prelude"]
+        one.exclusion = Exclusion(reason: "stem", byOperator: false)
+        library.tracks = [both, one]
+        library.renameTag("prelude", to: "choir")
+        XCTAssertEqual(library.track(id: both.id)?.tags, ["choir", "easter"])
+        XCTAssertEqual(library.track(id: one.id)?.tags, ["choir"], "excluded tracks are renamed too")
+        library.removeTag("choir")
+        XCTAssertEqual(library.allTags, ["easter"])
     }
 
     func testTagCleaningKeepsKnownKeys() {

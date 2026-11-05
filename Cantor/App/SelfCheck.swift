@@ -65,7 +65,7 @@ enum SelfCheck {
         }
         await waitUntil(timeout: 40) { !model.inbox.ready.isEmpty }
         note("new files during service: \(model.inbox.items.count), suggestion \(model.inbox.ready.first?.suggestion.map { "\($0.title) / \($0.category) / claude \($0.byClaude) / \($0.note ?? "")" } ?? "none")")
-        note("pop-up during service: \(model.newFileToPresent == nil ? "held" : "SHOWN")")
+        note("pop-up during service: \(model.showsNewFiles ? "SHOWN" : "held")")
 
         model.selection = .show
         show.go()
@@ -120,11 +120,12 @@ enum SelfCheck {
         model.updateSettings { $0.appearance = "dark" }
         model.unloadService()
         model.selection = .library(.all)
-        await waitUntil { model.newFileToPresent != nil }
-        note("pop-up after unload: \(model.newFileToPresent == nil ? "held" : "shown")")
+        await waitUntil { model.showsNewFiles }
+        note("pop-up after unload: \(model.showsNewFiles ? "shown" : "held")")
         await snapshotSheet("new-file", directory)
-        if let item = model.newFileToPresent, let suggestion = item.suggestion {
-            model.acceptNewFile(item.trackID, title: suggestion.title, category: suggestion.category, serviceItem: nil, copyToCantor: false)
+        if model.showsNewFiles, let item = model.inbox.ready.first, let suggestion = item.suggestion {
+            let answer = NewFileAnswer(trackID: item.trackID, isPlayback: true, title: suggestion.title, category: suggestion.category)
+            model.applyNewFiles([answer])
             let track = model.library.track(id: item.trackID)
             note("accepted: \(track?.title ?? "?") tags \(track?.tags ?? []), inbox \(model.inbox.items.count)")
         }

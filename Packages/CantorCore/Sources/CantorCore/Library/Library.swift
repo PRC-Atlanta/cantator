@@ -211,4 +211,19 @@ public struct Library: Codable, Equatable, Sendable {
     }
 
     public var allTags: [String] { Array(Set(tracks.flatMap(\.tags))).sorted() }
+
+    /// Renames a tag on every track, excluded ones too. A track that had both names keeps one.
+    public mutating func renameTag(_ old: String, to new: String) {
+        guard old != new, !new.isEmpty else { return }
+        for index in tracks.indices where tracks[index].tags.contains(old) {
+            tracks[index].tags = tracks[index].tags.reduce(into: []) { result, tag in
+                let renamed = tag == old ? new : tag
+                if !result.contains(renamed) { result.append(renamed) }
+            }
+        }
+    }
+
+    public mutating func removeTag(_ tag: String) {
+        for index in tracks.indices { tracks[index].tags.removeAll { $0 == tag } }
+    }
 }

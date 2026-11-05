@@ -69,13 +69,13 @@ private struct ServicesSettings: View {
                     get: { model.settings.newFileHandling },
                     set: { value in model.updateSettings { $0.newFileHandling = value } }
                 )) {
-                    Text("Ask me about each one").tag(NewFileHandling.ask)
+                    Text("Show me the list").tag(NewFileHandling.ask)
                     Text("Add them to the library quietly").tag(NewFileHandling.quiet)
                 }
                 .pickerStyle(.radioGroup)
             } footer: {
                 Text(model.settings.newFileHandling == .ask
-                    ? "A New File pop-up with a title and category guessed from the name, once no service is loaded and nothing is playing."
+                    ? "The New Files list, with titles and tags guessed from the names, once no service is loaded and nothing is playing."
                     : "Files wait under New Files in the sidebar for \(NewFileInbox.quietWaitDays) days, so you can title and file them when you have time. After that they are ordinary library tracks.")
             }
             Section {
@@ -418,7 +418,7 @@ private struct FolderSettings: View {
             }
             // Adding a folder starts a full scan, and its panel takes the keys.
             .disabled(model.show.showMode)
-            Text("Cantator watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear in the New File pop-up, once no service is loaded and nothing is playing.")
+            Text("Cantator watches these folders while it is open, and catches up when it starts. Files that arrive after a folder is added appear under New Files, once no service is loaded and nothing is playing.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if !model.unreadableFiles.isEmpty {

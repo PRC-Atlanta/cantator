@@ -36,12 +36,15 @@ final class AppModel {
     var pendingExclusion: PendingExclusion?
     var status: String?
     var makingLocal: Set<UUID> = []
+    /// Tracks waiting to be copied into ~/Music/Cantor, one at a time. See `queueCopies`.
+    private(set) var copyQueue: [UUID] = []
+    private var copyFailures: [String] = []
     var unreadableFiles: [String] = []
     var systemSoundStuckOnHouse = false
     // However the last waiting file leaves, answered, excluded, folded into a track or dropped as
     // stale, the review the operator opened from New Files is over, so quiet handling stays quiet.
     var inbox: NewFileInbox {
-        didSet { if inbox.ready.isEmpty { reviewingNewFiles = false } }
+        didSet { if inbox.items.isEmpty { reviewingNewFiles = false } }
     }
     var isClassifying = false
     var claudeConnection = ClaudeConnection.checking
@@ -53,10 +56,13 @@ final class AppModel {
     var lastPlanningCenterSource: PlanningCenterSource?
     /// Set by Later. Cleared when another new file arrives or the app starts again.
     var newFilesSnoozed = false
-    /// The operator clicked New Files, so the pop-up shows even when new files are handled quietly.
+    /// The operator clicked New Files or Sort with Claude, so the list shows even when new files are handled quietly.
     var reviewingNewFiles = false
     /// The New Service sheet, and tracks dropped on New Service… that the new service starts with.
     var showingNewService = false
+    var showingTagEditor = false
+    /// The tracks New Tag… was chosen for, while it asks for the name.
+    var newTagTrackIDs: Set<UUID>?
     var newServiceTrackIDs: [UUID] = []
     /// The Settings pane to show. The sidebar's outputs row opens Outputs.
     var settingsTab = SettingsTab.outputs
@@ -87,7 +93,7 @@ final class AppModel {
     @ObservationIgnored private(set) var imports: ImportQueue!
 
     @ObservationIgnored private let houseBus = HouseBus()
-    /// Imported files the next scan should send to the New File pop-up. The managed folder has no
+    /// Imported files the next scan should send to New Files. The managed folder has no
     /// watch start, so the scan alone would not count them as new.
     @ObservationIgnored private var pendingImports: Set<String> = []
     @ObservationIgnored private let sleepGuard = SleepGuard()
@@ -224,6 +230,7 @@ final class AppModel {
         if tickCount.isMultiple(of: 30) {
             show.checkDevice()
             classifyNewFiles()
+            copyNext()
         }
         if tickCount.isMultiple(of: 30 * 300) { refreshClaudeConnection() }
         if showLoadPending, loadedPlanID != nil, show.load(cues: showCues()) {
@@ -556,7 +563,7 @@ final class AppModel {
     }
 
     /// Converts the chosen files into ~/Music/Cantor, then scans so they reach the library and the
-    /// New File pop-up. The queue waits between files while a cue is engaged.
+    /// New Files list. The queue waits between files while a cue is engaged.
     func importFiles(_ urls: [URL]) {
         guard canImport, !urls.isEmpty else { return }
         imports.add(urls)
@@ -578,6 +585,53 @@ final class AppModel {
                 alert = error.localizedDescription
             }
         }
+    }
+
+    /// Copies many tracks into ~/Music/Cantor, one at a time, so hundreds of files never download
+    /// from Drive or copy all at once. Waits while a cue is armed or playing, and reports every
+    /// file that could not be copied in one alert once the queue is done.
+    func queueCopies(_ ids: [UUID]) {
+        let waiting = Set(copyQueue)
+        copyQueue += ids.filter { id in
+            !waiting.contains(id) && !makingLocal.contains(id)
+                && library.track(id: id).map { Materializer.managedCopy(of: $0) == nil } == true
+        }
+        copyNext()
+    }
+
+    /// How many tracks are still to be copied, the one copying now included.
+    var copiesLeft: Int { copyQueue.count + makingLocal.count }
+
+    private func copyNext() {
+        guard makingLocal.isEmpty, !show.state.holdsHouseEngine else { return }
+        guard !copyQueue.isEmpty else {
+            reportCopyFailures()
+            return
+        }
+        let id = copyQueue.removeFirst()
+        guard let track = library.track(id: id) else { return copyNext() }
+        makingLocal.insert(id)
+        Task {
+            do {
+                let file = try await Materializer.makeLocal(track: track)
+                library.update(id: id) { value in
+                    if !value.files.contains(file) { value.files.append(file) }
+                }
+                scheduleSave()
+            } catch {
+                copyFailures.append(track.title)
+            }
+            makingLocal.remove(id)
+            if copyQueue.isEmpty { analyzePending() }
+            copyNext()
+        }
+    }
+
+    private func reportCopyFailures() {
+        guard !copyFailures.isEmpty else { return }
+        let names = copyFailures.prefix(5).joined(separator: ", ") + (copyFailures.count > 5 ? " and \(copyFailures.count - 5) more" : "")
+        alert = "\(copyFailures.count == 1 ? "1 file" : "\(copyFailures.count) files") could not be copied into ~/Music/Cantor: \(names). They still play from where they are. Choose Make Local on them to try again."
+        copyFailures = []
     }
 
     /// Effective static gain: loudness correction plus operator trim.
@@ -1611,7 +1665,7 @@ final class AppModel {
         // One batch per run. The tick starts the next only while the gate still allows it.
         let tracks = inbox.awaitingSuggestion.prefix(FileClassifier.batchSize).compactMap { library.track(id: $0.trackID) }
         let upcoming = upcomingItems()
-        let categories = PlaybackCategory.all(libraryTags: library.allTags)
+        let categories = tagNames
         let useClaude = settings.llmEnabled
         let model = settings.llmModel
         let roots = scanRoots
@@ -1695,12 +1749,13 @@ final class AppModel {
         )
     }
 
-    /// The file the pop-up shows now, if it may show at all. Handled quietly, files wait in the
-    /// sidebar until the operator clicks New Files.
-    var newFileToPresent: NewFileItem? {
-        guard !newFilesSnoozed, alert == nil, newFilesCanAppear, settings.hasChosenServiceSource, !showingNewService else { return nil }
-        guard settings.newFileHandling == .ask || reviewingNewFiles else { return nil }
-        return inbox.ready.first
+    /// Whether the New Files list shows now. Handled quietly, files wait in the sidebar until the
+    /// operator clicks New Files.
+    var showsNewFiles: Bool {
+        guard !newFilesSnoozed, alert == nil, newFilesCanAppear, settings.hasChosenServiceSource, !showingNewService else { return false }
+        guard settings.newFileHandling == .ask || reviewingNewFiles else { return false }
+        // Opened by the operator, the list shows at once and fills in as Claude answers.
+        return !inbox.ready.isEmpty || (reviewingNewFiles && !inbox.items.isEmpty)
     }
 
     func reviewNewFiles() {
@@ -1713,28 +1768,96 @@ final class AppModel {
         reviewingNewFiles = false
     }
 
-    /// The operator's answer from the pop-up. Matching a service item here is the operator confirming it.
-    func acceptNewFile(_ id: UUID, title: String, category: String, serviceItem: ServiceItemRef?, copyToCantor: Bool) {
-        guard newFilesCanAppear else { return }
-        let category = FileClassifier.cleanCategory(category)
-        library.update(id: id) { track in
-            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { track.title = trimmed }
-            if !category.isEmpty, !track.tags.contains(category) { track.tags.append(category) }
+    /// Sends library tracks through the New Files list, so Claude sorts files that were already in
+    /// a folder when Cantor started watching it. A track a service uses is a playback already, so it
+    /// stays out. A track asked about before is asked afresh.
+    func sortWithClaude(_ ids: Set<UUID>) {
+        guard !show.showMode else { return }
+        let inUse = confirmedTrackIDs
+        let chosen = library.playbackTracks.map(\.id).filter { ids.contains($0) && !inUse.contains($0) }
+        guard !chosen.isEmpty else { return }
+        for id in chosen { inbox.remove(id) }
+        inbox.add(chosen)
+        reviewNewFiles()
+        scheduleSave()
+        classifyNewFiles()
+    }
+
+    /// The operator's answers from the New Files list, applied together. Matching a service item
+    /// here is the operator confirming it. A track a service uses is never excluded from here.
+    func applyNewFiles(_ answers: [NewFileAnswer]) {
+        guard newFilesCanAppear, !answers.isEmpty else { return }
+        let inUse = confirmedTrackIDs
+        let waiting = Set(inbox.items.map(\.trackID))
+        var tagsChanged = false
+        var toCopy: [UUID] = []
+        for answer in answers where waiting.contains(answer.trackID) && library.track(id: answer.trackID) != nil {
+            inbox.remove(answer.trackID)
+            guard answer.isPlayback else {
+                if !inUse.contains(answer.trackID) { library.exclude(id: answer.trackID) }
+                continue
+            }
+            let before = settings.tags
+            let category = settings.addTag(answer.category) ?? ""
+            tagsChanged = tagsChanged || settings.tags != before
+            library.update(id: answer.trackID) { track in
+                let title = answer.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty { track.title = title }
+                if !category.isEmpty, !track.tags.contains(category) { track.tags.append(category) }
+            }
+            if let ref = answer.serviceItem, let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: answer.trackID) {
+                confirm(planID: ref.planID, cue: cue, track: track)
+            }
+            if settings.copyPlaybacksToCantor { toCopy.append(answer.trackID) }
         }
-        if let ref = serviceItem, let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: id) {
-            confirm(planID: ref.planID, cue: cue, track: track)
-        }
-        if copyToCantor, let track = library.track(id: id) { makeLocal(track) }
-        inbox.remove(id)
+        if tagsChanged { record("settings") { try settingsFile.save(settings) } }
         rankAllPlans()
+        scheduleSave()
+        queueCopies(toCopy)
+    }
+
+    /// The New Files list's copy checkbox, remembered for next time.
+    func setCopyPlaybacksToCantor(_ on: Bool) {
+        settings.copyPlaybacksToCantor = on
+        record("settings") { try settingsFile.save(settings) }
+    }
+
+    // MARK: Tags
+
+    /// The tags to offer: the operator's list, then any a track still has.
+    var tagNames: [String] { PlaybackCategory.all(saved: settings.tags, libraryTags: library.allTags) }
+
+    /// Adds a tag to the list, and to the tracks given. Returns the cleaned name.
+    @discardableResult
+    func addTag(_ name: String, to ids: Set<UUID> = []) -> String? {
+        guard !show.showMode, let tag = settings.addTag(name) else { return nil }
+        record("settings") { try settingsFile.save(settings) }
+        for id in ids {
+            updateTrack(id) { if !$0.tags.contains(tag) { $0.tags.append(tag) } }
+        }
+        return tag
+    }
+
+    /// Renames the tag everywhere, on excluded tracks too. Renaming onto another tag merges them.
+    func renameTag(_ old: String, to name: String) {
+        let new = FileClassifier.cleanCategory(name)
+        guard !show.showMode, !new.isEmpty, new != old else { return }
+        settings.renameTag(old, to: new)
+        library.renameTag(old, to: new)
+        if selection == .library(.tag(old)) { selection = .library(.tag(new)) }
+        if simpleTag == old { simpleTag = new }
+        record("settings") { try settingsFile.save(settings) }
         scheduleSave()
     }
 
-    func skipNewFile(_ id: UUID) {
-        library.exclude(id: id)
-        inbox.remove(id)
-        rankAllPlans()
+    /// Takes the tag off the list and off every track. The tracks stay.
+    func deleteTag(_ tag: String) {
+        guard !show.showMode else { return }
+        settings.tags.removeAll { $0 == tag }
+        library.removeTag(tag)
+        if selection == .library(.tag(tag)) { selection = .library(.all) }
+        if simpleTag == tag { simpleTag = nil }
+        record("settings") { try settingsFile.save(settings) }
         scheduleSave()
     }
 
