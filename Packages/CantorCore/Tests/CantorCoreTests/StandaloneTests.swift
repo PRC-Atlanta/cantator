@@ -148,6 +148,30 @@ final class ManualServiceTests: XCTestCase {
         XCTAssertEqual(ServicePlan.pruningPastManual(plans, keepWeeks: 2, loadedID: nil, now: now).map(\.id), ["99"])
     }
 
+    func testPinnedServicesStayWhateverTheirDate() throws {
+        let day = 24 * 3600.0
+        let now = sunday.addingTimeInterval(400 * day)
+        var practice = ServicePlan.manual(title: "Practice", date: sunday)
+        practice.pinned = true
+        var synced = ServicePlan(id: "99", serviceTypeID: "1", serviceTypeName: "Sunday", title: "", dates: "", sortDate: sunday)
+        synced.pinned = true
+        let plans = [practice, synced]
+        XCTAssertEqual(ServicePlan.pruningPastManual(plans, keepWeeks: 1, loadedID: nil, now: now).count, 2, "age never removes a pinned service")
+        let afterSync = ServicePlan.applySync(existing: plans, fresh: [], loadedID: nil, now: now)
+        XCTAssertEqual(Set(afterSync.map(\.id)), [practice.id, "99"], "a sync that no longer lists it keeps it")
+        var fresh = synced
+        fresh.pinned = false
+        XCTAssertTrue(synced.merging(fresh: fresh).pinned, "a sync never unpins")
+
+        let decoded = try JSONDecoder().decode(ServicePlan.self, from: JSONEncoder().encode(practice))
+        XCTAssertTrue(decoded.pinned)
+        var settings = AppSettings()
+        settings.importAllServiceTypes = false
+        settings.hiddenServiceTypeIDs = ["1"]
+        XCTAssertTrue(settings.hides(ServicePlan(id: "98", serviceTypeID: "1", serviceTypeName: "", title: "", dates: "", sortDate: nil)))
+        XCTAssertFalse(settings.hides(synced), "a pinned service of a hidden type still shows")
+    }
+
     func testABuiltServiceIsNeverStale() {
         var cue = ServicePlan.manualCue(title: "Anthem")
         var track = Track(files: [TrackFile(path: "/x/a.mp3", locality: .local)], title: "A")

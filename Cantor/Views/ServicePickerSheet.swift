@@ -4,7 +4,7 @@ import SwiftUI
 /// Every service from six weeks back to three weeks ahead. Choosing one reads its items from
 /// Planning Center and adds it to the sidebar.
 struct ServicePickerSheet: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var selected: String?
     @State private var serviceType = ""
 

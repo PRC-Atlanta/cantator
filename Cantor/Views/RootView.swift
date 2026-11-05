@@ -13,7 +13,7 @@ enum SidebarItem: Hashable {
 }
 
 struct RootView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {

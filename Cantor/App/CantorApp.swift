@@ -20,6 +20,7 @@ struct CantorApp: App {
                 .background(WindowCapture())
                 .windowDismissBehavior(model.show.showMode || model.show.state.holdsHouseEngine ? .disabled : .automatic)
                 .onAppear {
+                    AppModel.current = model
                     delegate.model = model
                     delegate.updates.model = model
                     KeyRouter.shared.install(model: model)
@@ -87,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private struct UpdatesMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let updates: Updates
 
     var body: some View {
@@ -97,7 +98,7 @@ private struct UpdatesMenu: View {
 }
 
 private struct ImportMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Button("New Service…") { model.startNewService() }
@@ -110,7 +111,7 @@ private struct ImportMenu: View {
 }
 
 private struct ShowModeMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Button(model.show.showMode ? "Leave Show Mode" : "Enter Show Mode") {
@@ -140,7 +141,7 @@ private struct WindowCapture: NSViewRepresentable {
 /// The keys are in the titles rather than set as menu shortcuts. A bare-key menu shortcut would
 /// fire from a text field in Settings, and only KeyRouter knows which window a key was aimed at.
 private struct TransportMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show

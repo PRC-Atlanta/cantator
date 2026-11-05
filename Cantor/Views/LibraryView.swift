@@ -4,7 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let filter: LibraryFilter
     @State private var selection: Set<UUID> = []
     @State private var search = ""
@@ -158,7 +158,7 @@ struct LibraryView: View {
 
 /// Picks audio files and converts them into ~/Music/Cantor as m4a. Used in the toolbar and the File menu.
 struct ImportButton: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Button {
@@ -208,7 +208,7 @@ struct ImportButton: View {
 /// Emergency: one click on a track, one click here, and it plays on the house output. It skips
 /// the service, the arm-to-GO wait and the Show Mode lock, then hands over to the Show view.
 private struct PlayNowButton: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let track: Track?
 
     var body: some View {
@@ -242,7 +242,7 @@ private struct PlayNowButton: View {
 }
 
 private struct TrackActions: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let ids: Set<UUID>
     let clearSelection: () -> Void
 
@@ -296,7 +296,7 @@ private struct TrackActions: View {
 
 /// Shown in place of the track inspector when several tracks are selected.
 private struct SelectionInspector: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let ids: Set<UUID>
     let clearSelection: () -> Void
 
@@ -331,7 +331,7 @@ private struct SelectionInspector: View {
 }
 
 private struct TrackInspector: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @Environment(\.openWindow) private var openWindow
     let track: Track
     @State private var tagText = ""
@@ -517,7 +517,7 @@ private struct TrackInspector: View {
 
 /// Dragging near a boundary moves it. Dragging never plays anything.
 private struct WaveformEditor: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let track: Track
     @State private var dragging: Boundary?
 

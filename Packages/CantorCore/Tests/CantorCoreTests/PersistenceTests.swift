@@ -65,7 +65,7 @@ final class LenientDecodingTests: XCTestCase {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(plan)) as? [String: Any])
-        XCTAssertEqual(Set(object.keys), ["id", "serviceTypeID", "serviceTypeName", "title", "dates", "serviceTimes", "syncedAt", "cues", "picked"])
+        XCTAssertEqual(Set(object.keys), ["id", "serviceTypeID", "serviceTypeName", "title", "dates", "serviceTimes", "syncedAt", "cues", "picked", "pinned"])
         let cueObject = try XCTUnwrap((object["cues"] as? [[String: Any]])?.first)
         XCTAssertNil(cueObject["attachmentsUnavailable"], "sync markers are not saved")
 

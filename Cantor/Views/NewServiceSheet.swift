@@ -4,7 +4,7 @@ import SwiftUI
 /// New Service…: a name, a date and time, and what to start from. A copy or a template brings the
 /// sections and item titles, never the tracks.
 struct NewServiceSheet: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var title = "Sunday Morning"
     @State private var date = NewServiceSheet.nextSunday()
     @State private var start = AppModel.ServiceStart.blank

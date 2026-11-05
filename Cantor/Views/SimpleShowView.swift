@@ -38,7 +38,7 @@ struct OperatorModeToolbarItem: ToolbarContent {
 /// Advanced or Simple. Off while a cue is armed or playing, since the two views arm different
 /// things, and in Show Mode, which is a lock.
 struct OperatorModeToggle: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Picker("View", selection: Binding(get: { model.settings.operatorMode }, set: { model.setOperatorMode($0) })) {
@@ -55,7 +55,7 @@ struct OperatorModeToggle: View {
 
 /// All Songs and each tag that has a playable song, with counts.
 private struct SimpleTagList: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     private static let all = "\u{0}all"
 
@@ -78,7 +78,7 @@ private struct SimpleTagList: View {
 
 /// The songs under the chosen tag, by title, with a search field. Selecting never plays.
 private struct SimpleSongList: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var search = ""
 
     private var tracks: [Track] {
@@ -155,7 +155,7 @@ private struct SimpleSongRow: View {
 struct SimpleShowView: View {
     static let minWidth: CGFloat = 560
 
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         VStack(spacing: 0) {
@@ -176,7 +176,7 @@ struct SimpleShowView: View {
 
 /// The song the show is on: engaged, or else picked. Big, with what matters before pressing Arm.
 private struct SimpleSongCard: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show
@@ -241,7 +241,7 @@ private struct SimpleSongCard: View {
 
 /// Notices, the four big buttons and a house meter. The keys and the Transport menu do the same things.
 private struct SimpleTransportBar: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show

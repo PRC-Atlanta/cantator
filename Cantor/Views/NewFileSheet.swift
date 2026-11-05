@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Shown for each new file once nothing is loaded or playing. Nothing is applied until Accept.
 struct NewFileSheet: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let item: NewFileItem
 
     @State private var title = ""

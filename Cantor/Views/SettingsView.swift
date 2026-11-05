@@ -8,7 +8,7 @@ enum SettingsTab: Hashable {
 
 /// Planning Center and Claude get a pane only while they are in use, chosen in Services.
 struct SettingsView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         @Bindable var model = model
@@ -36,7 +36,7 @@ struct SettingsView: View {
 
 /// Where services come from, whether Claude helps, what happens to new files, and the templates.
 private struct ServicesSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Form {
@@ -117,7 +117,7 @@ private struct ServicesSettings: View {
 }
 
 private struct OutputsSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let routing = model.settings.routing
@@ -179,7 +179,7 @@ private struct OutputsSettings: View {
 }
 
 private struct PlaybackSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     private func binding<T>(_ path: WritableKeyPath<AppSettings, T>) -> Binding<T> {
         Binding(get: { model.settings[keyPath: path] }, set: { value in model.updateSettings { $0[keyPath: path] = value } })
@@ -262,7 +262,7 @@ private struct SecretField: View {
 }
 
 private struct PlanningCenterSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Form {
@@ -326,7 +326,7 @@ private struct PlanningCenterSettings: View {
 }
 
 struct ClaudeSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     private func binding(_ path: WritableKeyPath<AppSettings, String>) -> Binding<String> {
         Binding(get: { model.settings[keyPath: path] }, set: { value in model.updateSettings { $0[keyPath: path] = value } })
@@ -395,7 +395,7 @@ struct ClaudeSettings: View {
 }
 
 private struct FolderSettings: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var selection: String?
 
     var body: some View {

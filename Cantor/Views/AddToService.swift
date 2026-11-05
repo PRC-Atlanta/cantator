@@ -18,7 +18,7 @@ enum TrackDrag {
 /// Add to Service, then a service from the sidebar, then where in it. Items are grouped under
 /// their headers, so a spot reads as it does in Planning Center.
 struct AddToServiceMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let trackIDs: [UUID]
 
     var body: some View {
@@ -80,7 +80,7 @@ struct AddToServiceMenu: View {
 /// Outlines a drop target while library tracks are dragged over it. Holding a drag there for a
 /// moment calls `open`, so a service can open and take the drop on one of its items.
 struct TrackDropTarget: ViewModifier {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let add: ([UUID]) -> Void
     var open: (() -> Void)?
     @State private var isTargeted = false

@@ -7,7 +7,7 @@ import SwiftUI
 /// services scroll: the service sits in a bar pinned above them, and the library and the outputs in
 /// one pinned under them, always in view.
 struct SidebarView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @Binding var selection: SidebarItem?
     @State private var pastOpen = false
     /// Which services are upcoming, and inside the rolling window, depends on the date.
@@ -27,6 +27,9 @@ struct SidebarView: View {
                     .disabled(model.isLoadingService)
                 Button(model.loadedPlanID == id ? "Reload Service" : "Load Service") { model.loadService(planID: id) }
                     .disabled(model.isLoadingService || model.show.showMode || model.show.state.holdsHouseEngine)
+                Divider()
+                let pinned = model.plans.first { $0.id == id }?.pinned ?? false
+                Button(pinned ? "Unpin Service" : "Pin Service") { model.setPinned(planID: id, !pinned) }
             }
         } primaryAction: { items in
             if case .plan(let id) = items.first, items.count == 1 { model.goLive(planID: id) }
@@ -95,6 +98,10 @@ struct SidebarView: View {
                     Spacer(minLength: 0)
                     UpdateServicesButton()
                 }
+            }
+            // Practice services, whatever their dates.
+            ForEach(model.pinnedSidebarPlans) { plan in
+                planRow(plan)
             }
             let shown = model.shownUpcomingPlans
             ForEach(shown) { plan in
@@ -170,15 +177,16 @@ struct SidebarView: View {
     private func planRow(_ plan: ServicePlan) -> some View {
         HStack(spacing: 4) {
             Label {
+                // A pinned service is known by its name; its date is only a note.
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
-                    Text(plan.isManual ? plan.title : plan.serviceTypeName)
+                    Text(plan.pinned || plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
+                    Text(plan.pinned ? "Pinned" : plan.isManual ? plan.title : plan.serviceTypeName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             } icon: {
-                Image(systemName: "list.bullet.rectangle")
+                Image(systemName: plan.pinned ? "pin" : "list.bullet.rectangle")
             }
             if plan.id == model.loadedPlanID {
                 Spacer(minLength: 0)
@@ -200,7 +208,7 @@ struct SidebarView: View {
 /// How far ahead the sidebar lists services. The window is counted from today, so it moves on
 /// as the weeks pass: two weeks always means the next two weeks.
 private struct UpcomingFilterMenu: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     static let choices = [0, 1, 2, 3, 4, 8]
 
@@ -264,7 +272,7 @@ private struct PinnedSidebarList<Content: View>: View {
 
 /// Sync Now from the sidebar. Reads the service types checked in Settings.
 private struct UpdateServicesButton: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         Button {
@@ -295,7 +303,7 @@ private struct UpdateServicesButton: View {
 /// House and cue, always in view while preparing. Amber until both are set, connected and on
 /// different outputs, which is what Arm will insist on. Click to open Settings > Outputs.
 private struct OutputsStatusRow: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let routing = model.settings.routing

@@ -7,6 +7,9 @@ import Observation
 @MainActor
 @Observable
 final class AppModel {
+    /// The app's one model, for a view that SwiftUI updates after it has lost the environment.
+    static weak var current: AppModel?
+
     var selection: SidebarItem? = .show
     var settings: AppSettings
     var library: Library
@@ -1331,10 +1334,16 @@ final class AppModel {
     /// The services in the sidebar: hidden service types are left out, unless picked by hand or loaded.
     var sidebarPlans: [ServicePlan] { plans.filter { !settings.hides($0) || $0.id == loadedPlanID } }
 
-    /// Today's and later services, then the ones already over, which the sidebar folds away.
+    /// Pinned services, listed first whatever their dates, for practice days that only load songs.
+    var pinnedSidebarPlans: [ServicePlan] {
+        sidebarPlans.filter(\.pinned).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Today's and later services, then the ones already over, which the sidebar folds away. Pinned
+    /// services are in neither: their dates don't count.
     var upcomingSidebarPlans: [ServicePlan] {
         let today = Calendar.current.startOfDay(for: Date())
-        return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) >= today }
+        return sidebarPlans.filter { !$0.pinned && ($0.sortDate ?? .distantFuture) >= today }
     }
 
     /// The upcoming services inside the sidebar's rolling window, which moves on with the date. The
@@ -1346,13 +1355,22 @@ final class AppModel {
 
     var pastSidebarPlans: [ServicePlan] {
         let today = Calendar.current.startOfDay(for: Date())
-        return sidebarPlans.filter { ($0.sortDate ?? .distantFuture) < today }.reversed()
+        return sidebarPlans.filter { !$0.pinned && ($0.sortDate ?? .distantFuture) < today }.reversed()
     }
 
-    /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent past ones.
+    /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent
+    /// past ones. A pinned practice service only counts once it is loaded.
     var currentPlan: ServicePlan? {
         let today = Calendar.current.startOfDay(for: Date())
-        return loadedPlan ?? sidebarPlans.first { ($0.sortDate ?? .distantFuture) >= today } ?? sidebarPlans.last
+        let dated = sidebarPlans.filter { !$0.pinned }
+        return loadedPlan ?? dated.first { ($0.sortDate ?? .distantFuture) >= today } ?? dated.last
+    }
+
+    /// Pinning only changes where the service is listed, so it is allowed in Show Mode too.
+    func setPinned(planID: String, _ pinned: Bool) {
+        guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
+        plans[index].pinned = pinned
+        scheduleSave()
     }
 
     /// A double-click on a service: loads it unless it is already loaded, then opens the Show view in

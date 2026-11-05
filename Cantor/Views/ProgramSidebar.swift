@@ -6,7 +6,7 @@ import SwiftUI
 /// are not selected: clicking one points the show at it, like clicking the cue list, and nothing
 /// here edits or plays.
 struct ProgramSidebar: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show

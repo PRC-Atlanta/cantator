@@ -2,7 +2,7 @@ import CantorCore
 import SwiftUI
 
 struct CheckView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @State private var issues: [CheckIssue] = []
 
     private var plan: ServicePlan? { model.currentPlan }

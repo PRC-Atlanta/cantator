@@ -4,7 +4,7 @@ import SwiftUI
 /// The one question a fresh install asks: where services come from. Changeable later in
 /// Settings > Services. Choosing Planning Center turns Claude on, as before this choice existed.
 struct WelcomeSheet: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The per-track EQ, in its own window so the curve has room.
 struct EQWindow: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let trackID: UUID
 
     var body: some View {
@@ -23,7 +23,7 @@ struct EQWindow: View {
 /// away, in preview and on the house cue that is armed or playing. It stays open in Show Mode, so
 /// the mix can be adjusted live.
 struct EQEditor: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let trackID: UUID
     var graphMinHeight: CGFloat = 280
     @State private var selected = 3

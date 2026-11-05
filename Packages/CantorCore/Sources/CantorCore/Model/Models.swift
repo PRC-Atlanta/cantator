@@ -415,6 +415,9 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     public var cues: [ServiceCue]
     /// Chosen in the service picker, so a sync keeps it while it is inside the picker's window.
     public var picked = false
+    /// Kept at the top of the sidebar whatever its date, for practice days that only load songs. A
+    /// pinned service is never filtered out, folded into the past or removed by a sync or by age.
+    public var pinned = false
     /// Set by a sync whose plan_times request failed, so merging keeps the saved times. Not saved.
     public var serviceTimesUnavailable = false
     /// Set by a sync that could not fetch this plan, so the saved copy is kept as it was. Not saved.
@@ -436,7 +439,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, serviceTypeID, serviceTypeName, title, dates, sortDate, serviceTimes, syncedAt, cues, picked
+        case id, serviceTypeID, serviceTypeName, title, dates, sortDate, serviceTimes, syncedAt, cues, picked, pinned
     }
 
     public init(from decoder: Decoder) throws {
@@ -454,6 +457,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
             cues: try c.decodeIfPresent([ServiceCue].self, forKey: .cues) ?? []
         )
         picked = try c.decodeIfPresent(Bool.self, forKey: .picked) ?? false
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 
     public var playbackCues: [ServiceCue] { cues.filter(\.needsPlayback).sorted { $0.position < $1.position } }
@@ -534,7 +538,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         guard keepWeeks > 0 else { return plans }
         let cutoff = now.addingTimeInterval(-Double(keepWeeks) * 7 * 24 * 3600)
         return plans.filter { plan in
-            guard plan.isManual, plan.id != loadedID, let date = plan.sortDate else { return true }
+            guard plan.isManual, !plan.pinned, plan.id != loadedID, let date = plan.sortDate else { return true }
             return date >= cutoff
         }
     }
@@ -631,7 +635,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
 
     /// Applies a sync. A plan missing from the sync stays if it was built in Cantator, is loaded,
     /// holds operator work and is under two weeks old (Planning Center stops listing a plan as future
-    /// once it starts), or was chosen in the service picker and is still inside its window.
+    /// once it starts), is pinned, or was chosen in the service picker and is still inside its window.
     public static func applySync(existing: [ServicePlan], fresh: [ServicePlan], loadedID: String?, now: Date = Date()) -> [ServicePlan] {
         let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let synced = fresh.compactMap { plan in
@@ -642,7 +646,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
         let pickerStart = PlanSummary.window(now: now).lowerBound
         let kept = existing.filter { plan in
             guard !freshIDs.contains(plan.id) else { return false }
-            if plan.isManual || plan.id == loadedID { return true }
+            if plan.isManual || plan.pinned || plan.id == loadedID { return true }
             if plan.picked { return (plan.sortDate ?? now) >= pickerStart }
             return plan.hasOperatorWork && (plan.sortDate ?? now) >= cutoff
         }
@@ -662,6 +666,7 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     public func merging(fresh: ServicePlan) -> ServicePlan {
         var result = fresh
         result.picked = picked || fresh.picked
+        result.pinned = pinned
         if fresh.serviceTimesUnavailable { result.serviceTimes = serviceTimes }
         let previous = Dictionary(cues.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let freshIDs = Set(fresh.cues.map(\.id))
@@ -1052,9 +1057,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         hiddenServiceTypeIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenServiceTypeIDs) ?? hiddenServiceTypeIDs
     }
 
-    /// A service of a hidden type stays in the sidebar when it was picked by hand.
+    /// A service of a hidden type stays in the sidebar when it was picked by hand or pinned.
     public func hides(_ plan: ServicePlan) -> Bool {
-        skippedServiceTypeIDs.contains(plan.serviceTypeID) && !plan.picked
+        skippedServiceTypeIDs.contains(plan.serviceTypeID) && !plan.picked && !plan.pinned
     }
 
     public var usesPlanningCenter: Bool { serviceSource == .planningCenter }

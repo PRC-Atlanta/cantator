@@ -103,6 +103,8 @@ The toolbar's **More** menu has **Duplicate for Next Week**, **Save as Templateâ
 
 The filter button beside **Services** in the sidebar limits the list to the next one, two, three, four or eight weeks. The window is counted from today, so it moves on by itself: with two weeks chosen, the sidebar always shows today through the same weekday two weeks out, and a line under the list says how many later services are not shown. The loaded service always shows. **All Upcoming** shows every service again.
 
+For practice days that only load songs, pin a service: right-click it in the sidebar and choose **Pin Service**, or turn on **Pinned** in its inspector. A pinned service sits at the top of the services list with a pin, whatever its date. The filter never hides it, it never folds into Past Services, and neither its age nor a Planning Center sync removes it. **Unpin Service** puts it back by its date.
+
 Show and Pre-Service Check stay at the top of the sidebar and the library at the bottom, with only the services scrolling between them. Under it the sidebar always shows the house and cue outputs, amber until both are set, connected and different. Clicking it opens **Settings > Outputs**.
 
 ### Planning Center

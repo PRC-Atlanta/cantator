@@ -5,7 +5,7 @@ struct ShowView: View {
     /// The narrowest cue list, its divider and the narrowest current cue panel.
     static let minWidth: CGFloat = 240 + 1 + CurrentCuePanel.minWidth
 
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show
@@ -59,7 +59,7 @@ private struct FullShowView: View {
 
 /// Shared with the Simple Show view.
 struct StateBar: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
@@ -120,7 +120,7 @@ struct StateBar: View {
 }
 
 private struct CueListPanel: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show
@@ -152,7 +152,7 @@ private struct CueListPanel: View {
 /// Clicking a row points at it, like the arrow keys, and only while nothing is engaged. Nothing
 /// here can start sound: A and GO still do that.
 private struct CueRow: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let index: Int
     let cue: ShowCue
 
@@ -197,7 +197,7 @@ private struct CurrentCuePanel: View {
     static let widthWithoutMeters: CGFloat = 670
     static let minWidth: CGFloat = widthWithoutMeters + 2 * 110
 
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let meterWidth: CGFloat
 
     private var cue: ShowCue? { model.show.activeCue ?? model.show.pointedCue }
@@ -285,7 +285,7 @@ private extension View {
 
 /// Shared with the Simple Show view.
 struct NextCueLine: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show
@@ -314,7 +314,7 @@ struct NextCueLine: View {
 }
 
 private struct TransportButtons: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
 
     var body: some View {
         let show = model.show
@@ -486,7 +486,7 @@ private struct MeterScale: View {
 }
 
 private struct ShowWaveform: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let track: Track
 
     var body: some View {

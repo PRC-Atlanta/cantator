@@ -13,7 +13,7 @@ enum CueDrag {
 }
 
 struct ServiceView: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let planID: String
     @State private var selectedCue: CueID?
     @State private var namingTemplate = false
@@ -348,7 +348,7 @@ private struct StateChip: View {
 
 /// Items added by hand: whether the track they were given is ready to play. Same colors as the show.
 private struct ManualStateChip: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let cue: ServiceCue
 
     var body: some View {
@@ -374,9 +374,9 @@ private struct ManualStateChip: View {
     }
 }
 
-/// A service built in Cantator, when no item is selected: its name and date.
+/// A service built in Cantator, when no item is selected: its name and date, or pinned with no date that counts.
 private struct ServiceInspector: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let plan: ServicePlan
     // Typed here first, so the field can be emptied on the way to a new name without the old one
     // snapping back. The service takes each non-blank name as it is typed.
@@ -389,10 +389,14 @@ private struct ServiceInspector: View {
                     .onAppear { name = plan.title }
                     .onChange(of: plan.id) { name = plan.title }
                     .onChange(of: name) { model.renameManualPlan(planID: plan.id, title: name) }
-                DatePicker("Date", selection: Binding(
-                    get: { plan.sortDate ?? Date() },
-                    set: { model.moveManualPlan(planID: plan.id, to: $0) }
-                ))
+                Toggle("Pinned", isOn: Binding(get: { plan.pinned }, set: { model.setPinned(planID: plan.id, $0) }))
+                    .help("Keeps this service at the top of the sidebar whatever its date, for practice days")
+                if !plan.pinned {
+                    DatePicker("Date", selection: Binding(
+                        get: { plan.sortDate ?? Date() },
+                        set: { model.moveManualPlan(planID: plan.id, to: $0) }
+                    ))
+                }
                 let items = plan.cues.filter { $0.itemType != "header" }
                 LabeledContent("Items", value: "\(items.count), \(items.filter(\.needsPlayback).count) on tracks")
             }
@@ -407,7 +411,7 @@ private struct ServiceInspector: View {
 }
 
 private struct CueInspector: View {
-    @Environment(AppModel.self) private var model
+    @AppEnvironment private var model
     let plan: ServicePlan
     let cue: ServiceCue
     let deselect: () -> Void
