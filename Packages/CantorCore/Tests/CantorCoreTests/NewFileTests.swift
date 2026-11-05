@@ -301,6 +301,8 @@ final class FileClassifierTests: XCTestCase {
         XCTAssertEqual(answer.title, "Thou, O Lord")
         XCTAssertEqual(answer.category, "choir")
         XCTAssertEqual(answer.serviceItem, open)
+        XCTAssertEqual(answer.startTitle, "Thou, O Lord")
+        XCTAssertEqual(answer.trackTitle, "Track 3", "kept, so a rename made later in the Library can win")
 
         item.suggestion = FileSuggestion(title: "", category: "", serviceItem: filled)
         let late = NewFileAnswer(item: item, currentTitle: "Track 3", openItem: { $0 == open })

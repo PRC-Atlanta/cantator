@@ -136,11 +136,12 @@ public struct Track: Codable, Equatable, Identifiable, Sendable {
     public static let trailingSilenceForEndSec = 2.0
 
     /// No end point is set and the file ends in silence, so it would play dead air. A file not
-    /// analyzed yet counts, since its ending is not known, and so does one with no sound at all. So
-    /// does sound past the file's reported length, which is then an estimate and the true tail unknown.
+    /// analyzed yet counts, since its ending is not known, and so does one with no sound at all.
+    /// Sound past the file's reported length doesn't: the length is an estimate, an end can't be set
+    /// past it, and playing the whole file, as it does without one, keeps the music.
     public var needsEndPoint: Bool {
         guard endSec == nil else { return false }
-        guard isAnalyzed, durationSec > 0, let lastSound = suggestedEndSec, lastSound <= durationSec else { return true }
+        guard isAnalyzed, durationSec > 0, let lastSound = suggestedEndSec else { return true }
         return durationSec - lastSound >= Self.trailingSilenceForEndSec
     }
 }

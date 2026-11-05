@@ -109,7 +109,7 @@ private struct ImportMenu: View {
             .keyboardShortcut("i")
             .disabled(!model.canImport)
         Button("Edit Tags…") { model.showingTagEditor = true }
-            .disabled(model.show.showMode)
+            .disabled(model.show.showMode || model.showsNewFiles)
     }
 }
 

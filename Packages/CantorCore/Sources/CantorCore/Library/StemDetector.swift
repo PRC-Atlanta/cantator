@@ -46,7 +46,10 @@ public enum StemDetector {
         for (folder, members) in Dictionary(grouping: located, by: \.folder) {
             for set in sameLength(members.map(\.track)) where set.count >= minimumSet {
                 let words = set.map { sourceFile($0).map { nameWords(in: $0.filename) } ?? [] }
-                let stemCount = words.filter { !$0.isDisjoint(with: strongWords.union(weakWords)) && $0.isDisjoint(with: keepWords) }.count
+                // A practice part names its voice ("Soprano PTX"), which is a weak word, but it is not a stem.
+                let stemCount = words.filter {
+                    !$0.isDisjoint(with: strongWords.union(weakWords)) && $0.isDisjoint(with: keepWords) && $0.isDisjoint(with: partWords)
+                }.count
                 let folderName = URL(fileURLWithPath: folder).lastPathComponent
                 for (index, track) in set.enumerated() where eligible.contains(track.id) && reasons[track.id] == nil {
                     guard words[index].isDisjoint(with: keepWords) else { continue }
@@ -65,7 +68,9 @@ public enum StemDetector {
     /// ~/Music/Cantor, whose name is the title and tag and whose folder holds every copied track.
     public static func sourceFile(_ track: Track, managedPath: String = ManagedFolder.path) -> TrackFile? {
         let managed = managedPath.hasSuffix("/") ? managedPath : managedPath + "/"
-        return track.files.first { !$0.path.hasPrefix(managed) } ?? track.bestFile() ?? track.files.first
+        let originals = track.files.filter { !$0.path.hasPrefix(managed) }
+        // A moved file keeps its old path, marked missing, ahead of the new one.
+        return originals.first { $0.locality != .missing } ?? originals.first ?? track.bestFile() ?? track.files.first
     }
 
     private static func reasonFromName(_ track: Track) -> String? {

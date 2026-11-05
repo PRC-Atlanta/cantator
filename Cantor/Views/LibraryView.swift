@@ -571,6 +571,8 @@ private struct EndPointPanel: View {
     static let windowSec = 20.0
     /// Where Preview End started, so the button still stops it after the end moves.
     @State private var previewFrom: Double?
+    /// The window while a drag is on, so it doesn't move under the pointer as the end moves.
+    @State private var dragWindow: ClosedRange<Double>?
 
     /// The last 20 seconds, or, when the file ends in a longer silence, the 20 seconds around where
     /// the sound stops, so the music's ending is always in view.
@@ -594,7 +596,7 @@ private struct EndPointPanel: View {
                     .foregroundStyle(Theme.armed)
                 Text(explanation).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            EndWaveform(track: track, window: window)
+            EndWaveform(track: track, window: dragWindow ?? window, dragWindow: $dragWindow)
                 .frame(height: 90)
             HStack {
                 Text(TimeText.tenths(window.lowerBound))
@@ -654,6 +656,7 @@ private struct EndWaveform: View {
     @AppEnvironment private var model
     let track: Track
     let window: ClosedRange<Double>
+    @Binding var dragWindow: ClosedRange<Double>?
 
     var body: some View {
         GeometryReader { geometry in
@@ -674,10 +677,11 @@ private struct EndWaveform: View {
             .help("Click or drag to set the end")
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 guard !model.show.showMode, geometry.size.width > 0, track.durationSec > 0 else { return }
+                if dragWindow == nil { dragWindow = window }
                 // A drag past either edge stops at it, so the end never lands out of view.
                 let seconds = min(max(window.lowerBound + Double(value.location.x / geometry.size.width) * span, window.lowerBound), window.upperBound)
                 model.updateTrack(track.id) { $0.endSec = min(max(seconds, $0.startSec + 0.1), $0.durationSec) }
-            })
+            }.onEnded { _ in dragWindow = nil })
         }
     }
 }

@@ -31,7 +31,8 @@ struct TagEditor: View {
             }
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                // No Return shortcut: Return renames the tag being edited, and must not close the editor first.
+                Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
             }
         }
         .padding(20)
@@ -46,7 +47,8 @@ struct TagEditor: View {
             Button("Cancel", role: .cancel) {}
         } message: { tag in
             let count = count(tag, includingExcluded: true)
-            Text("It comes off \(count == 1 ? "1 track" : "\(count) tracks"). The tracks stay in the library.")
+            let excluded = count - self.count(tag)
+            Text("It comes off \(count == 1 ? "1 track" : "\(count) tracks")\(excluded > 0 ? ", \(excluded) of them excluded" : ""). The tracks stay in the library.")
         }
         .alert(
             "Merge “\(PlaybackCategory.display(merging?.old ?? ""))” into “\(PlaybackCategory.display(merging?.new ?? ""))”?",

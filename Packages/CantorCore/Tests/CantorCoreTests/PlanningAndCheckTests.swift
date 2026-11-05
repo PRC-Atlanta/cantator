@@ -451,7 +451,7 @@ final class PreServiceCheckTests: XCTestCase {
         XCTAssertTrue(track.needsEndPoint, "two seconds of silence")
         XCTAssertTrue(kinds(input(track: track)).contains(.noEndPoint))
         track.suggestedEndSec = 245
-        XCTAssertTrue(track.needsEndPoint, "sound past the reported length: the length was an estimate")
+        XCTAssertFalse(track.needsEndPoint, "sound past the reported length: an end would cut the music")
         track.suggestedEndSec = nil
         XCTAssertTrue(track.needsEndPoint, "no sound at all")
         track.suggestedEndSec = 239

@@ -43,6 +43,17 @@ final class StemDetectorTests: XCTestCase {
         let reasons = StemDetector.detect(tracks: parts + [demo, playback])
         XCTAssertEqual(reasons.count, 5)
         XCTAssertNil(reasons[playback.id], "parts and demos are not stems, so they don't make a same-length set")
+
+        let spelled = ["Soprano", "Alto", "Tenor", "Bass"].map { track("/Drive/Be Still/Be Still - \($0) PTX.mp3", 240) }
+        let stillPlayback = track("/Drive/Be Still/Be Still.mp3", 240)
+        XCTAssertNil(StemDetector.detect(tracks: spelled + [stillPlayback])[stillPlayback.id], "voice names on parts don't count as stems either")
+    }
+
+    func testAMovedFileIsJudgedWhereItIsNow() {
+        var moved = track("/Drive/Choir/Practice/Way Maker.wav", 200)
+        moved.files[0].locality = .missing
+        moved.files.append(TrackFile(path: "/Drive/Choir/Playbacks/Way Maker.wav", locality: .local))
+        XCTAssertNil(StemDetector.detect(tracks: [moved])[moved.id])
     }
 
     func testTheOriginalNameDecidesNotCantatorsCopy() {

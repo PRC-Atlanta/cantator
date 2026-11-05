@@ -45,7 +45,14 @@ final class AppModel {
     // However the last waiting file leaves, answered, excluded, folded into a track or dropped as
     // stale, the review the operator opened from New Files is over, so quiet handling stays quiet.
     var inbox: NewFileInbox {
-        didSet { if inbox.items.isEmpty { reviewingNewFiles = false } }
+        didSet {
+            if inbox.items.isEmpty { reviewingNewFiles = false }
+            // An answer leaves with its file, however the file leaves.
+            if !newFileAnswers.isEmpty {
+                let waiting = Set(inbox.items.map(\.trackID))
+                newFileAnswers = newFileAnswers.filter { waiting.contains($0.key) }
+            }
+        }
     }
     var isClassifying = false
     var claudeConnection = ClaudeConnection.checking
@@ -1813,7 +1820,12 @@ final class AppModel {
         let offered = Set(upcomingItems().map(\.ref))
         var tagsChanged = false
         var toCopy: [UUID] = []
+        let suggestions = Dictionary(inbox.items.map { ($0.trackID, $0.suggestion) }, uniquingKeysWith: { a, _ in a })
         for answer in answers where waiting.contains(answer.trackID) && library.track(id: answer.trackID) != nil {
+            // The operator turned a "not" into a playback. A suggestion accepted as it came stays
+            // open to detection, so a stem whose set arrives later still leaves.
+            let suggestion = suggestions[answer.trackID] ?? nil
+            let judged = suggestion?.isPlayback == false
             inbox.remove(answer.trackID)
             newFileAnswers[answer.trackID] = nil
             guard answer.isPlayback else {
@@ -1827,10 +1839,12 @@ final class AppModel {
                 Self.tagLog.notice("New Files: added \(category, privacy: .public) on \(answer.title, privacy: .public)")
             }
             library.update(id: answer.trackID) { track in
-                // The operator said it is a playback, so stem detection leaves it alone from now on.
-                track.keptByOperator = true
+                // The operator's own call, so stem detection leaves it alone from now on.
+                if judged { track.keptByOperator = true }
                 let title = answer.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty { track.title = title }
+                // A title left as suggested doesn't undo a rename made in the Library since.
+                let renamedSince = answer.title == answer.startTitle && track.title != answer.trackTitle
+                if !title.isEmpty, !renamedSince { track.title = title }
                 if !category.isEmpty, !track.tags.contains(category) { track.tags.append(category) }
             }
             if let ref = answer.serviceItem, offered.contains(ref), let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: answer.trackID) {

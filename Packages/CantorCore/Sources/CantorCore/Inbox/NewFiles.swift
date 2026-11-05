@@ -47,13 +47,19 @@ public struct NewFileAnswer: Equatable, Sendable {
     public var title: String
     public var category: String
     public var serviceItem: ServiceItemRef?
+    /// The title the answer started with, and the track's title then, so an answer kept through
+    /// Later never undoes a rename made in the Library meanwhile.
+    public var startTitle: String
+    public var trackTitle: String
 
-    public init(trackID: UUID, isPlayback: Bool, title: String, category: String, serviceItem: ServiceItemRef? = nil) {
+    public init(trackID: UUID, isPlayback: Bool, title: String, category: String, serviceItem: ServiceItemRef? = nil, trackTitle: String? = nil) {
         self.trackID = trackID
         self.isPlayback = isPlayback
         self.title = title
         self.category = category
         self.serviceItem = serviceItem
+        startTitle = title
+        self.trackTitle = trackTitle ?? title
     }
 
     /// `openItem` says whether a service item is still offered and needs a file, so an answer never
@@ -64,7 +70,8 @@ public struct NewFileAnswer: Equatable, Sendable {
         self.init(
             trackID: item.trackID, isPlayback: suggestion?.isPlayback ?? true,
             title: titleWasSet ? currentTitle : suggestion.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? currentTitle,
-            category: suggestion?.category ?? "", serviceItem: suggestion?.serviceItem.flatMap { openItem($0) ? $0 : nil }
+            category: suggestion?.category ?? "", serviceItem: suggestion?.serviceItem.flatMap { openItem($0) ? $0 : nil },
+            trackTitle: currentTitle
         )
     }
 }

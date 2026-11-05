@@ -359,9 +359,22 @@ Four independent reviewers read the eleven commits after `3ae9fd3` (the standalo
 - **Tag counts:** the sidebar hides tags only excluded tracks have; the editor counts as the sidebar does. Text typed in the inspector's Add tag no longer carries to the next track.
 - **End point panel:** a track with no length yet (a copy from a Drive placeholder) could get a 0.1 s end from a click; the panel stays closed until there is a length, which analysis now fills in. Sound past a file's reported length counts as needing an end. The panel opens when analysis finishes, shows where the sound stops when the silence is longer than 20 s, keeps a drag inside its window, and its Preview End button stops the preview it started.
 
+## Fixed after the fix review
+Two fresh reviewers read the fixes. Their findings, all fixed:
+- **Spelled-out parts** ("Soprano PTX") still counted as stems in a same-length set, since voice names are weak words. A file with a part word never counts as a stem now.
+- **A moved file was judged by its old path**, which a scan keeps, marked missing. Detection prefers an original that is still there.
+- **Sound past a file's reported length** was flagged, but an end can't be set past that length, so clearing the flag cut the music. It isn't flagged now; the whole file plays.
+- **Dragging the end in the panel ran away** to the file's end, since the view followed the end. The view holds still during a drag.
+- **Kept as a playback** was set on every applied row, so a stem accepted unseen was never caught later. Only rows the operator turned from "not" into a playback are kept.
+- **An answer kept through Later** could undo a rename made in the Library meanwhile. A title left as suggested gives way to it, and answers leave with their files on every path.
+- **Return in the tag editor** closed it before a merge could be confirmed; Done has no Return shortcut. **Edit Tags…** is off while New Files is up. The delete alert says how many of the tracks are excluded.
+
 ## Open
 - **The stray "choir" tag** seen in testing: no code path found. Most likely a stray click on Choir in a Tag menu. Every tag added to tracks is now logged (category `tags`) to settle it if it happens again.
 - **A copy that finishes after its timeout** still lands in ~/Music/Cantor and joins its track by content on the next scan; a cloud-only original with no content ID yet can briefly become a track of its own.
 - **Queued copies for a track a scan folds into another** are dropped without a report.
 - **A file's reported length can be up to 1 s longer than its audio**, which counts toward the two seconds of silence.
 - **Tag names are cleaned silently**: lowercase, letters, numbers, spaces and hyphens, 24 characters.
+- **The New Files list rebuilds its rows on every keystroke** in a title: once per update now, not per row, but caching them would make it truly once.
+- **After a copy timeout**, the next Apply or Make Local can start a download while the stuck one is still running.
+- **A selected sidebar tag** whose last playback is excluded disappears from the sidebar while it stays selected.
