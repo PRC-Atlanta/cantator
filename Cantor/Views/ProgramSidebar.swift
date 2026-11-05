@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The sidebar in Show Mode: the loaded service's whole program, each header a section, so the
 /// operator can see where the service is. A system sidebar list like the one it replaces, but rows
-/// have no action and cannot be selected, like the cue list, and nothing here edits.
+/// are not selected: clicking one points the show at it, like clicking the cue list, and nothing
+/// here edits or plays.
 struct ProgramSidebar: View {
     @Environment(AppModel.self) private var model
 
@@ -19,6 +20,10 @@ struct ProgramSidebar: View {
                             ForEach(section.items) { cue in
                                 ProgramRow(cue: cue, isCurrent: cue.id == current, state: show.state)
                                     .id(cue.id)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if let index = show.cues.firstIndex(where: { $0.id == cue.id }) { show.point(at: index) }
+                                    }
                             }
                         } header: {
                             ProgramHeader(title: section.title(plan), isHeader: section.isHeader)

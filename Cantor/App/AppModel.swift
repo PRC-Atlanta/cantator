@@ -670,6 +670,11 @@ final class AppModel {
                 alert = "Pick a song first."
                 return
             }
+            // Like Advanced, a second A does nothing: not while a song plays, not on the song
+            // already armed or loading. A different picked song still replaces the armed one.
+            var replacesArmed = false
+            if case .armed = show.state { replacesArmed = show.activeCue?.track?.id != track.id }
+            guard playNowLoading != track.id, replacesArmed || !show.state.holdsHouseEngine else { return }
             engage(track, andGo: false)
         } else {
             show.arm()
@@ -1338,9 +1343,27 @@ final class AppModel {
         return loadedPlan ?? sidebarPlans.first { ($0.sortDate ?? .distantFuture) >= today } ?? sidebarPlans.last
     }
 
+    /// A double-click on a service: loads it unless it is already loaded, then opens the Show view in
+    /// Show Mode, ready to arm. Simple has no Show Mode, so it only opens the Show view.
+    func goLive(planID: String) {
+        if loadedPlanID == planID, !isLoadingService {
+            selection = .show
+            if !isSimple, !show.cues.isEmpty { show.setShowMode(true) }
+            return
+        }
+        if show.showMode {
+            alert = "Leave Show Mode before loading another service."
+        } else if show.state.holdsHouseEngine {
+            alert = "Stop the cue before loading another service."
+        } else {
+            loadService(planID: planID, thenShow: true)
+        }
+    }
+
     /// Decodes every confirmed cue into RAM, then holds sleep and system sound for the service.
     /// Each file is checked against the audio that was confirmed, in case it changed since the last scan.
-    func loadService(planID: String) {
+    /// `thenShow` opens the Show view in Show Mode once the cues are in.
+    func loadService(planID: String, thenShow: Bool = false) {
         guard !show.state.holdsHouseEngine, !show.showMode, !isLoadingService,
               let plan = plans.first(where: { $0.id == planID })
         else { return }
@@ -1368,6 +1391,10 @@ final class AppModel {
             if !decoded.1.isEmpty { alert = decoded.1.joined(separator: "\n") }
             // A file confirmed while the service decoded wasn't in the list read at the start.
             loadMissingBuffers()
+            if thenShow {
+                selection = .show
+                if !isSimple, !showLoadPending, !show.cues.isEmpty { show.setShowMode(true) }
+            }
         }
     }
 

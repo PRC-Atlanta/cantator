@@ -143,8 +143,8 @@ public enum PreServiceCheck {
         } else {
             add(.warning, .noCueOutput, nil, "No cue output selected", "Choose one in Settings to preview tracks.")
         }
-        if routing.isSameDevice {
-            add(.blocking, .sameOutput, nil, "House and cue use the same device", "Choose a different cue output in Settings.")
+        if routing.sharesOutputs {
+            add(.blocking, .sameOutput, nil, "House and cue use the same outputs", "Choose a different cue device or outputs in Settings.")
         }
         if let house = routing.houseDeviceUID, input.defaultOutputUIDs.contains(house) {
             add(.warning, .systemSoundOnHouse, nil, "macOS sounds can reach the house output", "Connect a second output so Cantator can move alerts off the house.")

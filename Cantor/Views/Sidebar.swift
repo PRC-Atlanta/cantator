@@ -20,6 +20,17 @@ struct SidebarView: View {
             servicesSection
         }
         .listStyle(.sidebar)
+        // Double-clicking a service loads it and enters Show Mode, so going live is one step.
+        .contextMenu(forSelectionType: SidebarItem.self) { items in
+            if case .plan(let id) = items.first, items.count == 1 {
+                Button(model.isSimple ? "Load and Open Show" : "Load and Enter Show Mode") { model.goLive(planID: id) }
+                    .disabled(model.isLoadingService)
+                Button(model.loadedPlanID == id ? "Reload Service" : "Load Service") { model.loadService(planID: id) }
+                    .disabled(model.isLoadingService || model.show.showMode || model.show.state.holdsHouseEngine)
+            }
+        } primaryAction: { items in
+            if case .plan(let id) = items.first, items.count == 1 { model.goLive(planID: id) }
+        }
         .sidebarBar(.top) {
             PinnedSidebarList(selection: $selection) { serviceSection }
         }
@@ -181,6 +192,7 @@ struct SidebarView: View {
             }
         }
         .tag(SidebarItem.plan(plan.id))
+        .help(model.isSimple ? "Double-click to load it and open the Show view" : "Double-click to load it and enter Show Mode")
         .acceptsTracks(open: { selection = .plan(plan.id) }) { model.addTracks($0, to: plan.id, at: .end) }
     }
 }
@@ -280,8 +292,8 @@ private struct UpdateServicesButton: View {
     }
 }
 
-/// House and cue, always in view while preparing. Amber until both are set, connected and
-/// different, which is what Arm will insist on. Click to open Settings > Outputs.
+/// House and cue, always in view while preparing. Amber until both are set, connected and on
+/// different outputs, which is what Arm will insist on. Click to open Settings > Outputs.
 private struct OutputsStatusRow: View {
     @Environment(AppModel.self) private var model
 
@@ -290,15 +302,15 @@ private struct OutputsStatusRow: View {
         let connected = Set(model.devices.map(\.uid))
         let houseOK = routing.houseDeviceUID.map(connected.contains) ?? false
         let cueOK = routing.cueDeviceUID.map(connected.contains) ?? false
-        let distinct = !routing.isSameDevice
+        let distinct = !routing.sharesOutputs
         Button {
             model.openSettings(.outputs)
         } label: {
             VStack(alignment: .leading, spacing: 3) {
-                line("House", name: houseName(routing), ok: houseOK && distinct)
-                line("Cue", name: model.deviceName(routing.cueDeviceUID), ok: cueOK && distinct)
-                if routing.isSameDevice {
-                    Text("Must be different devices").font(.caption).foregroundStyle(Theme.armed)
+                line("House", name: name(routing.houseDeviceUID, first: routing.houseFirstChannel), ok: houseOK && distinct)
+                line("Cue", name: name(routing.cueDeviceUID, first: routing.cueFirstChannel), ok: cueOK && distinct)
+                if routing.sharesOutputs {
+                    Text("Must use different outputs").font(.caption).foregroundStyle(Theme.armed)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -309,10 +321,11 @@ private struct OutputsStatusRow: View {
         .help("Open Settings > Outputs")
     }
 
-    private func houseName(_ routing: OutputRouting) -> String {
-        let name = model.deviceName(routing.houseDeviceUID)
-        guard let uid = routing.houseDeviceUID, let device = model.devices.first(where: { $0.uid == uid }), device.outputChannels > 2 else { return name }
-        return "\(name) \(routing.houseFirstChannel + 1)-\(routing.houseFirstChannel + 2)"
+    /// The device, with its pair when it has more than one.
+    private func name(_ uid: String?, first: Int) -> String {
+        let name = model.deviceName(uid)
+        guard let uid, let device = model.devices.first(where: { $0.uid == uid }), device.outputChannels > 2 else { return name }
+        return "\(name) \(first + 1)-\(first + 2)"
     }
 
     private func line(_ label: String, name: String, ok: Bool) -> some View {

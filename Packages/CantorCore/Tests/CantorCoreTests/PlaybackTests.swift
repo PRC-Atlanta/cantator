@@ -612,6 +612,22 @@ final class ShowControllerTests: XCTestCase {
         XCTAssertEqual(show.arm(), .sameOutput)
     }
 
+    /// A Dante or other multichannel interface can carry both, each on its own pair.
+    func testArmAllowedOnSameDeviceWithOtherPair() {
+        let show = controller()
+        show.routing = OutputRouting(houseDeviceUID: "x", houseFirstChannel: 0, cueDeviceUID: "x", cueFirstChannel: 2)
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+    }
+
+    func testSharedOutputsNeedOverlappingPairs() {
+        XCTAssertTrue(OutputRouting(houseDeviceUID: "x", houseFirstChannel: 2, cueDeviceUID: "x", cueFirstChannel: 2).sharesOutputs)
+        XCTAssertTrue(OutputRouting(houseDeviceUID: "x", houseFirstChannel: 2, cueDeviceUID: "x", cueFirstChannel: 3).sharesOutputs)
+        XCTAssertFalse(OutputRouting(houseDeviceUID: "x", houseFirstChannel: 0, cueDeviceUID: "x", cueFirstChannel: 2).sharesOutputs)
+        XCTAssertFalse(OutputRouting(houseDeviceUID: "x", houseFirstChannel: 0, cueDeviceUID: "y", cueFirstChannel: 0).sharesOutputs)
+        XCTAssertFalse(OutputRouting(houseDeviceUID: nil, cueDeviceUID: nil).sharesOutputs)
+    }
+
     func testEngineFailureLeavesIdle() {
         let show = controller()
         show.setShowMode(true)
@@ -1012,6 +1028,58 @@ extension ShowControllerTests {
         edited[0].track = Track(title: "other")
         show.refresh(cues: edited)
         XCTAssertNil(show.resumeSec)
+    }
+
+    func testRepeatedArmChangesNothingAndSaysNothing() {
+        let show = controller()
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        let starts = house.starts
+        for _ in 0..<5 { XCTAssertEqual(show.arm(), .notIdle) }
+        XCTAssertEqual(show.state, .armed("a"))
+        XCTAssertEqual(house.starts, starts, "the house engine is not restarted")
+        XCTAssertNil(show.notice)
+        time += 1
+        show.go()
+        XCTAssertEqual(show.arm(), .notIdle)
+        XCTAssertEqual(show.state, .live("a"))
+        XCTAssertNil(show.notice)
+    }
+
+    func testNudgeWhileArmedCarriesIntoTheRun() {
+        let show = controller(cues: [cue("a", endSec: 6)])
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        house.render(seconds: 0.01)
+        show.nudgeEnd(seconds: -1)
+        house.render(seconds: 0.01)
+        show.tick()
+        XCTAssertEqual(show.endSec, 5, accuracy: 0.001)
+        time += 1
+        show.go()
+        house.render(seconds: 0.01)
+        show.tick()
+        XCTAssertEqual(show.endSec, 5, accuracy: 0.001)
+    }
+
+    func testNudgeWhileIdleExplains() {
+        let show = controller()
+        show.nudgeEnd(seconds: 1)
+        XCTAssertNotNil(show.notice)
+        XCTAssertEqual(show.state, .idle)
+    }
+
+    func testPointAtOnlyWhileIdle() {
+        let show = controller(cues: [cue("a"), cue("b"), cue("c")])
+        show.point(at: 2)
+        XCTAssertEqual(show.nextIndex, 2)
+        show.point(at: 7)
+        XCTAssertEqual(show.nextIndex, 2, "a row that is gone is ignored")
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        show.point(at: 0)
+        XCTAssertEqual(show.nextIndex, 2, "never while a cue is armed")
+        XCTAssertEqual(show.state, .armed("c"))
     }
 
     func testTwoQuickNudgesBothApply() {

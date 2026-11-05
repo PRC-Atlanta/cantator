@@ -43,11 +43,28 @@ public struct ClaudeCLI: ClaudeRunner {
         self.timeout = timeout
     }
 
-    /// A GUI app does not inherit the shell's PATH, so the usual install locations are checked.
+    /// A GUI app does not inherit the shell's PATH, so the usual install locations are checked, and
+    /// last the copy the Claude desktop app keeps for its Code tab, for a Mac with only that app.
     public static func locate(override: String = "") -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [override, "\(home)/.local/bin/claude", "\(home)/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         return candidates.first { !$0.isEmpty && FileManager.default.isExecutableFile(atPath: $0) }
+            ?? desktopAppCopy(in: URL(fileURLWithPath: "\(home)/Library/Application Support/Claude/claude-code"))
+    }
+
+    /// The newest `<version>/<build>/claude.app` the desktop app has installed. The folder changes
+    /// with every update, so it is looked up each time rather than saved.
+    static func desktopAppCopy(in folder: URL) -> String? {
+        let files = FileManager.default
+        let versions = (try? files.contentsOfDirectory(atPath: folder.path)) ?? []
+        for version in versions.sorted(by: { $0.compare($1, options: .numeric) == .orderedDescending }) {
+            let builds = (try? files.contentsOfDirectory(atPath: folder.appendingPathComponent(version).path)) ?? []
+            for build in builds.sorted() {
+                let path = folder.appendingPathComponent("\(version)/\(build)/claude.app/Contents/MacOS/claude").path
+                if files.isExecutableFile(atPath: path) { return path }
+            }
+        }
+        return nil
     }
 
     static func arguments(system: String, schema: String, model: String) -> [String] {

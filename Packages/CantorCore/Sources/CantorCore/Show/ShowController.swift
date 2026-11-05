@@ -30,7 +30,7 @@ public enum ArmRefusal: Equatable, Sendable {
         switch self {
         case .noCue: "No cue selected."
         case .noHouseOutput: "House output is not available."
-        case .sameOutput: "House and cue must be different devices."
+        case .sameOutput: "House and cue must use different outputs."
         case .notLoaded(let title): "\(title) is not loaded."
         case .notIdle: "Finish the current cue first."
         case .deviceFailed(let reason): reason
@@ -154,10 +154,21 @@ public final class ShowController {
         notice = nil
     }
 
+    /// Points at a cue clicked in the list, so the choir can sing in another order than the plan.
+    /// Like the arrow keys, only while nothing is engaged, and it never plays.
+    public func point(at index: Int) {
+        guard case .idle = state, cues.indices.contains(index) else { return }
+        nextIndex = index
+        notice = nil
+    }
+
     // MARK: Transport
 
+    /// A while a cue is armed or playing changes nothing and says nothing, so pressing it again
+    /// to be sure never puts a warning in front of the operator.
     @discardableResult
     public func arm() -> ArmRefusal? {
+        guard !state.holdsHouseEngine else { return .notIdle }
         let refusal = attemptArm()
         notice = refusal?.message
         return refusal
@@ -227,7 +238,7 @@ public final class ShowController {
     /// Opens the house output on a cue and leaves it armed.
     private func start(_ cue: ShowCue) -> ArmRefusal? {
         guard let track = cue.track, let buffer = cue.buffer else { return .notLoaded(cue.title) }
-        guard !routing.isSameDevice else { return .sameOutput }
+        guard !routing.sharesOutputs else { return .sameOutput }
         guard let uid = routing.houseDeviceUID, deviceAvailable(uid) else { return .noHouseOutput }
 
         var parameters = PlaybackParameters(track: track, sampleRate: buffer.sampleRate, frames: buffer.frames, gainDb: cue.gainDb)
@@ -336,15 +347,19 @@ public final class ShowController {
         log?.record("marker", cue: track.title)
     }
 
-    /// Moves the end for this run only. The saved end point is untouched. Works through the automatic
-    /// end fade, where `]` brings the cue back up, but never after F or panic.
+    /// Moves the end for this run only. The saved end point is untouched. Works from arm to the end,
+    /// including through the automatic end fade, where `]` brings the cue back up, but never after
+    /// F or panic. With nothing armed there is no run to move, and the notice says so.
     public func nudgeEnd(seconds: Double) {
-        guard let kernel else { return }
         switch state {
-        case .live: break
+        case .armed, .live, .held: break
         case .fading where !stopping: break
+        case .idle:
+            notice = "[ and ] move the end once a cue is armed."
+            return
         default: return
         }
+        guard let kernel else { return }
         let rate = kernel.buffer.sampleRate
         // The kernel keeps at least a declick of fade; this keeps the next nudge counting from there.
         let nearest = kernel.positionFrames + PlaybackKernel.declickFrames(sampleRate: rate)

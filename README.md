@@ -85,7 +85,7 @@ Everything is in **Cantator > Settings**.
 
 1. Connect your audio interface and patch its outputs to a stereo pair of console channels.
 2. In **Outputs > House**, choose the interface. On a multichannel interface, choose the output pair, such as 3-4.
-3. In **Outputs > Cue**, choose a different device for headphones. The Mac's headphone jack works well. House and cue must be separate devices: Cantator refuses to arm otherwise.
+3. In **Outputs > Cue**, choose the device for headphones. The Mac's headphone jack works well. On a multichannel interface such as Dante Virtual Soundcard, house and cue can share the device on different pairs, such as house on 1-2 and cue on 3-4. They can never share a pair: Cantator refuses to arm otherwise.
 4. Set the console channel trim using a loud track while the fader is down, then leave it. Tracks are matched to -18 LUFS, so levels stay consistent from cue to cue. Set the fader for the room.
 5. Cantator applies a static gain only. It has no limiter and never changes level during a cue.
 
@@ -135,7 +135,7 @@ Both values are stored only in the macOS Keychain.
 
 Claude is its own switch in **Settings > Services**, in both modes: off by default when services are built here, on when Planning Center was chosen at first launch. Off, nothing about it is shown and Cantator guesses from names. On, the Claude pane and **Resolve Ambiguous** in the Service toolbar appear.
 
-Cantator uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in:
+Cantator uses your Claude account, through Claude Code, for two things: filing new files, and ranking ambiguous matches when you choose **Resolve Ambiguous** in the Service view. Install [Claude Code](https://code.claude.com/docs) and sign in. On a Mac with only the Claude desktop app, Cantator uses the copy of Claude Code that app keeps for its Code tab; **Sign In** in **Settings > Claude** signs it in. Either way, sign in with:
 
 ```bash
 claude auth login
@@ -212,17 +212,19 @@ Every preview button, including the headphones on a candidate, becomes **Stop** 
 4. Open **Show**. Arm and GO work there right away. Clicking anything else in the sidebar disarms an armed cue.
 5. To lock editing too, press Command-Shift-L for Show Mode. It locks everything except the EQ, and the sidebar turns into the service's program so you can follow along. The cue the show is on is marked and kept in view.
 
+To do steps 1, 4 and 5 at once, double-click the service in the sidebar: it loads, the Show view opens and Show Mode turns on. Right-click it for **Load and Enter Show Mode** or **Load Service**.
+
 **During the service**
 
 | Key | Action |
 | --- | --- |
-| Up / Down | Choose the next cue |
-| A | Arm |
+| Up / Down, or click a cue | Choose the next cue, in the cue list or the sidebar's program, while nothing is armed or playing |
+| A | Arm. Pressing it again while a cue is armed or playing does nothing |
 | Space | GO |
 | F | End of song: fade with the track's saved fade |
 | P | Hold, then Space to resume |
 | M / Shift-M | Jump to the next or previous marker, while armed or held |
-| `[` / `]` | Move the end point 1 s for this run only. `]` during the automatic end fade brings the level back and extends the run |
+| `[` / `]` | Move the end point 1 s for this run only, from arm to the end. **END** shows the new end in amber. `]` during the automatic end fade brings the level back and extends the run |
 | H | Preview in headphones: the selected cue, or the next cue while one is armed or playing |
 | D | Disarm. If the cue shows a mid-track start, this clears it |
 | Return | Acknowledge a fault |

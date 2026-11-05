@@ -877,7 +877,13 @@ public struct OutputRouting: Codable, Equatable, Sendable {
         )
     }
 
-    public var isSameDevice: Bool { houseDeviceUID != nil && houseDeviceUID == cueDeviceUID }
+    /// House and cue on the same outputs. One device is allowed when each has its own pair, as on a
+    /// Dante or other multichannel interface: each engine's channel map sends silence to every
+    /// output but its own pair, so the cue still never reaches the house pair. A device with two
+    /// outputs or fewer has only the pair 1-2, so house and cue on it always overlap.
+    public var sharesOutputs: Bool {
+        houseDeviceUID != nil && houseDeviceUID == cueDeviceUID && abs(houseFirstChannel - cueFirstChannel) < 2
+    }
 }
 
 public enum PlanningCenterSource: String, Codable, CaseIterable, Sendable {

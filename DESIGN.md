@@ -13,7 +13,7 @@ Cantator is a native macOS playback app for the person running choir and special
 | D's aggressive decode at ARM vs A's preload. | Decode every matched cue into RAM on Load Service. ARM never touches disk, so a Drive stall cannot delay or cut a cue. |
 | D resamples at load vs letting the graph do it. | Keep native-rate buffers and let the engine's mixer convert. Marker frames stay simple and no resampler is written. |
 | A's manual end nudges vs D's fixed end marker. | Markers are saved per track. `[` and `]` move the end for this run only and are never persisted in show mode. |
-| D refuses matching house and cue devices. | Kept, including the same device on different channels. It is the only rule that makes "never the house" verifiable. |
+| D refuses matching house and cue devices. | Refuses matching outputs instead. The same device on different pairs is allowed, because a Dante or multichannel interface is often the only device. Each engine's channel map silences every output but its own pair, which keeps "never the house" verifiable. |
 | Should a failed pre-service check block the show? | No. Issues are advisory, because the operator may have no alternative. A specific cue that cannot play (no file, not in RAM) refuses to arm. |
 
 ## Architecture
@@ -35,7 +35,7 @@ Audio path:
 
 ```
 House:  PlaybackKernel -> AVAudioSourceNode -> mainMixer -> output (device UID + channel map)
-Cue:    PlaybackKernel -> AVAudioSourceNode -> mainMixer -> output (a different device UID)
+Cue:    PlaybackKernel -> AVAudioSourceNode -> mainMixer -> output (a different device UID, or a different pair on the same one)
 ```
 
 These are two separate `AVAudioEngine` instances with no shared nodes. `HouseBus` is only reachable through `ShowController`. Audition code only receives a `CueBus`, so no code path exists from the audition feature to the house device.
@@ -71,7 +71,7 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 5. The house transport works in the Show view, with or without Show Mode. Leaving the Show view disarms an armed cue; while a cue plays or holds, the Show view cannot be left. The Transport menu, like the keys, acts only in the Show view or Show Mode. Show Mode (Cmd-Shift-L; Cmd-L locks the screen on some Macs) is an optional lock: library and plan editing are off except the EQ, the sidebar shows the loaded service's program instead of its links, and the window cannot be closed. Show Mode cannot be left, the window cannot be closed and the app cannot quit silently while a cue is armed or live.
 6. Esc fades everything (1.5 s). Esc twice within 1 s stops hard. This works in every view and whether or not Show Mode is on.
 7. House device loss during playback stops immediately, retains position, and shows a red fault. Cantator never rebinds to another device by itself.
-8. House and cue must be different devices. Audition is unavailable until a cue device is set.
+8. House and cue must use different outputs: another device, or another pair on the same one. Audition is unavailable until a cue device is set.
 9. Transport keys act only when aimed at the main window with no sheet, dialog or text field in focus. Typing in Settings can never arm or start a cue. Transport menu items show their key in the title instead of being menu shortcuts, because a bare-key menu shortcut would fire from a text field.
 10. Show plays what was last saved: edits to a loaded service apply as soon as no cue is engaged.
 11. If the Cantator window is not key while armed or live, the state bar says KEYS NOT FOCUSED.

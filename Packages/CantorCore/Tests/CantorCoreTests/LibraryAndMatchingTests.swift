@@ -947,6 +947,21 @@ final class ClaudeCLITests: XCTestCase {
         return url.path
     }
 
+    func testFindsNewestDesktopAppCopy() throws {
+        let files = FileManager.default
+        XCTAssertNil(ClaudeCLI.desktopAppCopy(in: directory))
+        for version in ["2.1.9", "2.1.10"] {
+            let folder = directory.appendingPathComponent("\(version)/abc123/claude.app/Contents/MacOS")
+            try files.createDirectory(at: folder, withIntermediateDirectories: true)
+            let binary = folder.appendingPathComponent("claude")
+            try Data("#!/bin/sh\n".utf8).write(to: binary)
+            try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        }
+        // An update still unpacking, with no binary yet, is skipped.
+        try files.createDirectory(at: directory.appendingPathComponent("2.2.0/def456"), withIntermediateDirectories: true)
+        XCTAssertEqual(ClaudeCLI.desktopAppCopy(in: directory), directory.appendingPathComponent("2.1.10/abc123/claude.app/Contents/MacOS/claude").path)
+    }
+
     func testArgumentsDisableToolsAndNeverUseBareMode() {
         let arguments = ClaudeCLI.arguments(system: "s", schema: "{}", model: "")
         let tools = try! XCTUnwrap(arguments.firstIndex(of: "--tools"))

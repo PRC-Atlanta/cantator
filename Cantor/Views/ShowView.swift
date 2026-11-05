@@ -149,7 +149,8 @@ private struct CueListPanel: View {
     }
 }
 
-/// A row has no tap action. Only the arrow keys move the pointer, so nothing here can start sound.
+/// Clicking a row points at it, like the arrow keys, and only while nothing is engaged. Nothing
+/// here can start sound: A and GO still do that.
 private struct CueRow: View {
     @Environment(AppModel.self) private var model
     let index: Int
@@ -186,6 +187,8 @@ private struct CueRow: View {
         .padding(.horizontal, 12)
         .frame(height: 50)
         .background(isPointed ? Color.primary.opacity(0.07) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture { show.point(at: index) }
     }
 }
 
@@ -213,7 +216,13 @@ private struct CurrentCuePanel: View {
                 HStack(alignment: .firstTextBaseline, spacing: 22) {
                     F6Readout("FADE", "\(String(format: "%.1f", track.fadeOutSec)) s")
                     F6Readout("GAIN", TimeText.decibels(cue.gainDb))
-                    F6Readout("END", track.endSec == nil ? "file end" : TimeText.tenths(track.endSec ?? 0))
+                    // While engaged, the end this run is heading for, amber once [ or ] has moved it.
+                    if show.state.holdsHouseEngine, show.activeCue?.id == cue.id {
+                        let moved = abs(show.endSec - (track.endSec ?? track.durationSec)) > 0.05
+                        F6Readout("END", TimeText.tenths(show.endSec), color: moved ? Theme.armed : EQTheme.passes)
+                    } else {
+                        F6Readout("END", track.endSec == nil ? "file end" : TimeText.tenths(track.endSec ?? 0))
+                    }
                     if let resume = show.resumeSec, show.state != .idle || show.pointedCue?.id == cue.id {
                         F6Readout("STARTS AT", TimeText.tenths(resume), color: Theme.armed)
                     }

@@ -137,8 +137,8 @@ private struct OutputsSettings: View {
                 pairPicker(uid: routing.cueDeviceUID, first: routing.cueFirstChannel) { first in
                     model.updateSettings { $0.routing.cueFirstChannel = first }
                 }
-                if routing.isSameDevice {
-                    Label("House and cue must be different devices.", systemImage: "xmark.octagon.fill")
+                if routing.sharesOutputs {
+                    Label("House and cue must use different outputs.", systemImage: "xmark.octagon.fill")
                         .foregroundStyle(Theme.danger)
                 }
             }

@@ -153,7 +153,7 @@ public final class HouseBus: HouseOutput {
     public var isRunning: Bool { output.isRunning }
 }
 
-/// The audition engine. It shares nothing with HouseBus and refuses the house device.
+/// The audition engine. It shares nothing with HouseBus and refuses the house outputs.
 @MainActor
 public final class CueBus {
     private lazy var output = OutputEngine { [weak self] in self?.stop() }
@@ -166,7 +166,7 @@ public final class CueBus {
         trackID: UUID, buffer: PCMBuffer, parameters: PlaybackParameters, from startFrame: Int? = nil, routing: OutputRouting
     ) throws {
         guard let uid = routing.cueDeviceUID else { throw OutputError.deviceUnavailable("no cue output set") }
-        guard uid != routing.houseDeviceUID else { throw OutputError.deviceUnavailable("cue output is the house output") }
+        guard !routing.sharesOutputs else { throw OutputError.deviceUnavailable("cue output is the house output") }
         var parameters = parameters
         if let startFrame { parameters.startFrame = min(max(startFrame, 0), parameters.endFrame) }
         // Audition plays to the end of the file so the operator can hear past a marker.
