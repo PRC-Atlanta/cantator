@@ -177,9 +177,13 @@ public struct Library: Codable, Equatable, Sendable {
     public var duplicateGroups: [DuplicateGroup] {
         let tracks = playbackTracks
         // Cantator's own copy in ~/Music/Cantor is a backup the operator asked for, not a duplicate.
+        // Two copies there are, as are two outside it.
         let managed = ManagedFolder.path + "/"
         var groups: [DuplicateGroup] = tracks
-            .filter { $0.files.count { !$0.path.hasPrefix(managed) } > 1 }
+            .filter { track in
+                let inManaged = track.files.count { $0.path.hasPrefix(managed) }
+                return inManaged > 1 || track.files.count - inManaged > 1
+            }
             .map { DuplicateGroup(id: "same-\($0.id)", kind: .sameAudio, trackIDs: [$0.id]) }
 
         // Numbers are part of the key, so "Psalm 23" and "Psalm 91" are not offered as duplicates.

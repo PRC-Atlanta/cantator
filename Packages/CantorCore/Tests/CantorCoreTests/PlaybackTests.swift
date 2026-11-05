@@ -1081,6 +1081,28 @@ extension ShowControllerTests {
         XCTAssertEqual(saved.count, 3)
     }
 
+    func testNudgeJustAfterACueEndsLeavesTheNextSongAlone() {
+        let show = controller(cues: [cue("a", endSec: 6), cue("b", endSec: 6)])
+        var saved: [Double] = []
+        show.onEndMoved = { _, end in saved.append(end) }
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        time += 1
+        show.go()
+        house.render(seconds: 0.1)
+        show.fadeOut()
+        house.render(seconds: 3.2)
+        show.tick()
+        XCTAssertEqual(show.state, .idle)
+        XCTAssertEqual(show.pointedCue?.id, "b")
+        show.nudgeEnd(seconds: 1)
+        XCTAssertEqual(show.pointedCue?.track?.endSec, 6, "a press meant for a's fade")
+        XCTAssertTrue(saved.isEmpty)
+        time += ShowController.nudgeSettleSec
+        show.nudgeEnd(seconds: -1)
+        XCTAssertEqual(show.pointedCue?.track?.endSec, 5)
+    }
+
     func testNudgeWhileIdleThenArmPlaysToNewEnd() {
         let show = controller(cues: [cue("a", endSec: 6)])
         show.nudgeEnd(seconds: -2)

@@ -122,7 +122,7 @@ struct ServiceView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.isSyncing)
+                .disabled(model.isSyncing || model.show.state.holdsHouseEngine)
                 .help("Pull the latest from Planning Center, then turn on and match lines from their notes and your library")
             }
 

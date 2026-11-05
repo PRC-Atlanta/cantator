@@ -53,18 +53,32 @@ public struct ClaudeCLI: ClaudeRunner {
     }
 
     /// The newest `<version>/<build>/claude.app` the desktop app has installed. The folder changes
-    /// with every update, so it is looked up each time rather than saved.
+    /// with every update, so it is looked up each time rather than saved. Only version folders named
+    /// like 2.1.308 count, and a build the desktop app has marked `.verified` wins over one it may
+    /// still be writing; an unmarked build is used only if no version has a marked one.
     static func desktopAppCopy(in folder: URL) -> String? {
         let files = FileManager.default
-        let versions = (try? files.contentsOfDirectory(atPath: folder.path)) ?? []
-        for version in versions.sorted(by: { $0.compare($1, options: .numeric) == .orderedDescending }) {
-            let builds = (try? files.contentsOfDirectory(atPath: folder.appendingPathComponent(version).path)) ?? []
-            for build in builds.sorted() {
-                let path = folder.appendingPathComponent("\(version)/\(build)/claude.app/Contents/MacOS/claude").path
-                if files.isExecutableFile(atPath: path) { return path }
+        let versions = ((try? files.contentsOfDirectory(atPath: folder.path)) ?? [])
+            .filter { name in !name.isEmpty && name.split(separator: ".", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) } }
+            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+        var unverified: String?
+        for version in versions {
+            let versionFolder = folder.appendingPathComponent(version)
+            let builds = ((try? files.contentsOfDirectory(atPath: versionFolder.path)) ?? []).sorted {
+                modified(versionFolder.appendingPathComponent($0)) > modified(versionFolder.appendingPathComponent($1))
+            }
+            for build in builds {
+                let path = versionFolder.appendingPathComponent("\(build)/claude.app/Contents/MacOS/claude").path
+                guard files.isExecutableFile(atPath: path) else { continue }
+                if files.fileExists(atPath: versionFolder.appendingPathComponent("\(build)/.verified").path) { return path }
+                unverified = unverified ?? path
             }
         }
-        return nil
+        return unverified
+    }
+
+    private static func modified(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     }
 
     static func arguments(system: String, schema: String, model: String) -> [String] {
@@ -121,7 +135,7 @@ public struct ClaudeCLI: ClaudeRunner {
 
     static let signInProbeArguments = [
         "-p", "--output-format", "json", "--tools", "", "--effort", "low", "--no-session-persistence",
-        "--strict-mcp-config", "--setting-sources", "", "--model", "haiku",
+        "--strict-mcp-config", "--setting-sources", "", "--model", "haiku", "--system-prompt", "Reply with one word.",
     ]
 
     /// Opens Terminal running `claude auth login`, which signs in through the browser.

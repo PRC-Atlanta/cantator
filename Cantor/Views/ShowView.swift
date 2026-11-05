@@ -188,7 +188,8 @@ private struct CueRow: View {
         .frame(height: 50)
         .background(isPointed ? Color.primary.opacity(0.07) : .clear)
         .contentShape(Rectangle())
-        .onTapGesture { show.point(at: index) }
+        // By id, not the index it was drawn with, in case the list changed since.
+        .onTapGesture { if let at = show.cues.firstIndex(where: { $0.id == cue.id }) { show.point(at: at) } }
     }
 }
 

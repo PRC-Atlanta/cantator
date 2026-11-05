@@ -100,6 +100,8 @@ final class LibraryMergeTests: XCTestCase {
 
         library.merge(scan: [file("/a/Song.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file("/b/Song.mp3", id: "x")])
         XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio)
+        library.merge(scan: [file(ManagedFolder.path + "/Song [choir] x.mp3", id: "x"), file(ManagedFolder.path + "/Song [choir] x 2.mp3", id: "x")])
+        XCTAssertEqual(library.duplicateGroups.first?.kind, .sameAudio, "two copies in ~/Music/Cantor are one too many")
     }
 
     func testMovingAFileKeepsCuePoints() {
@@ -960,6 +962,27 @@ final class ClaudeCLITests: XCTestCase {
         // An update still unpacking, with no binary yet, is skipped.
         try files.createDirectory(at: directory.appendingPathComponent("2.2.0/def456"), withIntermediateDirectories: true)
         XCTAssertEqual(ClaudeCLI.desktopAppCopy(in: directory), directory.appendingPathComponent("2.1.10/abc123/claude.app/Contents/MacOS/claude").path)
+    }
+
+    func testPrefersAVerifiedDesktopAppCopyAndIgnoresOddFolders() throws {
+        let files = FileManager.default
+        func install(_ relative: String, verified: Bool) throws {
+            let folder = directory.appendingPathComponent("\(relative)/claude.app/Contents/MacOS")
+            try files.createDirectory(at: folder, withIntermediateDirectories: true)
+            let binary = folder.appendingPathComponent("claude")
+            try Data("#!/bin/sh\n".utf8).write(to: binary)
+            try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+            if verified { try Data().write(to: directory.appendingPathComponent("\(relative)/.verified")) }
+        }
+        try install("2.1.9/aaa", verified: true)
+        try install("2.1.10/bbb", verified: false)
+        try install("latest/ccc", verified: true)
+        try install("2.2.0-beta/ddd", verified: true)
+        XCTAssertEqual(ClaudeCLI.desktopAppCopy(in: directory), directory.appendingPathComponent("2.1.9/aaa/claude.app/Contents/MacOS/claude").path,
+                       "a newer build still being written loses to a verified one")
+        try files.removeItem(at: directory.appendingPathComponent("2.1.9"))
+        XCTAssertEqual(ClaudeCLI.desktopAppCopy(in: directory), directory.appendingPathComponent("2.1.10/bbb/claude.app/Contents/MacOS/claude").path,
+                       "with nothing verified, an unmarked build still counts")
     }
 
     func testArgumentsDisableToolsAndNeverUseBareMode() {

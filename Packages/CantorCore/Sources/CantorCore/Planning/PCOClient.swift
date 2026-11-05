@@ -109,11 +109,13 @@ public actor PCOClient {
     static func endsSync(_ error: Error) -> Bool {
         if error is CancellationError { return true }
         if let error = error as? PCOError { return error == .unauthorized || error == .rateLimited }
-        if let error = error as? URLError {
-            return [.cancelled, .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost]
-                .contains(error.code)
-        }
+        if let error = error as? URLError { return error.code == .cancelled || isConnectionLoss(error) }
         return false
+    }
+
+    /// No network, or Planning Center can't be reached at all.
+    public static func isConnectionLoss(_ error: URLError) -> Bool {
+        [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost].contains(error.code)
     }
 
     private func fetchPlan(

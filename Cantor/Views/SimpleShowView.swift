@@ -80,6 +80,7 @@ private struct SimpleTagList: View {
 private struct SimpleSongList: View {
     @AppEnvironment private var model
     @State private var search = ""
+    @FocusState private var searching: Bool
 
     private var tracks: [Track] {
         var result = model.library.playbackTracks
@@ -98,6 +99,9 @@ private struct SimpleSongList: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search songs", text: $search)
                     .textFieldStyle(.plain)
+                    .focused($searching)
+                    // Return ends the search, so the next keys reach the transport.
+                    .onSubmit { searching = false }
                 if !search.isEmpty {
                     Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain)
@@ -122,6 +126,9 @@ private struct SimpleSongList: View {
             }
         }
         .navigationTitle(model.simpleTag?.capitalized ?? "All Songs")
+        // The keys don't work while the search field has focus, and the big buttons don't take it,
+        // so arming lets go of it: Space must be GO, not a space in the search.
+        .onChange(of: model.show.state) { _, state in if state != .idle { searching = false } }
     }
 }
 

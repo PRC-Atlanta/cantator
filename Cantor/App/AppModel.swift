@@ -109,6 +109,8 @@ final class AppModel {
     @ObservationIgnored private var tickCount = 0
     @ObservationIgnored private var saveErrors: [String: String] = [:]
     @ObservationIgnored private var isCheckingClaude = false
+    /// A request found the Claude login expired. Cleared only by a request that works.
+    @ObservationIgnored private var loginExpired = false
     /// Asked for while a scan was running or a cue was engaged. Runs once that ends.
     @ObservationIgnored private var rescanPending = false
     /// Saves wait while a cue is engaged, so encoding the library never stalls the transport.
@@ -539,7 +541,9 @@ final class AppModel {
             $0.endSec = endSec
             $0.sanitizePoints()
         }
-        markCuesChanged()
+        // Only the end changed, so the cue list catches up without decoding anything again,
+        // which during a song would retry a file that failed its check on every press.
+        if loadedPlanID != nil { cuesNeedRefresh = true }
         scheduleSave()
     }
 
@@ -687,9 +691,14 @@ final class AppModel {
             }
             // Like Advanced, a second A does nothing: not while a song plays, not on the song
             // already armed or loading. A different picked song still replaces the armed one.
+            // A fault is acknowledged first, as the Arm button and Advanced's A ask.
+            if case .faulted = show.state { return }
             var replacesArmed = false
             if case .armed = show.state { replacesArmed = show.activeCue?.track?.id != track.id }
             guard playNowLoading != track.id, replacesArmed || !show.state.holdsHouseEngine else { return }
+            // The old song lets go at once, so a GO while the new one loads plays nothing rather
+            // than the song the operator just moved away from.
+            if replacesArmed { show.disarm() }
             engage(track, andGo: false)
         } else {
             show.arm()
@@ -706,10 +715,13 @@ final class AppModel {
         }
         if show.showMode, !show.setShowMode(false) { return }
         stopAudition()
+        // A song still loading was asked for in the other view, which is no longer on screen.
+        playNowRequest = nil
+        playNowLoading = nil
         updateSettings { $0.operatorMode = mode }
         selection = .show
         if mode == .simple, simpleTrackID == nil || simpleTrack == nil {
-            selectSimpleTrack(library.playbackTracks.sorted { $0.title < $1.title }.first?.id)
+            selectSimpleTrack(library.playbackTracks.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }.first?.id)
         }
     }
 
@@ -769,7 +781,7 @@ final class AppModel {
     /// lines turn on and strong matches land at once. `alsoRead` is a service the sync may not cover,
     /// such as a past one, read on its own afterwards.
     func refreshPlans(alsoRead planID: String? = nil) {
-        guard settings.usesPlanningCenter, !isSyncing, !show.showMode, !isLoadingService else { return }
+        guard settings.usesPlanningCenter, !isSyncing, !show.showMode, !show.state.holdsHouseEngine, !isLoadingService else { return }
         rematchAllPlans()
         isSyncing = true
         Task {
@@ -870,7 +882,7 @@ final class AppModel {
 
     /// Lists the services from six weeks back to three weeks ahead, without their items.
     func listPickerServices() {
-        guard !isListingServices else { return }
+        guard !isListingServices, !show.state.holdsHouseEngine else { return }
         isListingServices = true
         pickerMessage = nil
         Task {
@@ -892,7 +904,7 @@ final class AppModel {
     /// Reads the chosen service's items and adds it to the sidebar, then shows it.
     /// Not in Show Mode, for the same reason as a sync.
     func pickService(_ summary: PlanSummary) {
-        guard readingServiceID == nil, !show.showMode, !isLoadingService else { return }
+        guard readingServiceID == nil, !show.showMode, !show.state.holdsHouseEngine, !isLoadingService else { return }
         readingServiceID = summary.id
         pickerMessage = nil
         Task {
@@ -931,6 +943,8 @@ final class AppModel {
             }
         } catch {
             notes.append(error.localizedDescription)
+            // Offline, the connector can't reach Planning Center either, and would only add minutes.
+            if let error = error as? URLError, PCOClient.isConnectionLoss(error) { return (nil, notes) }
         }
         guard settings.llmEnabled else {
             if notes.isEmpty { notes.append("Add your Planning Center token in Settings.") }
@@ -960,7 +974,13 @@ final class AppModel {
             server = try PlanningCenterConnector.server(in: try await cli.mcpServers())
         } catch PlanningCenterConnectorError.notConnected {
             // An expired login hides every connector, so check it before blaming the connector.
-            try await cli.verifySignIn()
+            // Only a login problem replaces the connector message; a probe that fails otherwise
+            // says nothing about the connector.
+            do {
+                try await cli.verifySignIn()
+            } catch LLMError.notLoggedIn {
+                throw LLMError.notLoggedIn
+            } catch {}
             throw PlanningCenterConnectorError.notConnected
         }
         cli.timeout = timeout
@@ -1039,7 +1059,9 @@ final class AppModel {
             let account = try await cli.accountStatus()
             guard account.isLoggedIn else { throw LLMError.notLoggedIn }
             guard !account.usesAPIKey else { throw LLMError.usesAPIKey }
-            if settings.llmEnabled { claudeConnection = .connected }
+            // `auth status` still reads as logged in once a login has expired, so it can't undo a
+            // request that found it expired; only a request that works can.
+            if settings.llmEnabled, !loginExpired { claudeConnection = .connected }
             return cli
         } catch {
             if settings.llmEnabled { claudeConnection = ClaudeConnection(error: error) }
@@ -1054,6 +1076,10 @@ final class AppModel {
         defer { claudeWorking = nil }
         do {
             let result = try await work()
+            if loginExpired {
+                loginExpired = false
+                if settings.llmEnabled { claudeConnection = .connected }
+            }
             lastClaudeUse = ClaudeUse(purpose: purpose)
             return result
         } catch {
@@ -1069,6 +1095,7 @@ final class AppModel {
         case .notInstalled, .notLoggedIn, .usesAPIKey, .limitReached: claudeConnection = ClaudeConnection(error: error)
         default: break
         }
+        if case .notLoggedIn = error { loginExpired = true }
     }
 
     /// Opens Terminal on `claude auth login`. Coming back to Cantor checks the status again.
@@ -1096,9 +1123,13 @@ final class AppModel {
         isCheckingClaude = true
         Task {
             defer { isCheckingClaude = false }
-            guard let cli = try? await claudeAccount(), verify else { return }
+            // Once a login was found expired, every check sends the request, so coming back from
+            // signing in in Terminal shows connected without pressing Check.
+            guard let cli = try? await claudeAccount(), verify || loginExpired else { return }
             do {
                 try await cli.verifySignIn()
+                loginExpired = false
+                claudeConnection = .connected
             } catch {
                 noteClaudeFailure(error)
             }
@@ -1336,14 +1367,18 @@ final class AppModel {
 
     /// Pinned services, listed first whatever their dates, for practice days that only load songs.
     var pinnedSidebarPlans: [ServicePlan] {
-        sidebarPlans.filter(\.pinned).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        sidebarPlans.filter(\.pinned).sorted { a, b in
+            let order = a.sidebarName.localizedStandardCompare(b.sidebarName)
+            return order == .orderedSame ? (a.sortDate ?? .distantFuture) < (b.sortDate ?? .distantFuture) : order == .orderedAscending
+        }
     }
 
     /// Today's and later services, then the ones already over, which the sidebar folds away. Pinned
-    /// services are in neither: their dates don't count.
+    /// services are in neither: their dates don't count. The loaded service stays with the upcoming
+    /// ones after midnight, so it never folds away while it is in use.
     var upcomingSidebarPlans: [ServicePlan] {
         let today = Calendar.current.startOfDay(for: Date())
-        return sidebarPlans.filter { !$0.pinned && ($0.sortDate ?? .distantFuture) >= today }
+        return sidebarPlans.filter { !$0.pinned && (($0.sortDate ?? .distantFuture) >= today || $0.id == loadedPlanID) }
     }
 
     /// The upcoming services inside the sidebar's rolling window, which moves on with the date. The
@@ -1355,33 +1390,41 @@ final class AppModel {
 
     var pastSidebarPlans: [ServicePlan] {
         let today = Calendar.current.startOfDay(for: Date())
-        return sidebarPlans.filter { !$0.pinned && ($0.sortDate ?? .distantFuture) < today }.reversed()
+        return sidebarPlans.filter { !$0.pinned && $0.id != loadedPlanID && ($0.sortDate ?? .distantFuture) < today }.reversed()
     }
 
-    /// The loaded service, else the next one from today on. Plans are sorted by date and keep recent
-    /// past ones. A pinned practice service only counts once it is loaded.
+    /// The loaded service, else the next one from today on, pinned or not: a pinned Sunday service
+    /// is still Sunday's. Plans are sorted by date and keep recent past ones. Only the fallback to
+    /// the latest past service leaves pinned ones out, since a practice list is no one's last service.
     var currentPlan: ServicePlan? {
         let today = Calendar.current.startOfDay(for: Date())
-        let dated = sidebarPlans.filter { !$0.pinned }
-        return loadedPlan ?? dated.first { ($0.sortDate ?? .distantFuture) >= today } ?? dated.last
+        return loadedPlan ?? sidebarPlans.first { ($0.sortDate ?? .distantFuture) >= today }
+            ?? sidebarPlans.last { !$0.pinned } ?? sidebarPlans.last
     }
 
     /// Pinning only changes where the service is listed, so it is allowed in Show Mode too.
     func setPinned(planID: String, _ pinned: Bool) {
         guard let index = plans.firstIndex(where: { $0.id == planID }) else { return }
         plans[index].pinned = pinned
+        // A service of a hidden type was only showing because of the pin. Unpinned, it stays as if
+        // chosen in the service picker, so it doesn't vanish with no way back.
+        if !pinned, settings.hides(plans[index]) { plans[index].picked = true }
         scheduleSave()
     }
 
     /// A double-click on a service: loads it unless it is already loaded, then opens the Show view in
     /// Show Mode, ready to arm. Simple has no Show Mode, so it only opens the Show view.
     func goLive(planID: String) {
-        if loadedPlanID == planID, !isLoadingService {
+        if loadedPlanID == planID {
             selection = .show
-            if !isSimple, !show.cues.isEmpty { show.setShowMode(true) }
+            // Not while files are still decoding, or while a load waits behind a cue and the show
+            // still holds the old service's cues.
+            if !isSimple, !isLoadingService, !showLoadPending, !show.cues.isEmpty { show.setShowMode(true) }
             return
         }
-        if show.showMode {
+        if isLoadingService {
+            alert = "A service is still loading. Try again in a moment."
+        } else if show.showMode {
             alert = "Leave Show Mode before loading another service."
         } else if show.state.holdsHouseEngine {
             alert = "Stop the cue before loading another service."
@@ -1419,12 +1462,12 @@ final class AppModel {
             sleepGuard.engage()
             syncSoundGuard()
             if !decoded.1.isEmpty { alert = decoded.1.joined(separator: "\n") }
-            // A file confirmed while the service decoded wasn't in the list read at the start.
-            loadMissingBuffers()
             if thenShow {
                 selection = .show
                 if !isSimple, !showLoadPending, !show.cues.isEmpty { show.setShowMode(true) }
             }
+            // A file confirmed while the service decoded wasn't in the list read at the start.
+            loadMissingBuffers()
         }
     }
 

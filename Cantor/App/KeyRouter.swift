@@ -31,7 +31,8 @@ final class KeyRouter {
             return true
         }
 
-        guard show.showMode || model.selection == .show, !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+        // Simple has no other view, so its keys work whatever the sidebar selection was left at.
+        guard show.showMode || model.isSimple || model.selection == .show, !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
             return false
         }
         guard let window = event.window, window === mainWindow, window.attachedSheet == nil, NSApp.modalWindow == nil,

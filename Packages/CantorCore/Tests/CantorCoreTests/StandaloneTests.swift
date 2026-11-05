@@ -170,6 +170,9 @@ final class ManualServiceTests: XCTestCase {
         settings.hiddenServiceTypeIDs = ["1"]
         XCTAssertTrue(settings.hides(ServicePlan(id: "98", serviceTypeID: "1", serviceTypeName: "", title: "", dates: "", sortDate: nil)))
         XCTAssertFalse(settings.hides(synced), "a pinned service of a hidden type still shows")
+
+        XCTAssertEqual(practice.sidebarName, "Practice")
+        XCTAssertEqual(synced.sidebarName, "Sunday", "a synced plan with no title goes by its service type")
     }
 
     func testABuiltServiceIsNeverStale() {

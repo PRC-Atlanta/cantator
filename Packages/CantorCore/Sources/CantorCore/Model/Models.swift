@@ -470,6 +470,13 @@ public struct ServicePlan: Codable, Equatable, Identifiable, Sendable {
     /// Built in Cantator, not read from Planning Center. Every cue in it is manual.
     public var isManual: Bool { serviceTypeID == Self.manualServiceTypeID }
 
+    /// What a pinned service is called in the sidebar: its title, or for a Planning Center service
+    /// with no title, its service type.
+    public var sidebarName: String {
+        let name = title.isEmpty ? serviceTypeName : title
+        return name.isEmpty ? dates : name
+    }
+
     /// A new, empty service for a date. `title` is what the operator calls it, such as "Sunday Morning".
     public static func manual(title: String, date: Date, cues: [ServiceCue] = [], now: Date = Date()) -> ServicePlan {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)

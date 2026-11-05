@@ -47,10 +47,16 @@ struct SidebarView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // A selected service that moves into Past Services, unpinned or overtaken by the date, stays in view.
+        .onChange(of: selectionIsPast) { _, isPast in if isPast { pastOpen = true } }
         // The window rolls on at midnight even while nothing else changes.
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged).receive(on: RunLoop.main)) { _ in
             today = Date()
         }
+    }
+
+    private var selectionIsPast: Bool {
+        model.pastSidebarPlans.contains { selection == .plan($0.id) }
     }
 
     private var serviceSection: some View {
@@ -179,8 +185,11 @@ struct SidebarView: View {
             Label {
                 // A pinned service is known by its name; its date is only a note.
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(plan.pinned || plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
-                    Text(plan.pinned ? "Pinned" : plan.isManual ? plan.title : plan.serviceTypeName)
+                    Text(plan.pinned ? plan.sidebarName : plan.dates.isEmpty ? plan.title : plan.dates).lineLimit(1)
+                    // A synced service keeps its date beside the pin; a practice one built here has
+                    // none that counts.
+                    Text(plan.pinned ? (plan.isManual || plan.dates.isEmpty ? "Pinned" : "Pinned · \(plan.dates)")
+                        : plan.isManual ? plan.title : plan.serviceTypeName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -285,7 +294,7 @@ private struct UpdateServicesButton: View {
             }
         }
         .buttonStyle(.borderless)
-        .disabled(model.isSyncing || model.show.showMode || model.isLoadingService)
+        .disabled(model.isSyncing || model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
         .help(help)
         .accessibilityLabel("Update Services")
     }

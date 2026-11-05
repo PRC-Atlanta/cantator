@@ -94,7 +94,7 @@ struct RootView: View {
             Text(pending.message)
         }
         // An alert is a sheet, which would take the transport keys. The Show view shows it inline instead.
-        .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode && model.selection != .show }, set: { if !$0 { model.alert = nil } })) {
+        .alert("Cantator", isPresented: Binding(get: { model.alert != nil && !model.show.showMode && !model.isSimple && model.selection != .show }, set: { if !$0 { model.alert = nil } })) {
             if model.claudeConnection == .signedOut {
                 Button("Sign In to Claude") { model.signInToClaude() }
             }

@@ -101,9 +101,10 @@ private struct ImportMenu: View {
     @AppEnvironment private var model
 
     var body: some View {
+        // Simple has no service editor to open it in.
         Button("New Service…") { model.startNewService() }
             .keyboardShortcut("n")
-            .disabled(model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
+            .disabled(model.isSimple || model.show.showMode || model.show.state.holdsHouseEngine || model.isLoadingService)
         Button("Import Audio…") { ImportButton.choose(model) }
             .keyboardShortcut("i")
             .disabled(!model.canImport)
@@ -146,7 +147,7 @@ private struct TransportMenu: View {
     var body: some View {
         let show = model.show
         // Like the keys: only where the Show view, and so the state of the show, is on screen.
-        let inShow = show.showMode || model.selection == .show
+        let inShow = show.showMode || model.isSimple || model.selection == .show
         // The same gate as the keys: Simple leaves Hold, markers and end nudges to Full.
         let allows = { (key: TransportKey) in inShow && model.settings.operatorMode.answers(key) }
         Button(model.isSimple ? "Arm Picked Song (A)" : "Arm Next Cue (A)") { model.arm() }.disabled(!allows(.arm))

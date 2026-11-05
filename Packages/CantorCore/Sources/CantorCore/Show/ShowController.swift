@@ -72,6 +72,9 @@ public final class ShowController {
     @ObservationIgnored private var runEndFrame = 0
     /// F or panic was sent. The operator is ending the cue, so no nudge or resume may bring it back.
     @ObservationIgnored private var stopping = false
+    /// When the last cue let go of the house. A `[` or `]` meant for a cue that has just ended must
+    /// not land on the next one, which the pointer has moved to.
+    @ObservationIgnored private var releasedAt: TimeInterval?
     @ObservationIgnored private let house: HouseOutput
     @ObservationIgnored private let clock: () -> TimeInterval
     @ObservationIgnored private let log: RunLog?
@@ -358,6 +361,7 @@ public final class ShowController {
         case .armed, .live, .held: break
         case .fading where !stopping: break
         case .idle:
+            if let releasedAt, clock() - releasedAt < Self.nudgeSettleSec { return }
             nudgePointedEnd(seconds: seconds)
             return
         default: return
@@ -370,6 +374,9 @@ public final class ShowController {
         kernel.setEnd(toFrame: runEndFrame)
         saveEnd(Double(runEndFrame) / rate, of: track, length: Double(kernel.buffer.frames) / rate)
     }
+
+    /// How long after a cue ends `[` and `]` stay off, so presses meant for its fade don't move the next song.
+    static let nudgeSettleSec = 2.0
 
     private func nudgePointedEnd(seconds: Double) {
         guard let cue = pointedCue, let track = cue.track else { return }
@@ -466,6 +473,7 @@ public final class ShowController {
                 kernel?.stop()
                 log?.record("hard-stop", cue: finishedCue?.title)
             case .teardown:
+                releasedAt = clock()
                 house.stop()
                 kernel = nil
                 playNowCue = nil

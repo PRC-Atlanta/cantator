@@ -311,7 +311,7 @@ private struct PlanningCenterSettings: View {
             }
             Section {
                 HStack {
-                    Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing || model.show.showMode)
+                    Button("Sync Now") { model.refreshPlans() }.disabled(model.isSyncing || model.show.showMode || model.show.state.holdsHouseEngine)
                     if model.isSyncing {
                         ProgressView().controlSize(.small)
                         Text(model.claudeWorking ?? "Syncing").foregroundStyle(.secondary)
@@ -344,7 +344,9 @@ struct ClaudeSettings: View {
                         ClaudeStatusLabel(connection: model.claudeConnection)
                         Button("Check") { model.refreshClaudeConnection(verify: true) }
                         if model.claudeConnection == .signedOut {
+                            // Terminal would take the transport keys while a cue is up.
                             Button("Sign In…") { model.signInToClaude() }
+                                .disabled(model.show.showMode || model.show.state.holdsHouseEngine)
                         }
                     }
                 }
