@@ -8,9 +8,11 @@ public enum StemDetector {
     static let strongWords: Set<String> = [
         "click", "clicktrack", "metronome", "stem", "stems", "multitrack", "multitracks", "bgv", "bgvs", "vox",
         "drums", "kick", "snare", "toms", "overheads", "perc", "percussion",
-        // A part to learn from, such as "S PTX", "Practice Trax" or a listening demo, is never played in a service.
-        "ptx", "practice", "rehearsal", "demo", "demos",
     ]
+    /// A part to learn from, such as "S PTX", "Practice Trax" or a listening demo, is never played
+    /// in a service. These exclude on their own but are not stems, so they never make a set of
+    /// same-length files look like stems: a choral pack's playback is as long as its parts.
+    static let partWords: Set<String> = ["ptx", "practice", "rehearsal", "demo", "demos"]
     /// Words that also appear in song titles and playback names, so they count only inside a same-length set.
     static let weakWords: Set<String> = [
         "guide", "cues", "bass", "keys", "piano", "organ", "pad", "pads", "synth", "strings", "guitar", "gtr", "eg", "ag",
@@ -38,12 +40,12 @@ public enum StemDetector {
 
         // Every track counts toward a set, including excluded ones, since a set is evidence about its members.
         let located = tracks.compactMap { track -> (folder: String, track: Track)? in
-            guard track.durationSec > 0, let file = track.bestFile() ?? track.files.first else { return nil }
+            guard track.durationSec > 0, let file = sourceFile(track) else { return nil }
             return (file.url.deletingLastPathComponent().path, track)
         }
         for (folder, members) in Dictionary(grouping: located, by: \.folder) {
             for set in sameLength(members.map(\.track)) where set.count >= minimumSet {
-                let words = set.map { nameWords(in: $0.primaryFilename) }
+                let words = set.map { sourceFile($0).map { nameWords(in: $0.filename) } ?? [] }
                 let stemCount = words.filter { !$0.isDisjoint(with: strongWords.union(weakWords)) && $0.isDisjoint(with: keepWords) }.count
                 let folderName = URL(fileURLWithPath: folder).lastPathComponent
                 for (index, track) in set.enumerated() where eligible.contains(track.id) && reasons[track.id] == nil {
@@ -59,11 +61,18 @@ public enum StemDetector {
         return reasons
     }
 
+    /// The file whose name and folder say what a track is: the original, not Cantator's copy in
+    /// ~/Music/Cantor, whose name is the title and tag and whose folder holds every copied track.
+    public static func sourceFile(_ track: Track, managedPath: String = ManagedFolder.path) -> TrackFile? {
+        let managed = managedPath.hasSuffix("/") ? managedPath : managedPath + "/"
+        return track.files.first { !$0.path.hasPrefix(managed) } ?? track.bestFile() ?? track.files.first
+    }
+
     private static func reasonFromName(_ track: Track) -> String? {
-        guard let file = track.bestFile() ?? track.files.first else { return nil }
+        guard let file = sourceFile(track) else { return nil }
         let words = nameWords(in: file.filename)
         guard words.isDisjoint(with: keepWords) else { return nil }
-        if let word = words.intersection(strongWords).sorted().first {
+        if let word = words.intersection(strongWords.union(partWords)).sorted().first {
             return "Name says \(display(word))"
         }
         // Only the folder the file is in and the one above it, as in Stems/Song or Song/Stems.
@@ -85,7 +94,7 @@ public enum StemDetector {
         var words = Set(tokens)
         for (first, second) in zip(tokens, tokens.dropFirst()) {
             let joined = first + second
-            if strongWords.contains(joined) || folderWords.contains(joined) { words.insert(joined) }
+            if strongWords.contains(joined) || partWords.contains(joined) || folderWords.contains(joined) { words.insert(joined) }
         }
         return words
     }

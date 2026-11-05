@@ -36,6 +36,29 @@ final class StemDetectorTests: XCTestCase {
         XCTAssertNil(reasons[inKey.id])
     }
 
+    func testAChoralPacksPlaybackIsNotAStemAmongItsParts() {
+        let parts = ["S", "A", "T", "B"].map { track("/Drive/Thou Oh Lord/Thou Oh Lord - \($0) PTX.mp3", 300) }
+        let demo = track("/Drive/Thou Oh Lord/Thou Oh Lord Demo.mp3", 300)
+        let playback = track("/Drive/Thou Oh Lord/Thou Oh Lord.mp3", 300)
+        let reasons = StemDetector.detect(tracks: parts + [demo, playback])
+        XCTAssertEqual(reasons.count, 5)
+        XCTAssertNil(reasons[playback.id], "parts and demos are not stems, so they don't make a same-length set")
+    }
+
+    func testTheOriginalNameDecidesNotCantatorsCopy() {
+        let managed = ManagedFolder.path
+        var kept = track("/Drive/Practice of Praise - Accompaniment.mp3", 200)
+        kept.files.insert(TrackFile(path: "\(managed)/Practice of Praise [choir] 1a2b3c4d.mp3", locality: .local), at: 0)
+        // Copies of different songs share ~/Music/Cantor, so lengths there say nothing.
+        let copies = ["Lead Me", "Piano Hymn", "Organ Prelude"].enumerated().map { index, title in
+            var copy = track("/Drive/\(title)/\(title).mp3", 180 + Double(index) * 0.05)
+            copy.files.insert(TrackFile(path: "\(managed)/\(title) [choir] 0000000\(index).mp3", locality: .local), at: 0)
+            return copy
+        }
+        let reasons = StemDetector.detect(tracks: [kept] + copies)
+        XCTAssertTrue(reasons.isEmpty, "\(reasons)")
+    }
+
     func testOnlyNearbyFoldersCount() {
         let nested = track("/Music/Stems/Way Maker/Way Maker.wav")
         let distant = track("/Music/Old Stems/Choir/November/Be Still.wav")

@@ -338,3 +338,30 @@ Four independent reviewers read the eleven commits after `3ae9fd3` (the standalo
 - **"Sync With" in Settings** doesn't redraw right after a token is saved or cleared.
 - **The alert's Sign In button** can appear on alerts unrelated to Claude while signed out.
 - **Double-click on the loaded service while it still loads** opens the Show view without Show Mode and says nothing.
+
+
+# Review findings: fifth pass, after 1.2.8 (2026-11-05)
+
+1.2.8 went out without a review. Four independent reviewers then read `v1.2.7..v1.2.8`, each only reading code: the New Files list and Sort with Claude, tags (and a stray tag seen in testing), the copy queue with practice and demo detection, and end points. No blockers; the safety rules held. I checked every finding against the code before fixing it.
+
+## Fixed
+- **New Files answers were lost** when an alert covered the list or Later closed it. They live in the model now, and a copy-failure alert waits for the list to close.
+- **Return in a title field applied every row.** Apply has no Return shortcut; Esc keeps the answers.
+- **The list did a library lookup per row on every keystroke.** Rows are built once per update from a dictionary, and the tag and service-item lists once per update.
+- **A service item that had passed** while a file waited could still be confirmed. Apply only confirms items the list offers now.
+- **Sort with Claude replaced titles the operator had set.** A title that isn't just the file's name is kept.
+- **The New Files list could open over the tag editor** and be dismissed as Later.
+- **Cantator's own copy decided exclusion.** Its name is the title and tag, so "Practice of Praise - Accompaniment" lost its keep word, and ~/Music/Cantor made unrelated songs a same-length set. Detection reads the original file, and a file applied as a playback is the operator's choice, which detection leaves alone.
+- **Practice parts made a choral pack's playback look like a stem** under the same-length rule. Parts and demos exclude on their own but no longer count as stems.
+- **A Drive file that timed out** left the queue starting the next download while it kept going. A timeout stops the queue and reports the rest. The queue also waits through Show Mode, and analysis never starts while a cue is engaged.
+- **The classifier prompt** read a lone S, A, T or B, and any pair of files, as a practice part and its helper. It now needs PTX or a part word, or a file that says demo.
+- **Renaming onto an existing tag merged silently.** It asks first. A tag deleted while its name was being edited stays deleted, and guesses only use tags still on the list.
+- **Tag counts:** the sidebar hides tags only excluded tracks have; the editor counts as the sidebar does. Text typed in the inspector's Add tag no longer carries to the next track.
+- **End point panel:** a track with no length yet (a copy from a Drive placeholder) could get a 0.1 s end from a click; the panel stays closed until there is a length, which analysis now fills in. Sound past a file's reported length counts as needing an end. The panel opens when analysis finishes, shows where the sound stops when the silence is longer than 20 s, keeps a drag inside its window, and its Preview End button stops the preview it started.
+
+## Open
+- **The stray "choir" tag** seen in testing: no code path found. Most likely a stray click on Choir in a Tag menu. Every tag added to tracks is now logged (category `tags`) to settle it if it happens again.
+- **A copy that finishes after its timeout** still lands in ~/Music/Cantor and joins its track by content on the next scan; a cloud-only original with no content ID yet can briefly become a track of its own.
+- **Queued copies for a track a scan folds into another** are dropped without a report.
+- **A file's reported length can be up to 1 s longer than its audio**, which counts toward the two seconds of silence.
+- **Tag names are cleaned silently**: lowercase, letters, numbers, spaces and hyphens, 24 characters.

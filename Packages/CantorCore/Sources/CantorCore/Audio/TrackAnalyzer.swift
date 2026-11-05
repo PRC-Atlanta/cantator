@@ -132,6 +132,8 @@ public struct TrackAnalysis: Sendable {
     public var suggestedEndSec: Double?
     public var leadingSilenceSec: Double
     public var peaks: [Float]
+    /// The decoded length, which is what plays. A file's own length can be an estimate.
+    public var lengthSec: Double = 0
 }
 
 public enum TrackAnalyzer {
@@ -151,7 +153,8 @@ public enum TrackAnalyzer {
             truePeakDb: LoudnessMeter.truePeakDb(buffer),
             suggestedEndSec: last >= 0 ? Double(last + 1) / buffer.sampleRate : nil,
             leadingSilenceSec: first > 0 ? Double(first) / buffer.sampleRate : 0,
-            peaks: peaks(buffer, buckets: peakBuckets)
+            peaks: peaks(buffer, buckets: peakBuckets),
+            lengthSec: buffer.sampleRate > 0 ? Double(buffer.frames) / buffer.sampleRate : 0
         )
     }
 

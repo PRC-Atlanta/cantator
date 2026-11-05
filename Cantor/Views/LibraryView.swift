@@ -91,7 +91,8 @@ struct LibraryView: View {
         .inspector(isPresented: .constant(true)) {
             Group {
                 if selection.count == 1, let id = selection.first, let track = model.library.track(id: id) {
-                    TrackInspector(track: track)
+                    // A new identity per track, so text typed for one never lands on the next.
+                    TrackInspector(track: track).id(track.id)
                 } else if selection.count > 1 {
                     SelectionInspector(ids: selection, clearSelection: { selection = [] })
                 } else {
@@ -497,12 +498,12 @@ private struct TrackInspector: View {
         .disabled(!editing)
         .onAppear(perform: openEndPanel)
         .onChange(of: track.id) { openEndPanel() }
-        // Analysis can finish while the track is shown.
-        .onChange(of: track.needsEndPoint) { if track.needsEndPoint { openEndPanel() } }
+        // Analysis can finish while the track is shown, and an unanalyzed track already counts as needing one.
+        .onChange(of: track.needsEndPoint && track.isAnalyzed) { if track.needsEndPoint { openEndPanel() } }
     }
 
     private func openEndPanel() {
-        endPanelFor = track.needsEndPoint && track.isAnalyzed ? track.id : nil
+        endPanelFor = track.needsEndPoint && track.isAnalyzed && track.durationSec > 0 ? track.id : nil
     }
 
     private func stringBinding(_ path: WritableKeyPath<Track, String>) -> Binding<String> {
@@ -568,9 +569,18 @@ private struct EndPointPanel: View {
     let track: Track
 
     static let windowSec = 20.0
+    /// Where Preview End started, so the button still stops it after the end moves.
+    @State private var previewFrom: Double?
 
+    /// The last 20 seconds, or, when the file ends in a longer silence, the 20 seconds around where
+    /// the sound stops, so the music's ending is always in view.
     private var window: ClosedRange<Double> {
-        let upper = max(track.durationSec, 0.1)
+        let length = max(track.durationSec, 0.1)
+        var upper = length
+        if let lastSound = track.suggestedEndSec, lastSound + 5 < length {
+            upper = max(lastSound + 5, (track.endSec ?? 0) + 2)
+        }
+        upper = min(upper, length)
         return min(max(upper - Self.windowSec, track.startSec, 0), upper - 0.1)...upper
     }
 
@@ -589,7 +599,7 @@ private struct EndPointPanel: View {
             HStack {
                 Text(TimeText.tenths(window.lowerBound))
                 Spacer()
-                Text("Last \(Int(window.upperBound - window.lowerBound)) seconds")
+                Text(window.upperBound < track.durationSec - 0.05 ? "Where the sound stops" : "Last \(Int((window.upperBound - window.lowerBound).rounded())) seconds")
                 Spacer()
                 Text(TimeText.tenths(window.upperBound))
             }
@@ -602,11 +612,17 @@ private struct EndPointPanel: View {
                         .tint(Theme.armed)
                         .help("Where the sound stops: the last point above -50 dBFS")
                 }
-                let from = max((track.endSec ?? track.suggestedEndSec ?? track.durationSec) - 8, track.startSec)
+                let fresh = max((track.endSec ?? track.suggestedEndSec ?? track.durationSec) - 8, track.startSec)
+                let on = previewFrom.map { model.isAuditioning(track, fromSec: $0) } ?? false
                 Button {
-                    model.toggleAudition(track, fromSec: from)
+                    if on {
+                        model.stopAudition()
+                        previewFrom = nil
+                    } else {
+                        previewFrom = fresh
+                        model.toggleAudition(track, fromSec: fresh)
+                    }
                 } label: {
-                    let on = model.isAuditioning(track, fromSec: from)
                     Label(on ? "Stop" : "Preview End", systemImage: on ? "stop.fill" : "headphones")
                 }
                 .disabled(!track.isLocal)
@@ -627,6 +643,9 @@ private struct EndPointPanel: View {
             return "No sound was found in this file. Click in the waveform where it should end."
         }
         let silence = track.durationSec - lastSound
+        guard silence > 0 else {
+            return "This file's length is an estimate, so where it ends is not known. Click or drag in the waveform to set the end."
+        }
         return "The sound stops at \(TimeText.tenths(lastSound)), then the file runs \(String(format: "%.1f", silence)) seconds of silence. Click or drag in the waveform to set the end, or use where the sound stops."
     }
 }
@@ -654,8 +673,9 @@ private struct EndWaveform: View {
             .pointerStyle(model.show.showMode ? .default : .columnResize)
             .help("Click or drag to set the end")
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                guard !model.show.showMode, geometry.size.width > 0 else { return }
-                let seconds = window.lowerBound + Double(value.location.x / geometry.size.width) * span
+                guard !model.show.showMode, geometry.size.width > 0, track.durationSec > 0 else { return }
+                // A drag past either edge stops at it, so the end never lands out of view.
+                let seconds = min(max(window.lowerBound + Double(value.location.x / geometry.size.width) * span, window.lowerBound), window.upperBound)
                 model.updateTrack(track.id) { $0.endSec = min(max(seconds, $0.startSec + 0.1), $0.durationSec) }
             })
         }

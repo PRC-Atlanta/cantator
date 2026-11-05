@@ -67,7 +67,7 @@ private struct SimpleTagList: View {
                 .badge(songs.count)
                 .tag(Self.all)
             ForEach(tags, id: \.self) { tag in
-                Label(tag.capitalized, systemImage: "tag")
+                Label(PlaybackCategory.display(tag), systemImage: "tag")
                     .badge(songs.filter { $0.tags.contains(tag) }.count)
                     .tag(tag)
             }
@@ -125,7 +125,7 @@ private struct SimpleSongList: View {
                 }
             }
         }
-        .navigationTitle(model.simpleTag?.capitalized ?? "All Songs")
+        .navigationTitle(model.simpleTag.map(PlaybackCategory.display) ?? "All Songs")
         // The keys don't work while the search field has focus, and the big buttons don't take it,
         // so pressing Arm lets go of it: Space must be GO, not a space in the search. Only Arm does,
         // never a change of state, which could take the field away mid-word and turn typing into keys.
@@ -143,7 +143,7 @@ private struct SimpleSongRow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title).font(.system(size: 14, weight: isCurrent ? .semibold : .regular)).lineLimit(1)
-                let detail = ([TimeText.plain((track.endSec ?? track.durationSec) - track.startSec)] + track.tags.map(\.capitalized)).joined(separator: " · ")
+                let detail = ([TimeText.plain((track.endSec ?? track.durationSec) - track.startSec)] + track.tags.map(PlaybackCategory.display)).joined(separator: " · ")
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -200,7 +200,7 @@ private struct SimpleSongCard: View {
                         .minimumScaleFactor(0.6)
                     HStack(spacing: 18) {
                         info("LENGTH", TimeText.plain((track.endSec ?? track.durationSec) - track.startSec))
-                        if !track.tags.isEmpty { info("TAGS", track.tags.map(\.capitalized).joined(separator: ", ")) }
+                        if !track.tags.isEmpty { info("TAGS", track.tags.map(PlaybackCategory.display).joined(separator: ", ")) }
                         info("FADE", "\(String(format: "%.1f", track.fadeOutSec)) s")
                     }
                     if !track.notes.isEmpty {

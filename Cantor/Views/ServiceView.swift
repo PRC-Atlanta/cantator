@@ -359,7 +359,7 @@ private struct ManualStateChip: View {
                 Label(track.hasCloudOnlyCopy ? "Not downloaded" : "File missing", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
             } else if track.needsEndPoint {
                 Label("No end point", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Theme.armed)
-                    .help("The file ends in silence. Set or accept an end point in Library. It plays to the end of the file until then.")
+                    .help("Set or accept an end point in Library. It plays to the end of the file until then.")
             } else {
                 Label("Ready", systemImage: "checkmark.circle").foregroundStyle(Theme.live)
             }

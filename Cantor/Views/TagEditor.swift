@@ -7,6 +7,7 @@ struct TagEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newName = ""
     @State private var deleting: String?
+    @State private var merging: (old: String, new: String)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -17,7 +18,9 @@ struct TagEditor: View {
             List {
                 ForEach(model.tagNames, id: \.self) { tag in
                     TagRow(tag: tag, count: count(tag)) {
-                        if count(tag) > 0 { deleting = tag } else { model.deleteTag(tag) }
+                        if count(tag, includingExcluded: true) > 0 { deleting = tag } else { model.deleteTag(tag) }
+                    } merge: { old, new in
+                        merging = (old, new)
                     }
                 }
             }
@@ -42,13 +45,23 @@ struct TagEditor: View {
             Button("Delete", role: .destructive) { model.deleteTag(tag) }
             Button("Cancel", role: .cancel) {}
         } message: { tag in
-            let count = count(tag)
+            let count = count(tag, includingExcluded: true)
             Text("It comes off \(count == 1 ? "1 track" : "\(count) tracks"). The tracks stay in the library.")
+        }
+        .alert(
+            "Merge “\(PlaybackCategory.display(merging?.old ?? ""))” into “\(PlaybackCategory.display(merging?.new ?? ""))”?",
+            isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })
+        ) {
+            Button("Merge") { if let merging { model.renameTag(merging.old, to: merging.new) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("There is already a tag with that name. Every track with either tag gets the one tag.")
         }
     }
 
-    private func count(_ tag: String) -> Int {
-        model.library.tracks.count { $0.tags.contains(tag) }
+    /// Library tracks, as the sidebar counts them. A rename or delete also reaches excluded tracks.
+    private func count(_ tag: String, includingExcluded: Bool = false) -> Int {
+        (includingExcluded ? model.library.tracks : model.library.playbackTracks).count { $0.tags.contains(tag) }
     }
 
     private func add() {
@@ -62,6 +75,7 @@ private struct TagRow: View {
     let tag: String
     let count: Int
     let delete: () -> Void
+    let merge: (String, String) -> Void
     @State private var name = ""
     @FocusState private var editing: Bool
 
@@ -73,7 +87,13 @@ private struct TagRow: View {
                 .onSubmit(rename)
             Spacer()
             Text(count == 1 ? "1 track" : "\(count) tracks").foregroundStyle(.secondary)
-            Button(action: delete) { Image(systemName: "trash") }
+            Button {
+                // The alert takes focus, which would rename first with whatever was typed.
+                name = PlaybackCategory.display(tag)
+                delete()
+            } label: {
+                Image(systemName: "trash")
+            }
                 .buttonStyle(.borderless)
                 .help("Delete this tag")
         }
@@ -87,6 +107,9 @@ private struct TagRow: View {
         let new = FileClassifier.cleanCategory(name)
         if new.isEmpty || new == tag {
             name = PlaybackCategory.display(tag)
+        } else if model.tagNames.contains(new) {
+            name = PlaybackCategory.display(tag)
+            merge(tag, new)
         } else {
             model.renameTag(tag, to: new)
         }

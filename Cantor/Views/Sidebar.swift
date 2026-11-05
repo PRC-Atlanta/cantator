@@ -151,7 +151,8 @@ struct SidebarView: View {
         Section("Library") {
             let library = model.library
             libraryRow("All Tracks", "music.note.list", .all, library.playbackTracks.count)
-            ForEach(library.allTags, id: \.self) { tag in
+            // Tags only excluded tracks have would show an empty list.
+            ForEach(library.allTags.filter { tag in library.playbackTracks.contains { $0.tags.contains(tag) } }, id: \.self) { tag in
                 libraryRow(PlaybackCategory.display(tag), "tag", .tag(tag), library.playbackTracks.filter { $0.tags.contains(tag) }.count)
                     .contextMenu {
                         Button("Edit Tags…") { model.showingTagEditor = true }.disabled(model.show.showMode)

@@ -56,13 +56,14 @@ public struct NewFileAnswer: Equatable, Sendable {
         self.serviceItem = serviceItem
     }
 
-    /// `openItem` says whether a service item still needs a file, so an answer never offers one
-    /// that was filled since Claude suggested it.
-    public init(item: NewFileItem, currentTitle: String, openItem: (ServiceItemRef) -> Bool) {
+    /// `openItem` says whether a service item is still offered and needs a file, so an answer never
+    /// carries one that was filled, or has passed, since Claude suggested it. A title the operator
+    /// set (`titleWasSet`) is kept over the suggestion.
+    public init(item: NewFileItem, currentTitle: String, titleWasSet: Bool = false, openItem: (ServiceItemRef) -> Bool) {
         let suggestion = item.suggestion
         self.init(
             trackID: item.trackID, isPlayback: suggestion?.isPlayback ?? true,
-            title: suggestion.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? currentTitle,
+            title: titleWasSet ? currentTitle : suggestion.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? currentTitle,
             category: suggestion?.category ?? "", serviceItem: suggestion?.serviceItem.flatMap { openItem($0) ? $0 : nil }
         )
     }

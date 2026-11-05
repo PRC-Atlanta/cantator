@@ -1,6 +1,7 @@
 import AppKit
 import CantorCore
 import Foundation
+import OSLog
 import Observation
 
 /// App-level state: everything the views read, and the wiring between CantorCore's parts.
@@ -61,6 +62,9 @@ final class AppModel {
     /// The New Service sheet, and tracks dropped on New Service… that the new service starts with.
     var showingNewService = false
     var showingTagEditor = false
+    /// The operator's answers in the New Files list, kept here so closing the list, or an alert
+    /// over it, never loses them. An answer leaves with its file.
+    var newFileAnswers: [UUID: NewFileAnswer] = [:]
     /// The tracks New Tag… was chosen for, while it asks for the name.
     var newTagTrackIDs: Set<UUID>?
     var newServiceTrackIDs: [UUID] = []
@@ -481,6 +485,8 @@ final class AppModel {
                     track.integratedLUFS = analysis.integratedLUFS ?? -70
                     track.truePeakDb = analysis.truePeakDb
                     track.suggestedEndSec = analysis.suggestedEndSec
+                    // A copy made from a Drive placeholder has no length until the next scan.
+                    if track.durationSec <= 0 { track.durationSec = analysis.lengthSec }
                     if analysis.leadingSilenceSec > 0.05, track.startSec == 0 {
                         track.startSec = analysis.leadingSilenceSec
                     }
@@ -603,7 +609,8 @@ final class AppModel {
     var copiesLeft: Int { copyQueue.count + makingLocal.count }
 
     private func copyNext() {
-        guard makingLocal.isEmpty, !show.state.holdsHouseEngine else { return }
+        // Like imports, copies wait through Show Mode, so no download runs between songs.
+        guard makingLocal.isEmpty, !show.state.holdsHouseEngine, !show.showMode else { return }
         guard !copyQueue.isEmpty else {
             reportCopyFailures()
             return
@@ -618,19 +625,26 @@ final class AppModel {
                     if !value.files.contains(file) { value.files.append(file) }
                 }
                 scheduleSave()
+            } catch MaterializeError.timedOut {
+                // A copy stuck on Drive can't be stopped and keeps going, so the rest wait for
+                // another try rather than piling more downloads on top of it.
+                copyFailures.append(track.title)
+                copyFailures += copyQueue.compactMap { library.track(id: $0)?.title }
+                copyQueue = []
             } catch {
                 copyFailures.append(track.title)
             }
             makingLocal.remove(id)
-            if copyQueue.isEmpty { analyzePending() }
+            if copyQueue.isEmpty, !show.state.holdsHouseEngine { analyzePending() }
             copyNext()
         }
     }
 
     private func reportCopyFailures() {
-        guard !copyFailures.isEmpty else { return }
+        // Waits for the New Files list to close, so the alert never takes its place.
+        guard !copyFailures.isEmpty, !showsNewFiles else { return }
         let names = copyFailures.prefix(5).joined(separator: ", ") + (copyFailures.count > 5 ? " and \(copyFailures.count - 5) more" : "")
-        alert = "\(copyFailures.count == 1 ? "1 file" : "\(copyFailures.count) files") could not be copied into ~/Music/Cantor: \(names). They still play from where they are. Choose Make Local on them to try again."
+        alert = "\(copyFailures.count == 1 ? "1 file" : "\(copyFailures.count) files") could not be copied into ~/Music/Cantor: \(names). They still play from where they are. If Drive is slow or offline, try Make Local on them later."
         copyFailures = []
     }
 
@@ -1688,8 +1702,10 @@ final class AppModel {
                 }
             }
             for fact in facts {
-                let suggestion = suggestions[fact.trackID]
+                var suggestion = suggestions[fact.trackID]
                     ?? FileClassifier.fallback(fact, serviceItem: bestUpcomingItem(for: fact.trackID, among: upcoming), note: note ?? "Claude did not answer for this file.")
+                // A guess comes from built-in names, which the operator may have renamed or deleted.
+                if !suggestion.byClaude, !categories.contains(suggestion.category) { suggestion.category = "" }
                 inbox.setSuggestion(suggestion, for: fact.trackID)
             }
             scheduleSave()
@@ -1752,7 +1768,8 @@ final class AppModel {
     /// Whether the New Files list shows now. Handled quietly, files wait in the sidebar until the
     /// operator clicks New Files.
     var showsNewFiles: Bool {
-        guard !newFilesSnoozed, alert == nil, newFilesCanAppear, settings.hasChosenServiceSource, !showingNewService else { return false }
+        guard !newFilesSnoozed, alert == nil, newFilesCanAppear, settings.hasChosenServiceSource, !showingNewService,
+              !showingTagEditor, newTagTrackIDs == nil else { return false }
         guard settings.newFileHandling == .ask || reviewingNewFiles else { return false }
         // Opened by the operator, the list shows at once and fills in as Claude answers.
         return !inbox.ready.isEmpty || (reviewingNewFiles && !inbox.items.isEmpty)
@@ -1776,7 +1793,10 @@ final class AppModel {
         let inUse = confirmedTrackIDs
         let chosen = library.playbackTracks.map(\.id).filter { ids.contains($0) && !inUse.contains($0) }
         guard !chosen.isEmpty else { return }
-        for id in chosen { inbox.remove(id) }
+        for id in chosen {
+            inbox.remove(id)
+            newFileAnswers[id] = nil
+        }
         inbox.add(chosen)
         reviewNewFiles()
         scheduleSave()
@@ -1789,10 +1809,13 @@ final class AppModel {
         guard newFilesCanAppear, !answers.isEmpty else { return }
         let inUse = confirmedTrackIDs
         let waiting = Set(inbox.items.map(\.trackID))
+        // Only items the list offers now: one Claude suggested may have passed while the file waited.
+        let offered = Set(upcomingItems().map(\.ref))
         var tagsChanged = false
         var toCopy: [UUID] = []
         for answer in answers where waiting.contains(answer.trackID) && library.track(id: answer.trackID) != nil {
             inbox.remove(answer.trackID)
+            newFileAnswers[answer.trackID] = nil
             guard answer.isPlayback else {
                 if !inUse.contains(answer.trackID) { library.exclude(id: answer.trackID) }
                 continue
@@ -1800,12 +1823,17 @@ final class AppModel {
             let before = settings.tags
             let category = settings.addTag(answer.category) ?? ""
             tagsChanged = tagsChanged || settings.tags != before
+            if !category.isEmpty {
+                Self.tagLog.notice("New Files: added \(category, privacy: .public) on \(answer.title, privacy: .public)")
+            }
             library.update(id: answer.trackID) { track in
+                // The operator said it is a playback, so stem detection leaves it alone from now on.
+                track.keptByOperator = true
                 let title = answer.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !title.isEmpty { track.title = title }
                 if !category.isEmpty, !track.tags.contains(category) { track.tags.append(category) }
             }
-            if let ref = answer.serviceItem, let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: answer.trackID) {
+            if let ref = answer.serviceItem, offered.contains(ref), let cue = serviceCue(ref), cue.trackID == nil, let track = library.track(id: answer.trackID) {
                 confirm(planID: ref.planID, cue: cue, track: track)
             }
             if settings.copyPlaybacksToCantor { toCopy.append(answer.trackID) }
@@ -1824,6 +1852,10 @@ final class AppModel {
 
     // MARK: Tags
 
+    /// Every tag added to tracks, and how, so a tag that seems to appear by itself can be traced.
+    /// Read with `log show --predicate 'subsystem == "org.prcatlanta.Cantor" && category == "tags"'`.
+    static let tagLog = Logger(subsystem: "org.prcatlanta.Cantor", category: "tags")
+
     /// The tags to offer: the operator's list, then any a track still has.
     var tagNames: [String] { PlaybackCategory.all(saved: settings.tags, libraryTags: library.allTags) }
 
@@ -1832,6 +1864,9 @@ final class AppModel {
     func addTag(_ name: String, to ids: Set<UUID> = []) -> String? {
         guard !show.showMode, let tag = settings.addTag(name) else { return nil }
         record("settings") { try settingsFile.save(settings) }
+        if !ids.isEmpty {
+            Self.tagLog.notice("New Tag: added \(tag, privacy: .public) on \(ids.compactMap { self.library.track(id: $0)?.title }, privacy: .public)")
+        }
         for id in ids {
             updateTrack(id) { if !$0.tags.contains(tag) { $0.tags.append(tag) } }
         }
@@ -1841,7 +1876,8 @@ final class AppModel {
     /// Renames the tag everywhere, on excluded tracks too. Renaming onto another tag merges them.
     func renameTag(_ old: String, to name: String) {
         let new = FileClassifier.cleanCategory(name)
-        guard !show.showMode, !new.isEmpty, new != old else { return }
+        // A tag deleted a moment ago, while its name was being edited, stays deleted.
+        guard !show.showMode, !new.isEmpty, new != old, tagNames.contains(old) else { return }
         settings.renameTag(old, to: new)
         library.renameTag(old, to: new)
         if selection == .library(.tag(old)) { selection = .library(.tag(new)) }
@@ -1936,6 +1972,7 @@ final class AppModel {
     func toggleTag(_ tag: String, on ids: Set<UUID>) {
         let tracks = ids.compactMap { library.track(id: $0) }
         let remove = !tracks.isEmpty && tracks.allSatisfy { $0.tags.contains(tag) }
+        Self.tagLog.notice("Tag menu: \(remove ? "removed" : "added", privacy: .public) \(tag, privacy: .public) on \(tracks.map(\.title), privacy: .public)")
         for id in ids {
             updateTrack(id) { track in
                 track.tags.removeAll { $0 == tag }
