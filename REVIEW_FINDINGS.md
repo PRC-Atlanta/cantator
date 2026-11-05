@@ -315,3 +315,26 @@ Five independent reviewers read the whole app at `6e4589b`, each only reading co
 - **Copyright:** `NSHumanReadableCopyright` is still empty, and the build number is 1. Set both before each release.
 - **Device names:** `hasPrefix("Pro Tools Audio Bridge 6")` also matches "…Bridge 64".
 
+
+# Review findings: fourth pass, before 1.2.7 (2026-11-05)
+
+Four independent reviewers read the eleven commits after `3ae9fd3` (the standalone-mode review), each only reading code: show and audio (`20a98e8`, `abc9d82`), the sidebar, pinning and `@AppEnvironment` (`c0538f7`, `69e83bb`, `ae5a526`, `9392815`, `cd28369`), Claude and Planning Center (`abeb0ae`, `29ccda3`, Claude Code discovery in `20a98e8`), and the Simple view and Pre-Service Check (`9278c67`, `c832d0a`, `6730963`). No blockers; the safety rules held. I checked every finding against the code before fixing it. Two fresh reviewers then read the fixes (`dfb1cb8`), and their findings were fixed in `334a96e`, which a fifth reviewer read before release. Its three low findings (a usage limit read as signed out, non-JSON output read as unanswered, an all-pinned fallback) were fixed before tagging.
+
+## Fixed
+- **Simple search field (high, from the fix review).** Releasing focus on any change of state could take the field away mid-word, so the rest of a typed song name armed and played. It now lets go only when Arm is pressed.
+- **Expired Claude login flipped back to connected.** `auth status` still reads as logged in once a login has expired. A `loginExpired` flag now keeps it signed out until a request is answered; the sign-in check has three outcomes, and offline or overloaded is not an answer.
+- **`[`/`]` just after a song ends** moved the next song's saved end. They pause for two seconds after a cue finishes.
+- **Simple replace:** the old song stayed armed while the new one loaded, so GO played it. It now lets go first, unless the new song can't load. D drops a song still loading; A waits for a fault to be acknowledged; switching views cancels a pending load.
+- **Simple keys** died after New Service changed the sidebar selection. Simple now counts as the Show view for keys, the Transport menu and alerts; New Service is off there.
+- **Syncs, service reads, Resolve Ambiguous and Sign In** could run while a cue was armed or playing. All wait now.
+- **Offline token errors** fell back to the connector for minutes. They now stop at once.
+- **Claude Code in the desktop app:** verified builds first, newest first, real version folders only.
+- **Pinning:** untitled Planning Center services showed as blank rows; Pre-Service Check now counts a pinned Planning Center service by its date (a pinned service built here never stands in); unpinning a hidden type keeps it; the loaded service never folds into Past Services, and a selected one that does opens the group.
+- **Also:** end moves no longer re-decode cues; cue clicks point by id; double-click never turns on Show Mode over a pending load; the environment fallback logs each place once; two copies in ~/Music/Cantor count as duplicates.
+
+## Open
+- **Channel maps on a shared device** are now what keeps cue audio off the house pair. A preview on 3-4 with the house armed on 1-2 of the same device ran without a fault, but nobody has watched a meter on 1-2 during a preview on real Dante hardware.
+- **Return on a sidebar service** may trigger the double-click action on macOS. Unconfirmed; it would only load and lock, never play.
+- **"Sync With" in Settings** doesn't redraw right after a token is saved or cleared.
+- **The alert's Sign In button** can appear on alerts unrelated to Claude while signed out.
+- **Double-click on the loaded service while it still loads** opens the Show view without Show Mode and says nothing.

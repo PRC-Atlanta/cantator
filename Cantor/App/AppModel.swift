@@ -999,6 +999,9 @@ final class AppModel {
                 if try await cli.signInWorks() { noteSignInWorks() }
             } catch LLMError.notLoggedIn {
                 throw LLMError.notLoggedIn
+            } catch LLMError.limitReached {
+                loginExpired = false
+                throw LLMError.limitReached
             } catch {}
             throw PlanningCenterConnectorError.notConnected
         }
@@ -1154,6 +1157,8 @@ final class AppModel {
             do {
                 if try await cli.signInWorks() { noteSignInWorks() }
             } catch {
+                // Out of usage means the login was accepted.
+                if case LLMError.limitReached = error { loginExpired = false }
                 noteClaudeFailure(error)
             }
             // No clear answer (offline, overloaded) leaves an expired login as it was, not checking.
@@ -1425,7 +1430,7 @@ final class AppModel {
     var currentPlan: ServicePlan? {
         let today = Calendar.current.startOfDay(for: Date())
         return loadedPlan ?? sidebarPlans.first { (!$0.pinned || !$0.isManual) && ($0.sortDate ?? .distantFuture) >= today }
-            ?? sidebarPlans.last { !$0.pinned } ?? sidebarPlans.last
+            ?? sidebarPlans.last { !$0.pinned } ?? sidebarPlans.last { !($0.pinned && $0.isManual) }
     }
 
     /// Pinning only changes where the service is listed, so it is allowed in Show Mode too.

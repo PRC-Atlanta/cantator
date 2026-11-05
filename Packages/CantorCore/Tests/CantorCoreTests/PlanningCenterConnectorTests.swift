@@ -184,7 +184,11 @@ final class PlanningCenterConnectorTests: XCTestCase {
         let overloaded = try await stub(#"{"type":"result","is_error":true,"result":"Overloaded"}"#).signInWorks()
         XCTAssertFalse(overloaded, "an overloaded answer says nothing about the login")
         let unreadable = try await stub("not json").signInWorks()
-        XCTAssertFalse(unreadable)
+        XCTAssertTrue(unreadable, "a clean exit with other output was still answered")
+        do {
+            _ = try await stub(#"{"type":"result","is_error":true,"result":"Claude usage limit reached"}"#).signInWorks()
+            XCTFail("an account out of usage is signed in, not unanswered")
+        } catch LLMError.limitReached {}
         XCTAssertFalse(ClaudeCLI.signInProbeArguments.contains("--allowedTools"))
     }
 

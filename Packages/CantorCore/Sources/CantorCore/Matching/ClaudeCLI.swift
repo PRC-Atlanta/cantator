@@ -132,16 +132,20 @@ public struct ClaudeCLI: ClaudeRunner {
     }
 
     /// Sends a one-word request. True when it was answered, false when it failed for a reason that
-    /// says nothing about the login (offline, overloaded, unreadable output). Throws `.notLoggedIn`
-    /// only when the login itself was refused.
+    /// says nothing about the login (offline, overloaded). Throws `.notLoggedIn` when the login was
+    /// refused, and `.limitReached` when it was accepted but the account is out of usage. Output
+    /// that isn't the expected JSON came from a run that exited cleanly, so it counts as answered.
     public func signInWorks() async throws -> Bool {
         let data = try await execute(arguments: Self.signInProbeArguments, input: "Reply with the word OK.")
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let isError = root["is_error"] as? Bool else {
-            return false
+            return true
         }
         guard isError else { return true }
-        if case .notLoggedIn = Self.failure(root["result"] as? String ?? "") { throw LLMError.notLoggedIn }
-        return false
+        switch Self.failure(root["result"] as? String ?? "") {
+        case .notLoggedIn: throw LLMError.notLoggedIn
+        case .limitReached: throw LLMError.limitReached
+        default: return false
+        }
     }
 
     static let signInProbeArguments = [
