@@ -1062,11 +1062,47 @@ extension ShowControllerTests {
         XCTAssertEqual(show.endSec, 5, accuracy: 0.001)
     }
 
-    func testNudgeWhileIdleExplains() {
-        let show = controller()
-        show.nudgeEnd(seconds: 1)
-        XCTAssertNotNil(show.notice)
+    func testNudgeWhileIdleMovesPointedEndAndSavesIt() {
+        let show = controller(cues: [cue("a", endSec: 6), cue("b", endSec: nil)])
+        var saved: [Double] = []
+        show.onEndMoved = { _, end in saved.append(end) }
+        show.nudgeEnd(seconds: -1)
+        show.nudgeEnd(seconds: -1)
+        XCTAssertEqual(show.pointedCue?.track?.endSec, 4)
+        XCTAssertEqual(saved, [5, 4])
         XCTAssertEqual(show.state, .idle)
+        XCTAssertNil(show.notice)
+
+        show.movePointer(by: 1)
+        show.nudgeEnd(seconds: 1)
+        XCTAssertNil(show.pointedCue?.track?.endSec, "] at the file end changes nothing")
+        show.nudgeEnd(seconds: -1)
+        XCTAssertEqual(show.pointedCue?.track?.endSec ?? 0, 9, accuracy: 0.001, "the file end is where it counts from")
+        XCTAssertEqual(saved.count, 3)
+    }
+
+    func testNudgeWhileIdleThenArmPlaysToNewEnd() {
+        let show = controller(cues: [cue("a", endSec: 6)])
+        show.nudgeEnd(seconds: -2)
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        house.render(seconds: 0.01)
+        show.tick()
+        XCTAssertEqual(show.endSec, 4, accuracy: 0.001)
+    }
+
+    func testNudgeWhilePlayingSavesTheEnd() {
+        let show = controller(cues: [cue("a", endSec: 6)])
+        var saved: [Double] = []
+        show.onEndMoved = { _, end in saved.append(end) }
+        show.setShowMode(true)
+        XCTAssertNil(show.arm())
+        time += 1
+        show.go()
+        house.render(seconds: 0.01)
+        show.nudgeEnd(seconds: 1)
+        XCTAssertEqual(saved.last ?? 0, 7, accuracy: 0.001)
+        XCTAssertEqual(show.activeCue?.track?.endSec ?? 0, 7, accuracy: 0.001)
     }
 
     func testPointAtOnlyWhileIdle() {

@@ -12,7 +12,7 @@ Cantator is a native macOS playback app for the person running choir and special
 | B's tiered hashing vs simplicity. | One content ID: SHA-256 of the audio payload (tags stripped for MP3), cached by path, size and mtime. Duplicates collapse into one track with several paths, so cue points survive. The copy in ~/Music/Cantor doesn't count toward Duplicates. Tiering saved little on an SSD. |
 | D's aggressive decode at ARM vs A's preload. | Decode every matched cue into RAM on Load Service. ARM never touches disk, so a Drive stall cannot delay or cut a cue. |
 | D resamples at load vs letting the graph do it. | Keep native-rate buffers and let the engine's mixer convert. Marker frames stay simple and no resampler is written. |
-| A's manual end nudges vs D's fixed end marker. | Markers are saved per track. `[` and `]` move the end for this run only and are never persisted in show mode. |
+| A's manual end nudges vs D's fixed end marker. | Markers are saved per track. `[` and `]` move the end and save it with the track, in Show Mode too, so the next use of the track ends there. |
 | D refuses matching house and cue devices. | Refuses matching outputs instead. The same device on different pairs is allowed, because a Dante or multichannel interface is often the only device. Each engine's channel map silences every output but its own pair, which keeps "never the house" verifiable. |
 | Should a failed pre-service check block the show? | No. Issues are advisory, because the operator may have no alternative. A specific cue that cannot play (no file, not in RAM) refuses to arm. |
 
@@ -87,7 +87,7 @@ any active state --deviceLost--> faulted --acknowledge--> idle
 | F | End of song: fade with the track's saved fade |
 | P | Hold (GO resumes) |
 | M | Jump to next marker while armed or held; Shift-M previous |
-| `[` / `]` | Move the end point -1 s / +1 s for this run. During the automatic end fade (not after F or Esc), `]` rises back to full and returns to LIVE |
+| `[` / `]` | Move the end point -1 s / +1 s and save it with the track. With nothing armed they move the pointed cue's end. During the automatic end fade (not after F or Esc), `]` rises back to full and returns to LIVE |
 | H | Audition on the cue output (toggle): the pointed cue, or the next one while a cue is engaged |
 | Return | Acknowledge a fault |
 | D | Disarm |

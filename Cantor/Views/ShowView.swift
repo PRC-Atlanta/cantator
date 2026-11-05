@@ -216,10 +216,9 @@ private struct CurrentCuePanel: View {
                 HStack(alignment: .firstTextBaseline, spacing: 22) {
                     F6Readout("FADE", "\(String(format: "%.1f", track.fadeOutSec)) s")
                     F6Readout("GAIN", TimeText.decibels(cue.gainDb))
-                    // While engaged, the end this run is heading for, amber once [ or ] has moved it.
+                    // While engaged, the end this run is heading for. [ and ] save it with the track too.
                     if show.state.holdsHouseEngine, show.activeCue?.id == cue.id {
-                        let moved = abs(show.endSec - (track.endSec ?? track.durationSec)) > 0.05
-                        F6Readout("END", TimeText.tenths(show.endSec), color: moved ? Theme.armed : EQTheme.passes)
+                        F6Readout("END", TimeText.tenths(show.endSec))
                     } else {
                         F6Readout("END", track.endSec == nil ? "file end" : TimeText.tenths(track.endSec ?? 0))
                     }

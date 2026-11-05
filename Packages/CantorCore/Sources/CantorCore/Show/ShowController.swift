@@ -58,6 +58,8 @@ public final class ShowController {
     public var routing = OutputRouting()
     public var panicFadeSec = 1.5
     public var onPlayed: ((Track) -> Void)?
+    /// `[` or `]` moved a track's end. The owner saves it with the track.
+    public var onEndMoved: ((UUID, Double) -> Void)?
 
     @ObservationIgnored private var machine = ShowStateMachine()
     @ObservationIgnored private var goGuard = GoGuard()
@@ -347,24 +349,46 @@ public final class ShowController {
         log?.record("marker", cue: track.title)
     }
 
-    /// Moves the end for this run only. The saved end point is untouched. Works from arm to the end,
-    /// including through the automatic end fade, where `]` brings the cue back up, but never after
-    /// F or panic. With nothing armed there is no run to move, and the notice says so.
+    /// Moves the end and saves it with the track, so the next time the track plays it ends there
+    /// too. From arm to the end the run hears it at once, including through the automatic end fade,
+    /// where `]` brings the cue back up, but never after F or panic. With nothing armed it moves the
+    /// pointed cue's end.
     public func nudgeEnd(seconds: Double) {
         switch state {
         case .armed, .live, .held: break
         case .fading where !stopping: break
         case .idle:
-            notice = "[ and ] move the end once a cue is armed."
+            nudgePointedEnd(seconds: seconds)
             return
         default: return
         }
-        guard let kernel else { return }
+        guard let kernel, let track = activeCue?.track else { return }
         let rate = kernel.buffer.sampleRate
         // The kernel keeps at least a declick of fade; this keeps the next nudge counting from there.
         let nearest = kernel.positionFrames + PlaybackKernel.declickFrames(sampleRate: rate)
         runEndFrame = min(max(runEndFrame + Int(seconds * rate), nearest), kernel.buffer.frames)
         kernel.setEnd(toFrame: runEndFrame)
+        saveEnd(Double(runEndFrame) / rate, of: track, length: Double(kernel.buffer.frames) / rate)
+    }
+
+    private func nudgePointedEnd(seconds: Double) {
+        guard let cue = pointedCue, let track = cue.track else { return }
+        let length = cue.buffer.map { Double($0.frames) / $0.sampleRate } ?? track.durationSec
+        guard length > 0 else { return }
+        let end = min(max((track.endSec ?? length) + seconds, track.startSec + 0.1), length)
+        saveEnd(end, of: track, length: length)
+    }
+
+    /// Updates every copy of the track here at once, so the readout and the next arm use the new end
+    /// before the owner's save reaches the cue list.
+    private func saveEnd(_ end: Double, of track: Track, length: Double) {
+        guard abs(end - (track.endSec ?? length)) > 0.001 else { return }
+        for index in cues.indices where cues[index].track?.id == track.id {
+            cues[index].track?.endSec = end
+        }
+        if playNowCue?.track?.id == track.id { playNowCue?.track?.endSec = end }
+        log?.record("end", cue: track.title)
+        onEndMoved?(track.id, end)
     }
 
     public func acknowledgeFault() {

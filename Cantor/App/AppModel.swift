@@ -142,6 +142,7 @@ final class AppModel {
             }
             self?.scheduleSave()
         }
+        show.onEndMoved = { [weak self] id, end in self?.updateTrackEnd(id, end) }
         settings.stampWatchedFolders()
         try? settingsFile.save(settings)
         // Services built here leave on their own once they are old; synced ones leave with a sync.
@@ -524,6 +525,17 @@ final class AppModel {
             kernel.setEQ(EQCoefficients(eq, sampleRate: kernel.buffer.sampleRate))
         }
         show.setLiveEQ(eq, trackID: id)
+        markCuesChanged()
+        scheduleSave()
+    }
+
+    /// The end `[` and `]` moved, allowed in Show Mode like EQ. The show already plays to it; the
+    /// save waits while a cue is engaged, as every save does.
+    func updateTrackEnd(_ id: UUID, _ endSec: Double) {
+        library.update(id: id) {
+            $0.endSec = endSec
+            $0.sanitizePoints()
+        }
         markCuesChanged()
         scheduleSave()
     }

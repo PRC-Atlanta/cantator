@@ -224,7 +224,7 @@ To do steps 1, 4 and 5 at once, double-click the service in the sidebar: it load
 | F | End of song: fade with the track's saved fade |
 | P | Hold, then Space to resume |
 | M / Shift-M | Jump to the next or previous marker, while armed or held |
-| `[` / `]` | Move the end point 1 s for this run only, from arm to the end. **END** shows the new end in amber. `]` during the automatic end fade brings the level back and extends the run |
+| `[` / `]` | Move the end point 1 s and save it with the track, so the next time the song plays it ends there too. With nothing armed they move the pointed cue's end; armed or playing, the run hears it at once. `]` during the automatic end fade brings the level back and extends the run |
 | H | Preview in headphones: the selected cue, or the next cue while one is armed or playing |
 | D | Disarm. If the cue shows a mid-track start, this clears it |
 | Return | Acknowledge a fault |
