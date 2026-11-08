@@ -1311,8 +1311,8 @@ final class AppModel {
         scheduleSave()
     }
 
-    /// An item from Planning Center comes back on the next Refresh as Planning Center has it, with
-    /// no track, as a new item would. One added by hand is gone for good.
+    /// An item from Planning Center comes back on the next Refresh as Planning Center has it, and is
+    /// matched as a new item would be, remembered choices included. One added by hand is gone for good.
     func removeCue(planID: String, cueID: CueID) {
         guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }),
               plans[index].cues.contains(where: { $0.id == cueID })

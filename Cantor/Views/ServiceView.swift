@@ -333,9 +333,17 @@ struct ServiceView: View {
         .onChange(of: planID) { swipedCue = nil }
         .onAppear {
             // Swiping left on a row shows its Delete button, as in Mail; swiping right puts it away.
+            // Only a row still there takes a swipe, and a swipe right only when a Delete is showing,
+            // so sideways scrolling goes on everywhere else.
             rowSwipe.start { left in
-                guard let row = hoveredCue else { return false }
-                swipedCue = left ? row : nil
+                guard let row = hoveredCue, model.plans.contains(where: { $0.cues.contains { $0.id == row } }) else { return false }
+                if left {
+                    guard !model.show.showMode else { return false }
+                    swipedCue = row
+                } else {
+                    guard swipedCue != nil else { return false }
+                    swipedCue = nil
+                }
                 return true
             }
         }
@@ -373,6 +381,7 @@ struct ServiceView: View {
                     .disabled(!heard.isLocal)
                 if !heard.isLocal, heard.hasCloudOnlyCopy {
                     Button("Make Local") { model.makeLocal(heard) }
+                        .disabled(locked)
                 }
             }
             if track != nil {
@@ -413,6 +422,8 @@ struct ServiceView: View {
     private func delete(_ plan: ServicePlan, _ id: CueID) {
         if selectedCue == id { selectedCue = nil }
         swipedCue = nil
+        // The row's cells go without the pointer leaving them, so it is no longer under the pointer.
+        if hoveredCue == id { hoveredCue = nil }
         model.removeCue(planID: plan.id, cueID: id)
     }
 
@@ -672,15 +683,17 @@ private struct CueInspector: View {
     }
 }
 
-/// A search field for the selected item's File cell. Matching playbacks show in a list under it;
-/// the arrow keys move through them, Return takes one and Escape clears the search.
+/// A search field for the selected item's File cell. Matching playbacks are offered under it as
+/// the system's text suggestions, which leave the keyboard in the field: the arrow keys move
+/// through them and Return or a click takes one. Return with none showing takes the first match.
 private struct TrackSearchField: View {
     @AppEnvironment private var model
     let placeholder: String
     let choose: (Track) -> Void
     @State private var search = ""
-    @State private var highlighted = 0
-    @FocusState private var focused: Bool
+    /// The text each offered suggestion puts in the field, and its track. Choosing one is seen as
+    /// the field changing to one of these.
+    @State private var offered: [String: UUID] = [:]
 
     /// Playbacks with every typed word in the title or filename, ignoring case and accents, so
     /// "chiar vale" finds "Chiar și acolo în vale.mp3". Titles that start with the search come first.
@@ -698,60 +711,49 @@ private struct TrackSearchField: View {
 
     private var results: [Track] { Self.results(search, in: model.library.playbackTracks, limit: 10) }
 
+    /// The filename, with its folder when another offered file has the same name.
+    private static func completion(_ track: Track, among shown: [Track]) -> String {
+        let name = track.primaryFilename
+        guard shown.contains(where: { $0.id != track.id && $0.primaryFilename == name }),
+              let file = track.files.first(where: { $0.filename == name })
+        else { return name }
+        return "\(name) — \(file.url.deletingLastPathComponent().lastPathComponent)"
+    }
+
     var body: some View {
+        let shown = results
         TextField(placeholder, text: $search)
             .textFieldStyle(.roundedBorder)
-            .focused($focused)
-            .onChange(of: search) { highlighted = 0 }
-            .onKeyPress(.downArrow) { move(1) }
-            .onKeyPress(.upArrow) { move(-1) }
-            .onSubmit { take(highlighted) }
-            .onExitCommand { search = "" }
-            .popover(isPresented: Binding(get: { focused && !results.isEmpty }, set: { if !$0 { search = "" } }), arrowEdge: .bottom) {
-                list
-            }
-    }
-
-    private var list: some View {
-        let shown = results
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, track in
-                HStack(spacing: 8) {
-                    Text(track.primaryFilename).lineLimit(1)
-                    Spacer(minLength: 12)
-                    if !track.isLocal {
-                        Image(systemName: "icloud").foregroundStyle(index == highlighted ? .white : Theme.armed)
-                            .help("Not downloaded")
+            .textInputSuggestions {
+                ForEach(shown) { track in
+                    HStack {
+                        Text(track.primaryFilename)
+                        Spacer()
+                        if !track.isLocal { Image(systemName: "icloud") }
+                        Text(TimeText.plain(track.durationSec)).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    Text(TimeText.plain(track.durationSec)).font(.caption).monospacedDigit()
-                        .foregroundStyle(index == highlighted ? .white : .secondary)
+                    .textInputCompletion(Self.completion(track, among: shown))
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .foregroundStyle(index == highlighted ? .white : .primary)
-                .background(index == highlighted ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
-                .contentShape(Rectangle())
-                .onHover { if $0 { highlighted = index } }
-                .onTapGesture { take(index) }
             }
-        }
-        .padding(5)
-        .frame(width: 380)
+            .onChange(of: search) {
+                if let id = offered[search] {
+                    take(id)
+                } else {
+                    let shown = results
+                    offered = Dictionary(shown.map { (Self.completion($0, among: shown), $0.id) }, uniquingKeysWith: { a, _ in a })
+                }
+            }
+            .onSubmit {
+                if let id = offered[search] ?? results.first?.id { take(id) }
+            }
+            .onExitCommand { search = "" }
     }
 
-    private func move(_ step: Int) -> KeyPress.Result {
-        let count = results.count
-        guard count > 0 else { return .ignored }
-        highlighted = (highlighted + step + count) % count
-        return .handled
-    }
-
-    private func take(_ index: Int) {
-        let shown = results
-        guard shown.indices.contains(index) else { return }
-        choose(shown[index])
+    private func take(_ id: UUID) {
+        guard let track = model.library.track(id: id) else { return }
+        offered = [:]
         search = ""
-        focused = false
+        choose(track)
     }
 }
 
@@ -767,13 +769,16 @@ private extension View {
 }
 
 /// A sideways two-finger swipe on the trackpad. SwiftUI's swipe actions belong to List, not Table,
-/// so the scroll events are read here. A swipe is taken once, when it has gone far enough sideways,
-/// and its events, momentum included, go no further.
+/// so the scroll events are read here. Only the main window's events count, with no sheet over it.
+/// A swipe is taken once it has gone far enough sideways and a row answers for it; from then its
+/// events and its momentum go no further. The gesture's end always goes on, so a scroll view that
+/// saw it begin also sees it finish.
 @MainActor
 final class RowSwipe {
     private var monitor: Any?
     private var travel = CGSize.zero
     private var taken = false
+    private var momentumTaken = false
 
     /// `swiped` gets true for a swipe to the left, and answers whether a row took it.
     func start(_ swiped: @escaping (Bool) -> Bool) {
@@ -788,20 +793,35 @@ final class RowSwipe {
     func stop() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        taken = false
+        momentumTaken = false
     }
 
     private func handle(_ event: NSEvent, _ swiped: (Bool) -> Bool) -> Bool {
         guard event.hasPreciseScrollingDeltas else { return false }
-        if !event.momentumPhase.isEmpty { return taken }
+        if !event.momentumPhase.isEmpty {
+            let swallow = momentumTaken
+            if !event.momentumPhase.isDisjoint(with: [.ended, .cancelled]) { momentumTaken = false }
+            return swallow
+        }
         if event.phase.contains(.began) {
             travel = .zero
             taken = false
+            momentumTaken = false
         }
+        if !event.phase.isDisjoint(with: [.ended, .cancelled]) {
+            momentumTaken = taken
+            taken = false
+            return false
+        }
+        guard event.phase.contains(.changed) else { return false }
+        if taken { return true }
+        guard let window = event.window, window === KeyRouter.shared.mainWindow, window.attachedSheet == nil else { return false }
         // Where the fingers went, whichever way the content scrolls.
         let sign: CGFloat = event.isDirectionInvertedFromDevice ? 1 : -1
         travel.width += event.scrollingDeltaX * sign
         travel.height += event.scrollingDeltaY
-        if !taken, abs(travel.width) > 40, abs(travel.width) > 2 * abs(travel.height) {
+        if abs(travel.width) > 40, abs(travel.width) > 2 * abs(travel.height) {
             taken = swiped(travel.width < 0)
         }
         return taken
