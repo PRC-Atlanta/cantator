@@ -1658,6 +1658,14 @@ final class AppModel {
         let before = inbox
         // A file found to be a stem leaves the inbox.
         inbox.reconcile(replaced: replaced, existing: Set(library.playbackTracks.map(\.id)))
+        // A cloud drive once reported its files as added when it first synced the folder.
+        let early = NewFileDetector.arrivedBeforeWatch(
+            Set(inbox.items.map(\.trackID)), tracks: library.playbackTracks, scan: scan, watchedSince: settings.watchedSince
+        )
+        for id in early {
+            inbox.remove(id)
+            newFileAnswers[id] = nil
+        }
         var found = NewFileDetector.newTrackIDs(
             previousIDs: previousIDs, tracks: library.playbackTracks, scan: scan, watchedSince: settings.watchedSince
         )

@@ -153,6 +153,23 @@ public enum NewFileDetector {
         .map(\.id)
     }
 
+    /// Of `trackIDs`, the ones a scan now shows were in their watched folder before the watch began,
+    /// such as files a cloud drive once reported as just added. A track with no dated file in a
+    /// watched folder, like an import, is never returned.
+    public static func arrivedBeforeWatch(
+        _ trackIDs: Set<UUID>, tracks: [Track], scan: [ScannedFile], watchedSince: [String: Date]
+    ) -> Set<UUID> {
+        let added = Dictionary(scan.compactMap { file in file.addedDate.map { (file.path, $0) } }, uniquingKeysWith: { a, _ in a })
+        return Set(tracks.filter { track in
+            guard trackIDs.contains(track.id) else { return false }
+            let dated = track.files.compactMap { file -> (Date, Date)? in
+                guard let date = added[file.path], let since = watchStart(path: file.path, watchedSince: watchedSince) else { return nil }
+                return (date, since)
+            }
+            return !dated.isEmpty && dated.allSatisfy { $0.0 < $0.1 }
+        }.map(\.id))
+    }
+
     static func watchStart(path: String, watchedSince: [String: Date]) -> Date? {
         watchedSince
             .filter { path.hasPrefix($0.key.hasSuffix("/") ? $0.key : $0.key + "/") }

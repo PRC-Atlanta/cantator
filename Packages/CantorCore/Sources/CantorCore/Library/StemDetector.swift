@@ -12,7 +12,9 @@ public enum StemDetector {
     /// A part to learn from, such as "S PTX", "Practice Trax" or a listening demo, is never played
     /// in a service. These exclude on their own but are not stems, so they never make a set of
     /// same-length files look like stems: a choral pack's playback is as long as its parts.
-    static let partWords: Set<String> = ["ptx", "practice", "rehearsal", "demo", "demos"]
+    static let partWords: Set<String> = [
+        "ptx", "practice", "rehearsal", "rehearsaltrack", "demo", "demos", "demonstration", "listening",
+    ]
     /// Words that also appear in song titles and playback names, so they count only inside a same-length set.
     static let weakWords: Set<String> = [
         "guide", "cues", "bass", "keys", "piano", "organ", "pad", "pads", "synth", "strings", "guitar", "gtr", "eg", "ag",
@@ -24,6 +26,11 @@ public enum StemDetector {
         "mix", "full", "master", "mastered", "playback", "accompaniment", "instrumental", "performance", "split",
         "stereo", "no", "without", "minus", "with", "key",
     ]
+    /// Words that name the accompaniment itself, the only ones that keep a demo or practice part.
+    static let playbackWords: Set<String> = [
+        "playback", "accompaniment", "accomp", "instrumental", "performance", "split", "minus", "without",
+    ]
+    static let voiceWords: Set<String> = ["soprano", "sop", "alto", "tenor", "bass", "baritone", "bari"]
     static let minimumSet = 3
     static let lengthToleranceSec = 0.1
 
@@ -75,10 +82,26 @@ public enum StemDetector {
 
     private static func reasonFromName(_ track: Track) -> String? {
         guard let file = sourceFile(track) else { return nil }
-        let words = nameWords(in: file.filename)
-        guard words.isDisjoint(with: keepWords) else { return nil }
-        if let word = words.intersection(strongWords.union(partWords)).sorted().first {
+        let tokens = TitleNormalizer.tokens(file.filename)
+        // A split-track pack's rehearsal points ("Meas. 19 - Stereo Track") each start partway in.
+        // Measure 1 is the whole track, so it stays, whatever folder it is in.
+        if let measure = rehearsalMeasure(tokens) {
+            return measure > 1 ? "Rehearsal point from measure \(measure)" : nil
+        }
+        var words = nameWords(in: file.filename)
+        // "Iata-ma - demo NOT PLAYBACK" says what it is not.
+        for (first, second) in zip(tokens, tokens.dropFirst()) where first == "not" { words.remove(second) }
+        // "Full Choir Demo" and "Soprano Practice Mix" are still parts to learn from. Only a word
+        // that names the accompaniment itself keeps one.
+        if words.isDisjoint(with: playbackWords), let word = words.intersection(partWords).sorted().first {
             return "Name says \(display(word))"
+        }
+        guard words.isDisjoint(with: keepWords) else { return nil }
+        if let word = words.intersection(strongWords).sorted().first {
+            return "Name says \(display(word))"
+        }
+        if let part = voicePart(tokens) {
+            return "Name starts or ends with \(part.capitalized), a voice part"
         }
         // Only the folder the file is in and the one above it, as in Stems/Song or Song/Stems.
         let folders = file.url.deletingLastPathComponent().pathComponents.suffix(2)
@@ -86,6 +109,22 @@ public enum StemDetector {
             return "In a folder named \(folder)"
         }
         return nil
+    }
+
+    /// The measure a rehearsal point starts at, from "Meas. 19" or "measure 092".
+    static func rehearsalMeasure(_ tokens: [String]) -> Int? {
+        for (word, next) in zip(tokens, tokens.dropFirst()) where word == "meas" || word == "measure" {
+            if let number = Int(next) { return number }
+        }
+        return nil
+    }
+
+    /// A voice part named first or last, as in "BASS Christ our hope" or "Holy Forever Alto".
+    /// In the middle it is more often part of a title, so it counts there only in a same-length set.
+    static func voicePart(_ tokens: [String]) -> String? {
+        let words = tokens.filter { !$0.allSatisfy(\.isNumber) }
+        guard words.count >= 2 else { return nil }
+        return [words.first, words.last].compactMap { $0 }.first { voiceWords.contains($0) }
     }
 
     static func display(_ word: String) -> String {

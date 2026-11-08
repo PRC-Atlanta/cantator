@@ -28,6 +28,29 @@ final class NewFileDetectorTests: XCTestCase {
         XCTAssertTrue(ids.isEmpty)
     }
 
+    func testACloudDriveFileIsDatedWhenItReachedTheDrive() {
+        let synced = Date(timeIntervalSince1970: 1_793_000_000)
+        let created = synced.addingTimeInterval(-400 * 24 * 3600)
+        let drive = "/Users/me/Library/CloudStorage/GoogleDrive-me@example.com/Choir/Song.mp3"
+        XCTAssertEqual(FolderScanner.addedDate(path: drive, added: synced, created: created), created,
+                       "Drive lists every file as added when it first syncs the folder")
+        XCTAssertEqual(FolderScanner.addedDate(path: drive, added: created, created: synced), created)
+        XCTAssertEqual(FolderScanner.addedDate(path: "/Users/me/Downloads/Song.mp3", added: synced, created: created), synced,
+                       "a file copied into a local folder keeps an old creation date")
+        XCTAssertEqual(FolderScanner.addedDate(path: drive, added: nil, created: created), created)
+    }
+
+    func testFilesThatTurnOutToPredateTheWatchLeave() {
+        let old = ScannedFile(path: "/Drive/Choir/Old.mp3", locality: .cloudOnly, contentID: nil, addedDate: watchStart.addingTimeInterval(-3600))
+        let fresh = ScannedFile(path: "/Drive/Choir/Fresh.mp3", locality: .cloudOnly, contentID: nil, addedDate: watchStart.addingTimeInterval(60))
+        let imported = ScannedFile(path: "/Elsewhere/Import.mp3", locality: .local, contentID: nil, addedDate: watchStart.addingTimeInterval(-3600))
+        var library = Library()
+        library.merge(scan: [old, fresh, imported])
+        let ids = Set(library.tracks.map(\.id))
+        let early = NewFileDetector.arrivedBeforeWatch(ids, tracks: library.tracks, scan: [old, fresh, imported], watchedSince: ["/Drive": watchStart])
+        XCTAssertEqual(early, Set(library.tracks.filter { $0.files.contains { $0.path == old.path } }.map(\.id)))
+    }
+
     func testMovedPlaceholderIsNotNew() {
         var existing = Library()
         let old = ScannedFile(path: "/Drive/Choir/A/Song.mp3", locality: .cloudOnly, contentID: nil, addedDate: watchStart.addingTimeInterval(-10))

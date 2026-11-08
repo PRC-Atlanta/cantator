@@ -36,6 +36,51 @@ final class StemDetectorTests: XCTestCase {
         XCTAssertNil(reasons[inKey.id])
     }
 
+    func testRehearsalPointsAfterMeasureOneAreNotPlaybacks() {
+        let folder = "/Drive/Holy Forever/Tracks/Stereo Track Rehearsal Points"
+        let point = track("\(folder)/Holy Forever - Meas. 19 - Stereo Track - 1701A22A383.mp3", 0)
+        let first = track("\(folder)/Holy Forever - Meas. 1 - Stereo Track - 1701A22A383.mp3", 0)
+        let split = track("/Drive/Medley/Christmas_Medley_split_track_645757391232/Christmas Medley  measure 092.mp3", 0)
+        let opening = track("/Drive/I Will Rise/I_Will_Rise_Split_Track_Accompaniment/01 I Will Rise measure 001.mp3", 0)
+        let reasons = StemDetector.detect(tracks: [point, first, split, opening])
+        XCTAssertEqual(reasons[point.id], "Rehearsal point from measure 19")
+        XCTAssertEqual(reasons[split.id], "Rehearsal point from measure 92")
+        XCTAssertNil(reasons[first.id], "measure 1 is the whole track")
+        XCTAssertNil(reasons[opening.id])
+    }
+
+    func testADemoIsADemoEvenWhenFull() {
+        let full = track("/Drive/Behold Our God/03 Behold Our God - Full Choir Demo.mp3", 0)
+        let choral = track("/Drive/Glorie Lui/DEMO I Heard the Bells on Christmas Day - Full Choral Demo.mp3", 0)
+        let practiceMix = track("/Drive/Song/Soprano Practice Mix.mp3", 0)
+        let accomp = track("/Drive/Behold Our God/02 Behold Our God - Split-track Accomp..mp3", 0)
+        let inDemoFolder = track("/Drive/Mesia/Mesia Demo/Mesia_Instrumental_noCLICK_noINTRO.wav", 0)
+        let listening = track("/Drive/Call Him Jesus/Call-Him-Jesus_Listening-Track_1701A23A077.mp3", 0)
+        let demonstration = track("/Drive/I Will Rise/13 I Will Rise Full Demonstration.mp3", 0)
+        let notPlayback = track("/Drive/Iata-ma - Majesty/179 Iata-ma - demo NOT PLAYBACK.mp3", 0)
+        let reasons = StemDetector.detect(tracks: [full, choral, practiceMix, accomp, inDemoFolder, listening, demonstration, notPlayback])
+        XCTAssertEqual(reasons[listening.id], "Name says Listening")
+        XCTAssertEqual(reasons[demonstration.id], "Name says Demonstration")
+        XCTAssertEqual(reasons[notPlayback.id], "Name says Demo")
+        XCTAssertEqual(reasons[full.id], "Name says Demo")
+        XCTAssertEqual(reasons[choral.id], "Name says Demo")
+        XCTAssertEqual(reasons[practiceMix.id], "Name says Practice")
+        XCTAssertNil(reasons[accomp.id])
+        XCTAssertNil(reasons[inDemoFolder.id], "an instrumental is a playback")
+    }
+
+    func testAVoicePartNamedFirstOrLastIsNotAPlayback() {
+        let bass = track("/Drive/Christ our hope/BASS Christ our hope.mp3", 0)
+        let alto = track("/Drive/Holy Forever/Holy Forever Alto.mp3", 0)
+        let tracks = track("/Drive/Christ our hope/Căntăm Aleluia Christ our hope TRACKS.mp3", 0)
+        let title = track("/Drive/Songs/All About That Bass Line Medley.mp3", 0)
+        let reasons = StemDetector.detect(tracks: [bass, alto, tracks, title])
+        XCTAssertEqual(reasons[bass.id], "Name starts or ends with Bass, a voice part")
+        XCTAssertEqual(reasons[alto.id], "Name starts or ends with Alto, a voice part")
+        XCTAssertNil(reasons[tracks.id])
+        XCTAssertNil(reasons[title.id], "a part word inside a title needs a same-length set")
+    }
+
     func testAChoralPacksPlaybackIsNotAStemAmongItsParts() {
         let parts = ["S", "A", "T", "B"].map { track("/Drive/Thou Oh Lord/Thou Oh Lord - \($0) PTX.mp3", 300) }
         let demo = track("/Drive/Thou Oh Lord/Thou Oh Lord Demo.mp3", 300)

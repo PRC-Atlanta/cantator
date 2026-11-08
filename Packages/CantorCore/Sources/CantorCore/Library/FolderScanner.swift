@@ -84,6 +84,15 @@ public struct ScanResult: Sendable {
 
 public enum FolderScanner {
     public static let audioExtensions: Set<String> = ["mp3", "wav", "m4a", "aif", "aiff", "aac", "caf"]
+
+    /// When a file arrived. A cloud drive (Google Drive, Dropbox, OneDrive) reports a file as added
+    /// when it first lists it on this Mac, so a folder added to Cantator makes every file in it look
+    /// brand new. Its creation date is when the file reached the drive, so the earlier one wins
+    /// there. A local folder keeps the added date, since a file copied in keeps an old creation date.
+    static func addedDate(path: String, added: Date?, created: Date?) -> Date? {
+        guard path.contains("/Library/CloudStorage/"), let added, let created else { return added ?? created }
+        return min(added, created)
+    }
     public static let settleSeconds: TimeInterval = 2
 
     public static func scan(roots: [String], cache: inout HashCache, now: Date = Date()) -> ScanResult {
@@ -124,7 +133,7 @@ public enum FolderScanner {
                     gaps.paths.insert(path)
                     continue
                 }
-                let added = values.addedToDirectoryDate ?? values.creationDate
+                let added = Self.addedDate(path: path, added: values.addedToDirectoryDate, created: values.creationDate)
 
                 // A linked file is read through its target but listed where the link is.
                 var target = url
