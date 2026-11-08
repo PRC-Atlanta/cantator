@@ -177,6 +177,12 @@ A name that says mix, full, master, playback, accompaniment, instrumental, split
 
 **Excluded** in the Library sidebar lists every file left out, with the reason. If a playback is missing from matching, find it there, preview it, and choose **This Is a Playback**. Cantator remembers that and never excludes it again. Cantator rechecks its own guesses on every scan, but never undoes yours.
 
+### Duplicates
+
+The same song is often in more than one place, such as an MP3 in Downloads and the WAV in Drive, or a file downloaded twice as "Way Maker (1).mp3". Identical files are already one track. Files that are not identical but have the same name, apart from a copy number, "copy", a leading track number or a bitrate, and the same length within half a second, are copies: Cantator keeps one and moves the rest to **Excluded** with "Duplicate of" and the file it kept. It keeps the copy a service uses or that you chose, then the one with your end point, markers, tags or notes, then one on this Mac, then a WAV or AIFF, then one already in `~/Music/Cantor`. A different version, such as "Full Mix" and "Instrumental" or two keys, has a different name and is never treated as a copy.
+
+**Duplicates** in the Library sidebar also lists tracks that only look like the same song: the same title and length within a second, under different file names. Select the one to use and choose **Keep This One**, and the others go to Excluded. **This Is a Playback** brings any of them back.
+
 Cantator never moves, renames or deletes your files. **Make Local** copies a track to `~/Music/Cantor`, which also downloads it if it's only in Drive.
 
 ### Importing files

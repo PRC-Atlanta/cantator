@@ -142,11 +142,13 @@ public struct Library: Codable, Equatable, Sendable {
         }
     }
 
-    /// Excludes tracks that look like stems and brings back ones that no longer do. The operator's
-    /// own choices are left alone. Returns whether anything changed.
+    /// Excludes tracks that look like stems, and all but one copy of a playback, and brings back
+    /// ones that no longer do. The operator's own choices are left alone. Returns whether anything changed.
     @discardableResult
     public mutating func excludeStems(protecting protected: Set<UUID>) -> Bool {
-        let reasons = StemDetector.detect(tracks: tracks, protected: protected)
+        var reasons = StemDetector.detect(tracks: tracks, protected: protected)
+        // Stems first, so a stem never stands in for the playback it was copied beside.
+        reasons.merge(DuplicateDetector.detect(tracks: tracks, protected: protected, skipping: Set(reasons.keys))) { stem, _ in stem }
         var changed = false
         for index in tracks.indices where tracks[index].exclusion?.byOperator != true {
             let exclusion = reasons[tracks[index].id].map { Exclusion(reason: $0, byOperator: false) }
@@ -159,9 +161,9 @@ public struct Library: Codable, Equatable, Sendable {
     }
 
     /// The operator's Not a Playback.
-    public mutating func exclude(id: UUID) {
+    public mutating func exclude(id: UUID, reason: String = "You chose Not a Playback") {
         update(id: id) {
-            $0.exclusion = Exclusion(reason: "You chose Not a Playback", byOperator: true)
+            $0.exclusion = Exclusion(reason: reason, byOperator: true)
             $0.keptByOperator = false
         }
     }

@@ -276,6 +276,16 @@ private struct TrackActions: View {
         .disabled(excluded.isEmpty || locked)
         .help("This is a playback: bring back from Excluded")
 
+        if let id = included.first, included.count == 1, ids.count == 1, !model.otherDuplicates(of: id).isEmpty {
+            Button {
+                model.keepOnly(id)
+            } label: {
+                Label("Keep This One", systemImage: "checkmark.square")
+            }
+            .disabled(locked)
+            .help("Keep this copy and move the others that look like the same song to Excluded")
+        }
+
         Button {
             model.queueCopies(tracks.map(\.id))
         } label: {

@@ -1928,14 +1928,28 @@ final class AppModel {
 
     /// Not a Playback for each track. When a service uses one of them, the operator is asked first,
     /// since excluding takes it out of those services.
-    func excludeTracks(_ ids: Set<UUID>) {
+    func excludeTracks(_ ids: Set<UUID>, reason: String = "You chose Not a Playback") {
         guard !show.showMode, !ids.isEmpty else { return }
         let inUse = ids.intersection(confirmedTrackIDs)
         guard inUse.isEmpty else {
-            pendingExclusion = PendingExclusion(trackIDs: ids, message: exclusionWarning(inUse))
+            pendingExclusion = PendingExclusion(trackIDs: ids, message: exclusionWarning(inUse), reason: reason)
             return
         }
-        exclude(ids)
+        exclude(ids, reason: reason)
+    }
+
+    /// The other tracks offered as duplicates of this one, for Keep This One.
+    func otherDuplicates(of id: UUID) -> Set<UUID> {
+        Set(library.duplicateGroups.filter { $0.trackIDs.count > 1 && $0.trackIDs.contains(id) }.flatMap(\.trackIDs)).subtracting([id])
+    }
+
+    /// Keeps this track and excludes the others offered as its duplicates.
+    func keepOnly(_ id: UUID) {
+        guard !show.showMode, let track = library.track(id: id) else { return }
+        let others = otherDuplicates(of: id)
+        let name = StemDetector.sourceFile(track).map { "“\($0.filename)”" } ?? "“\(track.title)”"
+        keepTracks([id])
+        excludeTracks(others, reason: "Duplicate of \(name), which you kept")
     }
 
     /// Takes the tracks out of every service, then excludes them. In a synced service, items added by
@@ -1960,12 +1974,12 @@ final class AppModel {
             }
         }
         markCuesChanged()
-        exclude(pending.trackIDs)
+        exclude(pending.trackIDs, reason: pending.reason)
     }
 
-    private func exclude(_ ids: Set<UUID>) {
+    private func exclude(_ ids: Set<UUID>, reason: String) {
         for id in ids {
-            library.exclude(id: id)
+            library.exclude(id: id, reason: reason)
             inbox.remove(id)
         }
         rankAllPlans()
@@ -2044,4 +2058,5 @@ struct PendingExclusion: Identifiable {
     let id = UUID()
     let trackIDs: Set<UUID>
     let message: String
+    var reason = "You chose Not a Playback"
 }
