@@ -121,10 +121,12 @@ public enum StemDetector {
 
     /// A voice part named first or last, as in "BASS Christ our hope" or "Holy Forever Alto".
     /// In the middle it is more often part of a title, so it counts there only in a same-length set.
+    /// "Way Maker - Bass" is the bass stem, so Bass at the end counts only in a same-length set too.
     static func voicePart(_ tokens: [String]) -> String? {
         let words = tokens.filter { !$0.allSatisfy(\.isNumber) }
-        guard words.count >= 2 else { return nil }
-        return [words.first, words.last].compactMap { $0 }.first { voiceWords.contains($0) }
+        guard words.count >= 2, let first = words.first, let last = words.last else { return nil }
+        if voiceWords.contains(first) { return first }
+        return voiceWords.contains(last) && last != "bass" ? last : nil
     }
 
     static func display(_ word: String) -> String {

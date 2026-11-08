@@ -74,11 +74,13 @@ final class StemDetectorTests: XCTestCase {
         let alto = track("/Drive/Holy Forever/Holy Forever Alto.mp3", 0)
         let tracks = track("/Drive/Christ our hope/Căntăm Aleluia Christ our hope TRACKS.mp3", 0)
         let title = track("/Drive/Songs/All About That Bass Line Medley.mp3", 0)
-        let reasons = StemDetector.detect(tracks: [bass, alto, tracks, title])
+        let stem = track("/Drive/Way Maker/Way Maker - Bass.mp3", 0)
+        let reasons = StemDetector.detect(tracks: [bass, alto, tracks, title, stem])
         XCTAssertEqual(reasons[bass.id], "Name starts or ends with Bass, a voice part")
         XCTAssertEqual(reasons[alto.id], "Name starts or ends with Alto, a voice part")
         XCTAssertNil(reasons[tracks.id])
         XCTAssertNil(reasons[title.id], "a part word inside a title needs a same-length set")
+        XCTAssertNil(reasons[stem.id], "Bass at the end is the bass stem, which needs a same-length set")
     }
 
     func testAChoralPacksPlaybackIsNotAStemAmongItsParts() {
