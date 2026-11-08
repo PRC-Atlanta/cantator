@@ -10,6 +10,10 @@
 # Needs: a clean tree, the Developer ID certificate (CODESIGN_IDENTITY) and Sparkle's update
 # key (account "cantator") in the login keychain, and a notarytool profile (NOTARY_PROFILE,
 # default "cantator"). Publishing also needs the commit pushed to origin and `gh` signed in.
+#
+# The release workflow (.github/workflows/release.yml) runs this on GitHub with a throwaway
+# keychain: NOTARY_KEYCHAIN names the keychain holding the profile, and SPARKLE_KEY_FILE the
+# update key, so nothing on a Mac is needed.
 set -euo pipefail
 
 version=${1:?"usage: scripts/release.sh <version> [notes.md] [--publish]"}
@@ -64,7 +68,9 @@ rm -rf $out
 mkdir -p $out
 echo "Notarizing…"
 ditto -c -k --keepParent $app $zip
-xcrun notarytool submit $zip --keychain-profile $profile --wait | tail -2
+keychain=()
+[[ -n ${NOTARY_KEYCHAIN:-} ]] && keychain=(--keychain $NOTARY_KEYCHAIN)
+xcrun notarytool submit $zip --keychain-profile $profile $keychain --wait | tail -2
 xcrun stapler staple $app
 spctl --assess --type execute $app
 # The zip people download must hold the stapled app.
@@ -75,7 +81,9 @@ echo "Writing the update feed…"
 [[ -n $notes ]] && cp $notes $out/Cantor-$version.md
 tools=$(find $derived/SourcePackages/artifacts -path "*Sparkle/bin" -type d | head -1)
 # The feed lists only this release: Sparkle needs just the newest, and older zips stay on their own releases.
-$tools/generate_appcast --account cantator --maximum-deltas 0 --embed-release-notes \
+key=(--account cantator)
+[[ -n ${SPARKLE_KEY_FILE:-} ]] && key=(--ed-key-file $SPARKLE_KEY_FILE)
+$tools/generate_appcast $key --maximum-deltas 0 --embed-release-notes \
     --download-url-prefix "https://github.com/$repo/releases/download/$tag/" \
     --link "https://github.com/$repo/releases" $out
 rm -f $out/Cantor-$version.md

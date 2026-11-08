@@ -49,7 +49,15 @@ The last command should report "Notarized Developer ID". Zip the stapled app aga
 
 Cantator checks for updates with [Sparkle](https://sparkle-project.org). Its feed is the `appcast.xml` on the newest GitHub release of PRC-Atlanta/cantator, and updates are signed with a key kept in the login keychain under the account `cantator` (public key in `Config/Info.plist`). Back that key up: without it, installed copies can't take another update. Sparkle's `generate_keys -x <file>` exports it.
 
-`scripts/release.sh` does a release in one step: it builds with the version you give and a build number from the commit count, notarizes and staples, and writes the zip and feed to `build/releases/<version>/`. The notarytool profile defaults to `cantator`; set `NOTARY_PROFILE` for another. Run it on a clean, pushed commit:
+Releases run on GitHub, so no Mac's keychain is involved. Commit the notes as `ReleaseNotes/<version>.md` and push to main, then start the release workflow from the repository's Actions tab, or:
+
+```bash
+gh workflow run release.yml --repo PRC-Atlanta/cantator -f version=1.2.11
+```
+
+It builds on GitHub's macOS runner, signs with the Developer ID, notarizes, staples, writes the feed and publishes the release, in about ten minutes. The certificate, the notarization login and Sparkle's key are repository secrets, listed at the top of `.github/workflows/release.yml`, and each run puts them in a keychain it deletes when it finishes.
+
+To build a release on a Mac instead, for example to try it before publishing, `scripts/release.sh` does it in one step: it builds with the version you give and a build number from the commit count, notarizes and staples, and writes the zip and feed to `build/releases/<version>/`. The notarytool profile defaults to `cantator`; set `NOTARY_PROFILE` for another. Run it on a clean, pushed commit:
 
 ```bash
 scripts/release.sh 1.1 notes.md

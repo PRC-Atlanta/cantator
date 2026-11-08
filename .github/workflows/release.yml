@@ -1,0 +1,89 @@
+# Builds, notarizes and publishes a Cantator release on GitHub, so no Mac's keychain is needed.
+# Run it from the Actions tab or with `gh workflow run release.yml -f version=1.2.11` on a pushed
+# main. The notes come from ReleaseNotes/<version>.md when that file is committed.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions), set once:
+#   MACOS_CERT_P12_BASE64   the "Developer ID Application" certificate and its private key,
+#                           exported from Keychain Access as .p12, then base64
+#   MACOS_CERT_PASSWORD     the password chosen for that .p12 export
+#   NOTARY_APPLE_ID         the Apple ID used for notarization
+#   NOTARY_TEAM_ID          6RHHE8NEYA
+#   NOTARY_APP_PASSWORD     an app-specific password for that Apple ID
+#   SPARKLE_PRIVATE_KEY     Sparkle's update key, from `generate_keys --account cantator -x <file>`
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, such as 1.2.11"
+        required: true
+
+permissions:
+  contents: write
+
+# One release at a time: each takes the next build number from the commit count.
+concurrency: release
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version }}
+      KEYCHAIN: ${{ runner.temp }}/release.keychain-db
+    steps:
+      - name: Check the version
+        run: '[[ $VERSION =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "Not a version: $VERSION"; exit 1; }'
+
+      # The build number is the commit count, and the script checks the tag is new, so it needs all history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import the Developer ID certificate into a throwaway keychain
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          password=$(uuidgen)
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$password" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" ||
+            { echo "The .p12 holds no Developer ID Application identity."; exit 1; }
+
+      - name: Store the notary profile and the update key
+        env:
+          APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          xcrun notarytool store-credentials cantator --apple-id "$APPLE_ID" --team-id "$TEAM_ID" \
+            --password "$APP_PASSWORD" --keychain "$KEYCHAIN"
+          [[ -n $SPARKLE_KEY ]] || { echo "SPARKLE_PRIVATE_KEY is not set."; exit 1; }
+          printf '%s' "$SPARKLE_KEY" > "$RUNNER_TEMP/sparkle.key"
+
+      - name: Build, notarize and publish
+        env:
+          NOTARY_KEYCHAIN: ${{ runner.temp }}/release.keychain-db
+          SPARKLE_KEY_FILE: ${{ runner.temp }}/sparkle.key
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          notes=()
+          [[ -f ReleaseNotes/$VERSION.md ]] && notes=(ReleaseNotes/$VERSION.md)
+          scripts/release.sh "$VERSION" "${notes[@]}" --publish
+
+      - name: Remove the keychain and the update key
+        if: always()
+        run: |
+          security delete-keychain "$KEYCHAIN" || true
+          rm -f "$RUNNER_TEMP/sparkle.key"
