@@ -14,10 +14,14 @@ public enum FileLocality: String, Codable, Sendable {
 public struct TrackFile: Codable, Equatable, Hashable, Sendable {
     public var path: String
     public var locality: FileLocality
+    /// Bytes on the drive, from the last scan. A file not downloaded yet has a size but no length,
+    /// so this is how its copies are told apart from other files with its name.
+    public var sizeBytes: Int64?
 
-    public init(path: String, locality: FileLocality) {
+    public init(path: String, locality: FileLocality, sizeBytes: Int64? = nil) {
         self.path = path
         self.locality = locality
+        self.sizeBytes = sizeBytes
     }
 
     public var url: URL { URL(fileURLWithPath: path) }
@@ -187,7 +191,8 @@ extension TrackFile {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             path: try c.decodeIfPresent(String.self, forKey: .path) ?? "",
-            locality: try c.decodeIfPresent(FileLocality.self, forKey: .locality) ?? .missing
+            locality: try c.decodeIfPresent(FileLocality.self, forKey: .locality) ?? .missing,
+            sizeBytes: try c.decodeIfPresent(Int64.self, forKey: .sizeBytes)
         )
     }
 }

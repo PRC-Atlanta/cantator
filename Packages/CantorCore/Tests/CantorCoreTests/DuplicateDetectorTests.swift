@@ -81,6 +81,47 @@ final class DuplicateDetectorTests: XCTestCase {
         XCTAssertNil(library.track(id: playback.id)?.exclusion)
     }
 
+    private func placeholder(_ path: String, bytes: Int64?, seconds: Double = 0, locality: FileLocality = .cloudOnly) -> Track {
+        Track(files: [TrackFile(path: path, locality: locality, sizeBytes: bytes)], title: TitleNormalizer.displayTitle(filename: URL(fileURLWithPath: path).lastPathComponent), durationSec: seconds)
+    }
+
+    func testCopiesNotDownloadedMatchByName() {
+        let songs = placeholder("/Drive/Songs/There Is a King/06_There is a King-Split.mp3", bytes: 11_894_491)
+        let andreea = placeholder("/Drive/Andreea/There Is a King/06_There is a King-Split.mp3", bytes: 11_894_491)
+        let easter = placeholder("/Drive/Easter 2025/There Is a King/06_There is a King-Split.mp3", bytes: 11_894_491)
+        let reasons = DuplicateDetector.detect(tracks: [songs, andreea, easter])
+        XCTAssertEqual(reasons.count, 2, "one copy stays")
+        XCTAssertNil(reasons[andreea.id], "the first path settles a tie")
+    }
+
+    func testACopyOnThisMacStaysOverOneNotDownloaded() {
+        let desktop = placeholder("/Desktop/Playbacks/Chiar si acolo in vale.mp3", bytes: 8_889_589, seconds: 222.22, locality: .local)
+        let drive = placeholder("/Drive/Old Playbacks/Chiar si acolo in vale.mp3", bytes: 8_889_589)
+        let reasons = DuplicateDetector.detect(tracks: [drive, desktop])
+        XCTAssertNil(reasons[desktop.id])
+        XCTAssertEqual(reasons[drive.id], "Duplicate of “Chiar si acolo in vale.mp3” in Playbacks")
+    }
+
+    func testACopyWithEditedTagsIsStillACopy() {
+        let desktop = placeholder("/Desktop/Playbacks/ALL THE PRAISE-Stereo.mp3", bytes: 11_630_901, seconds: 386.41, locality: .local)
+        let drive = placeholder("/Drive/Numai Tu/ALL THE PRAISE-Stereo.mp3", bytes: 11_628_672)
+        XCTAssertNotNil(DuplicateDetector.detect(tracks: [desktop, drive])[drive.id])
+    }
+
+    func testANotDownloadedFileOfAnotherSizeOrNoSizeIsNotACopy() {
+        let edit = placeholder("/Drive/A/Canta Cerul.mp3", bytes: 9_016_022)
+        let other = placeholder("/Drive/B/Canta Cerul.mp3", bytes: 7_500_000)
+        let unknown = placeholder("/Drive/C/Canta Cerul.mp3", bytes: nil)
+        let local = placeholder("/Desktop/Canta Cerul.mp3", bytes: 6_000_000, seconds: 217.5, locality: .local)
+        XCTAssertTrue(DuplicateDetector.detect(tracks: [edit, other, unknown, local]).isEmpty)
+    }
+
+    func testAScanRecordsEachFilesSize() {
+        var library = Library()
+        library.merge(scan: [ScannedFile(path: "/Drive/Song.mp3", locality: .cloudOnly, contentID: nil, sizeBytes: 1234)])
+        XCTAssertEqual(library.tracks.first?.files.first?.sizeBytes, 1234)
+    }
+
     func testNameKeyDropsWhatACopyAdds() {
         XCTAssertEqual(DuplicateDetector.nameKey("01 Way Maker (2).mp3"), "way maker")
         XCTAssertEqual(DuplicateDetector.nameKey("Way_Maker - Copy.wav"), "way maker")

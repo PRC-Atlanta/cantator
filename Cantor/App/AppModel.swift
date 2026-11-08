@@ -612,6 +612,18 @@ final class AppModel {
         copyNext()
     }
 
+    /// Playbacks with no copy on this Mac yet, only in a cloud drive. Stems, parts and duplicates
+    /// are excluded, so they are never downloaded from here.
+    var notDownloadedPlaybacks: [UUID] {
+        library.playbackTracks.filter { !$0.isLocal && $0.hasCloudOnlyCopy }.map(\.id)
+    }
+
+    /// Downloads every playback that is only in the cloud into ~/Music/Cantor, one at a time, so
+    /// each gets its length and analysis.
+    func makeAllLocal() {
+        queueCopies(notDownloadedPlaybacks)
+    }
+
     /// How many tracks are still to be copied, the one copying now included.
     var copiesLeft: Int { copyQueue.count + makingLocal.count }
 

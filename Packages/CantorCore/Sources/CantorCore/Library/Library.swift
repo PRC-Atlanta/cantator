@@ -63,7 +63,7 @@ public struct Library: Codable, Equatable, Sendable {
         }
 
         for file in scan {
-            let entry = TrackFile(path: file.path, locality: file.locality)
+            let entry = TrackFile(path: file.path, locality: file.locality, sizeBytes: file.sizeBytes)
             if let contentID = file.contentID {
                 let holder = holders[file.path]?.min()
                 if let holder, tracks[holder].contentID == nil {

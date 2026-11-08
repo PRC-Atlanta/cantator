@@ -25,11 +25,14 @@ public struct ScannedFile: Equatable, Sendable {
     public var channels: Int
     /// When the file arrived in its folder. Decides whether it counts as new.
     public var addedDate: Date?
+    /// Bytes on the drive, known even for a file not downloaded yet.
+    public var sizeBytes: Int64?
 
     public init(
         path: String, locality: FileLocality, contentID: String?, durationSec: Double = 0, sampleRate: Double = 0, channels: Int = 0,
-        addedDate: Date? = nil
+        addedDate: Date? = nil, sizeBytes: Int64? = nil
     ) {
+        self.sizeBytes = sizeBytes
         self.path = path
         self.locality = locality
         self.contentID = contentID
@@ -147,18 +150,20 @@ public enum FolderScanner {
                 }
                 guard values.isRegularFile == true else { continue }
 
+                // A cloud drive reports a placeholder's real size without downloading it.
+                let size = Int64(values.fileSize ?? 0)
                 let locality = FileLocalityProbe.locality(path: target.path)
                 if locality != .local {
-                    files.append(ScannedFile(path: path, locality: locality, contentID: nil, addedDate: added))
+                    files.append(ScannedFile(path: path, locality: locality, contentID: nil, addedDate: added, sizeBytes: size > 0 ? size : nil))
                     continue
                 }
 
-                let size = Int64(values.fileSize ?? 0)
                 let mtime = values.contentModificationDate?.timeIntervalSince1970 ?? 0
                 if let entry = cache.entries[path], entry.size == size, entry.mtime == mtime {
                     files.append(ScannedFile(
                         path: path, locality: .local, contentID: entry.contentID,
-                        durationSec: entry.durationSec, sampleRate: entry.sampleRate, channels: entry.channels, addedDate: added
+                        durationSec: entry.durationSec, sampleRate: entry.sampleRate, channels: entry.channels, addedDate: added,
+                        sizeBytes: size
                     ))
                     continue
                 }
@@ -184,7 +189,7 @@ public enum FolderScanner {
                 )
                 files.append(ScannedFile(
                     path: path, locality: .local, contentID: contentID, durationSec: info.durationSec,
-                    sampleRate: info.sampleRate, channels: info.channels, addedDate: added
+                    sampleRate: info.sampleRate, channels: info.channels, addedDate: added, sizeBytes: size
                 ))
             }
             gaps.folders += failed.withLock { $0 }

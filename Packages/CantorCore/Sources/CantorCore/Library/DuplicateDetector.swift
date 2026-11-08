@@ -13,8 +13,9 @@ public enum DuplicateDetector {
     /// left out. Tracks the operator kept or excluded, and `protected` ones, are never returned, but
     /// a kept or protected track is the one that stays.
     public static func detect(tracks: [Track], protected: Set<UUID> = [], skipping: Set<UUID> = []) -> [UUID: String] {
+        // A file not downloaded from a cloud drive has no length yet, but it has a size.
         let candidates = tracks.filter { track in
-            track.exclusion?.byOperator != true && !skipping.contains(track.id) && track.durationSec > 0
+            track.exclusion?.byOperator != true && !skipping.contains(track.id) && (track.durationSec > 0 || size(of: track) != nil)
         }
         let named = candidates.compactMap { track -> (key: String, track: Track)? in
             guard let file = StemDetector.sourceFile(track) else { return nil }
@@ -23,7 +24,7 @@ public enum DuplicateDetector {
         }
         var reasons: [UUID: String] = [:]
         for (_, members) in Dictionary(grouping: named, by: \.key) where members.count > 1 {
-            for set in sameLength(members.map(\.track)) where set.count > 1 {
+            for set in copySets(members.map(\.track)) where set.count > 1 {
                 let keeper = keeper(of: set, protected)
                 let name = StemDetector.sourceFile(keeper).map { describe($0) } ?? keeper.title
                 for track in set where track.id != keeper.id && !track.keptByOperator && !protected.contains(track.id) {
@@ -46,17 +47,40 @@ public enum DuplicateDetector {
         return words.joined(separator: " ")
     }
 
-    /// Lengths chained within the tolerance, as in StemDetector's sets.
-    static func sameLength(_ tracks: [Track]) -> [[Track]] {
-        var sets: [[Track]] = []
-        for track in tracks.sorted(by: { $0.durationSec < $1.durationSec }) {
-            if let last = sets.last?.last, track.durationSec - last.durationSec <= lengthToleranceSec {
-                sets[sets.count - 1].append(track)
-            } else {
-                sets.append([track])
+    /// Same-named tracks that are copies of each other: lengths within the tolerance, or, when a
+    /// length is not known, nearly the same number of bytes. Copies of copies join one set.
+    static func copySets(_ tracks: [Track]) -> [[Track]] {
+        var parent = Array(tracks.indices)
+        func root(_ index: Int) -> Int {
+            var index = index
+            while parent[index] != index { index = parent[index] }
+            return index
+        }
+        let sizes = tracks.map { size(of: $0) }
+        for a in tracks.indices {
+            for b in tracks.indices where b > a {
+                let lengths = tracks[a].durationSec > 0 && tracks[b].durationSec > 0
+                let copies = lengths
+                    ? abs(tracks[a].durationSec - tracks[b].durationSec) <= lengthToleranceSec
+                    : sameSize(sizes[a], sizes[b])
+                if copies { parent[root(b)] = root(a) }
             }
         }
-        return sets
+        return Array(Dictionary(grouping: tracks.indices, by: root).values.map { $0.map { tracks[$0] } })
+    }
+
+    /// Bytes within 0.1%: a copy whose title or artist tag was edited is a few kilobytes off. About
+    /// the length tolerance's worth of audio at MP3 rates, and far apart for an MP3 and a WAV.
+    static let sizeTolerance = 0.001
+
+    static func sameSize(_ a: Int64?, _ b: Int64?) -> Bool {
+        guard let a, let b, a > 0, b > 0 else { return false }
+        return Double(abs(a - b)) <= Double(max(a, b)) * sizeTolerance
+    }
+
+    /// The source file's size from the last scan.
+    static func size(of track: Track) -> Int64? {
+        StemDetector.sourceFile(track)?.sizeBytes
     }
 
     /// Which copy stays: the one the operator chose or a service uses, then the one with their

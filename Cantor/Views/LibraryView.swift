@@ -118,6 +118,18 @@ struct LibraryView: View {
                     .labelStyle(.titleAndIcon)
             }
             ToolbarItem {
+                let count = model.notDownloadedPlaybacks.count
+                Button {
+                    model.makeAllLocal()
+                } label: {
+                    Label("Make All Local", systemImage: "icloud.and.arrow.down")
+                }
+                .disabled(count == 0 || model.copiesLeft > 0 || model.show.showMode)
+                .help(count == 0
+                    ? "Every playback is on this Mac"
+                    : "Download the \(count == 1 ? "playback" : "\(count) playbacks") only in the cloud into ~/Music/Cantor, one at a time")
+            }
+            ToolbarItem {
                 ImportButton()
             }
             ToolbarItem {
