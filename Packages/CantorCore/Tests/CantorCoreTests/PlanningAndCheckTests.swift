@@ -203,6 +203,21 @@ final class PlanMergeTests: XCTestCase {
         XCTAssertTrue(merged.cues[0].changedSinceConfirm)
     }
 
+    func testADeletedItemComesBackCleanOnResync() {
+        var cue = ServiceCue(id: "1", position: 0, title: "Be Still")
+        cue.trackID = UUID()
+        cue.matchCleared = true
+        cue.operatorNeeds = false
+        let manual = ServiceCue(id: "m", position: 1, title: "Added", isManual: true)
+        var service = plan([cue, manual, ServiceCue(id: "2", position: 2, title: "Way Maker")])
+        service.remove("1")
+        service.remove("m")
+
+        let merged = service.merging(fresh: plan([ServiceCue(id: "1", position: 0, title: "Be Still"), ServiceCue(id: "2", position: 1, title: "Way Maker")]))
+        XCTAssertEqual(merged.orderedCues.map(\.id), ["1", "2"], "the item added by hand stays deleted")
+        XCTAssertEqual(merged.cues[0], ServiceCue(id: "1", position: 0, title: "Be Still"))
+    }
+
     func testStrongMatchesConfirmThemselvesUntilCleared() {
         let file = UUID(), other = UUID()
         func cue(_ id: String, score: Double, needs: Bool = true) -> ServiceCue {

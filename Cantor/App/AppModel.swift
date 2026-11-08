@@ -1311,10 +1311,11 @@ final class AppModel {
         scheduleSave()
     }
 
-    /// Only items added by hand can be removed. Planning Center owns the rest.
+    /// An item from Planning Center comes back on the next Refresh as Planning Center has it, with
+    /// no track, as a new item would. One added by hand is gone for good.
     func removeCue(planID: String, cueID: CueID) {
         guard !show.showMode, let index = plans.firstIndex(where: { $0.id == planID }),
-              plans[index].cues.contains(where: { $0.id == cueID && $0.isManual })
+              plans[index].cues.contains(where: { $0.id == cueID })
         else { return }
         plans[index].remove(cueID)
         markCuesChanged()

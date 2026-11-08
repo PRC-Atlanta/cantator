@@ -19,6 +19,9 @@ struct ServiceView: View {
     @State private var namingTemplate = false
     @State private var templateName = ""
     @State private var confirmingDelete = false
+    @State private var hoveredCue: CueID?
+    @State private var swipedCue: CueID?
+    @State private var rowSwipe = RowSwipe()
 
     private var plan: ServicePlan? { model.plans.first { $0.id == planID } }
     private var locked: Bool { model.show.showMode }
@@ -157,125 +160,158 @@ struct ServiceView: View {
         let indented = plan.cues.contains { $0.itemType == "header" }
         return Table(of: ServiceCue.self, selection: $selectedCue) {
             TableColumn("Item") { cue in
-                if cue.itemType == "header" {
-                    // A section label, as in Planning Center, so the items under it read as a group.
-                    if cue.isManual {
-                        TextField("Section", text: titleBinding(plan, cue))
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 11, weight: .bold))
-                            .textCase(.uppercase)
-                            .foregroundStyle(Theme.cue)
-                            .disabled(locked)
-                            .padding(.top, 10)
-                            .padding(.bottom, 2)
-                    } else {
-                        Text(cue.title)
-                            .font(.system(size: 11, weight: .bold))
-                            .textCase(.uppercase)
-                            .tracking(0.6)
-                            .foregroundStyle(Theme.cue)
-                            .lineLimit(1)
-                            .padding(.top, 10)
-                            .padding(.bottom, 2)
-                            .help(cue.title)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 2) {
+                Group {
+                    if cue.itemType == "header" {
+                        // A section label, as in Planning Center, so the items under it read as a group.
                         if cue.isManual {
-                            TextField("Item", text: titleBinding(plan, cue))
+                            TextField("Section", text: titleBinding(plan, cue))
                                 .textFieldStyle(.plain)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 11, weight: .bold))
+                                .textCase(.uppercase)
+                                .foregroundStyle(Theme.cue)
                                 .disabled(locked)
+                                .padding(.top, 10)
+                                .padding(.bottom, 2)
                         } else {
-                            Text(cue.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            Text(cue.title)
+                                .font(.system(size: 11, weight: .bold))
+                                .textCase(.uppercase)
+                                .tracking(0.6)
+                                .foregroundStyle(Theme.cue)
+                                .lineLimit(1)
+                                .padding(.top, 10)
+                                .padding(.bottom, 2)
+                                .help(cue.title)
                         }
-                        let detail = [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
-                        if !detail.isEmpty {
-                            Text(detail.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                                .help(cue.notes)
-                        } else if cue.isManual, !plan.isManual {
-                            Text("Added in Cantator").font(.system(size: 11)).foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if cue.isManual {
+                                TextField("Item", text: titleBinding(plan, cue))
+                                    .textFieldStyle(.plain)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .disabled(locked)
+                            } else {
+                                Text(cue.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            }
+                            let detail = [cue.notes.components(separatedBy: "\n").first ?? "", cue.arrangement].filter { !$0.isEmpty }
+                            if !detail.isEmpty {
+                                Text(detail.joined(separator: " · ")).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                    .help(cue.notes)
+                            } else if cue.isManual, !plan.isManual {
+                                Text("Added in Cantator").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                         }
+                        .padding(.vertical, 3)
+                        .padding(.leading, indented ? 10 : 0)
                     }
-                    .padding(.vertical, 3)
-                    .padding(.leading, indented ? 10 : 0)
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(min: 180, ideal: 240)
 
             TableColumn(plan.isManual ? "Track" : "Needs") { cue in
-                if cue.itemType != "header" {
-                    Toggle("", isOn: Binding(
-                        get: { cue.needsPlayback },
-                        set: { model.setNeeded(planID: plan.id, cue: cue, needed: $0) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.checkbox)
-                    .disabled(locked && plan.isManual)
-                    .help(plan.isManual ? "This item runs on a track" : "This item needs a playback track")
+                Group {
+                    if cue.itemType != "header" {
+                        Toggle("", isOn: Binding(
+                            get: { cue.needsPlayback },
+                            set: { model.setNeeded(planID: plan.id, cue: cue, needed: $0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+                        .disabled(locked && plan.isManual)
+                        .help(plan.isManual ? "This item runs on a track" : "This item needs a playback track")
+                    }
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(46)
 
             TableColumn("File") { cue in
-                if cue.needsPlayback {
-                    Text(fileName(cue)).foregroundStyle(cue.trackID == nil ? .secondary : .primary).lineLimit(1)
+                Group {
+                    if cue.itemType != "header", selectedCue == cue.id, !(locked && cue.isManual) {
+                        // The selected item's file can be found by typing, without the inspector.
+                        TrackSearchField(placeholder: cue.needsPlayback ? fileName(cue) : "Search for a track") { track in
+                            if !cue.needsPlayback { model.setNeeded(planID: plan.id, cue: cue, needed: true) }
+                            model.confirm(planID: plan.id, cue: cue, track: track)
+                        }
+                    } else if cue.needsPlayback {
+                        Text(fileName(cue)).foregroundStyle(cue.trackID == nil ? .secondary : .primary).lineLimit(1)
+                    }
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(min: 180, ideal: 280)
 
             TableColumn("Match") { cue in
-                if cue.needsPlayback, cue.trackID == nil, let top = cue.candidates.first {
-                    Text(top.score.formatted(.percent.precision(.fractionLength(0))))
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                Group {
+                    if cue.needsPlayback, cue.trackID == nil, let top = cue.candidates.first {
+                        Text(top.score.formatted(.percent.precision(.fractionLength(0))))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(52)
 
             TableColumn("State") { cue in
-                if cue.needsPlayback {
-                    if cue.isManual {
-                        ManualStateChip(cue: cue)
-                    } else {
-                        StateChip(cue: cue)
+                Group {
+                    if swipedCue == cue.id, !locked {
+                        Button(role: .destructive) {
+                            delete(plan, cue.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.danger)
+                        .controlSize(.small)
+                        .help(cue.isManual ? "Remove from the service" : "Remove until the next Refresh brings it back from Planning Center")
+                    } else if cue.needsPlayback {
+                        if cue.isManual {
+                            ManualStateChip(cue: cue)
+                        } else {
+                            StateChip(cue: cue)
+                        }
                     }
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(min: 90, ideal: 120)
 
             TableColumn("") { cue in
-                if cue.isManual {
-                    let ordered = plan.orderedCues
-                    let index = ordered.firstIndex { $0.id == cue.id } ?? 0
-                    HStack(spacing: 2) {
-                        Button {
-                            model.moveCue(planID: plan.id, cueID: cue.id, by: -1)
-                        } label: {
-                            Image(systemName: "chevron.up")
+                Group {
+                    if cue.isManual {
+                        let ordered = plan.orderedCues
+                        let index = ordered.firstIndex { $0.id == cue.id } ?? 0
+                        HStack(spacing: 2) {
+                            Button {
+                                model.moveCue(planID: plan.id, cueID: cue.id, by: -1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .disabled(locked || index == 0)
+                            .help("Move up")
+                            Button {
+                                model.moveCue(planID: plan.id, cueID: cue.id, by: 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .disabled(locked || index == ordered.count - 1)
+                            .help("Move down")
+                            Button {
+                                delete(plan, cue.id)
+                            } label: {
+                                Image(systemName: "xmark")
+                            }
+                            .disabled(locked)
+                            .help("Remove from the service")
                         }
-                        .disabled(locked || index == 0)
-                        .help("Move up")
-                        Button {
-                            model.moveCue(planID: plan.id, cueID: cue.id, by: 1)
-                        } label: {
-                            Image(systemName: "chevron.down")
-                        }
-                        .disabled(locked || index == ordered.count - 1)
-                        .help("Move down")
-                        Button {
-                            if selectedCue == cue.id { selectedCue = nil }
-                            model.removeCue(planID: plan.id, cueID: cue.id)
-                        } label: {
-                            Image(systemName: "xmark")
-                        }
-                        .disabled(locked)
-                        .help("Remove from the service")
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .opacity(selectedCue == cue.id ? 1 : 0.4)
                     }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .opacity(selectedCue == cue.id ? 1 : 0.4)
                 }
+                .swipeTarget(cue.id, $hoveredCue)
             }
             .width(plan.isManual ? 70 : 0)
         } rows: {
@@ -290,8 +326,20 @@ struct ServiceView: View {
                             model.addTracks(TrackDrag.trackIDs(items), to: plan.id, at: .after(cue.id))
                         }
                     }
+                    .contextMenu { rowMenu(plan, cue) }
             }
         }
+        .onChange(of: selectedCue) { if selectedCue != swipedCue { swipedCue = nil } }
+        .onChange(of: planID) { swipedCue = nil }
+        .onAppear {
+            // Swiping left on a row shows its Delete button, as in Mail; swiping right puts it away.
+            rowSwipe.start { left in
+                guard let row = hoveredCue else { return false }
+                swipedCue = left ? row : nil
+                return true
+            }
+        }
+        .onDisappear { rowSwipe.stop() }
         // Stripes fall on headers and items alike and blur the sections, so rows are left plain.
         .alternatingRowBackgrounds(.disabled)
         .overlay {
@@ -304,6 +352,68 @@ struct ServiceView: View {
             }
         }
         .acceptsTracks { model.addTracks($0, to: plan.id, at: .end) }
+    }
+
+    /// The row's actions for the mouse: what the inspector, the toolbar and the row's buttons do.
+    @ViewBuilder
+    private func rowMenu(_ plan: ServicePlan, _ cue: ServiceCue) -> some View {
+        let header = cue.itemType == "header"
+        let track = cue.trackID.flatMap { model.library.track(id: $0) }
+        let suggested = cue.candidates.first.flatMap { model.library.track(id: $0.trackID) }
+        if !header {
+            if track == nil, let suggested {
+                Button("\(cue.isManual ? "Use" : "Confirm") “\(suggested.primaryFilename)”") {
+                    if !cue.needsPlayback { model.setNeeded(planID: plan.id, cue: cue, needed: true) }
+                    model.confirm(planID: plan.id, cue: cue, track: suggested)
+                }
+                .disabled(locked && cue.isManual)
+            }
+            if let heard = track ?? suggested {
+                Button(model.isAuditioning(heard) ? "Stop Preview" : "Preview on Cue Output") { model.toggleAudition(heard) }
+                    .disabled(!heard.isLocal)
+                if !heard.isLocal, heard.hasCloudOnlyCopy {
+                    Button("Make Local") { model.makeLocal(heard) }
+                }
+            }
+            if track != nil {
+                if cue.isManual {
+                    Button("Change Track") { model.clearTrack(planID: plan.id, cueID: cue.id) }
+                        .disabled(locked)
+                } else {
+                    Button("Clear Match") { model.clearMatch(planID: plan.id, cue: cue) }
+                }
+            }
+            Toggle(plan.isManual ? "Runs on a Track" : "Needs a Track", isOn: Binding(
+                get: { cue.needsPlayback },
+                set: { model.setNeeded(planID: plan.id, cue: cue, needed: $0) }
+            ))
+            .disabled(locked && plan.isManual)
+            Divider()
+        }
+        if plan.isManual {
+            Button("Add Item Below") { selectedCue = model.addCue(planID: plan.id, header: false, after: cue.id) }
+                .disabled(locked)
+            Button("Add Section Below") { selectedCue = model.addCue(planID: plan.id, header: true, after: cue.id) }
+                .disabled(locked)
+        }
+        if cue.isManual {
+            let ordered = plan.orderedCues
+            let index = ordered.firstIndex { $0.id == cue.id } ?? 0
+            Button("Move Up") { model.moveCue(planID: plan.id, cueID: cue.id, by: -1) }
+                .disabled(locked || index == 0)
+            Button("Move Down") { model.moveCue(planID: plan.id, cueID: cue.id, by: 1) }
+                .disabled(locked || index == ordered.count - 1)
+        }
+        if plan.isManual || cue.isManual { Divider() }
+        Button(header ? "Delete Section" : "Delete Item", role: .destructive) { delete(plan, cue.id) }
+            .disabled(locked)
+    }
+
+    /// A Planning Center item comes back with the next Refresh; one added by hand is gone.
+    private func delete(_ plan: ServicePlan, _ id: CueID) {
+        if selectedCue == id { selectedCue = nil }
+        swipedCue = nil
+        model.removeCue(planID: plan.id, cueID: id)
     }
 
     private func titleBinding(_ plan: ServicePlan, _ cue: ServiceCue) -> Binding<String> {
@@ -525,11 +635,7 @@ private struct CueInspector: View {
     }
 
     private var searchResults: [Track] {
-        let query = search.lowercased()
-        guard query.count >= 2 else { return [] }
-        return Array(model.library.playbackTracks.filter {
-            $0.title.lowercased().contains(query) || $0.primaryFilename.lowercased().contains(query)
-        }.prefix(12))
+        TrackSearchField.results(search, in: model.library.playbackTracks, limit: 12)
     }
 
     private func candidateRow(candidate: MatchCandidate, track: Track) -> some View {
@@ -563,5 +669,141 @@ private struct CueInspector: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// A search field for the selected item's File cell. Matching playbacks show in a list under it;
+/// the arrow keys move through them, Return takes one and Escape clears the search.
+private struct TrackSearchField: View {
+    @AppEnvironment private var model
+    let placeholder: String
+    let choose: (Track) -> Void
+    @State private var search = ""
+    @State private var highlighted = 0
+    @FocusState private var focused: Bool
+
+    /// Playbacks with every typed word in the title or filename, ignoring case and accents, so
+    /// "chiar vale" finds "Chiar și acolo în vale.mp3". Titles that start with the search come first.
+    static func results(_ search: String, in tracks: [Track], limit: Int) -> [Track] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        let words = query.split(separator: " ").map(String.init)
+        guard query.count >= 2 else { return [] }
+        let found = tracks.filter { track in
+            words.allSatisfy { track.title.localizedStandardContains($0) || track.primaryFilename.localizedStandardContains($0) }
+        }
+        let leading = found.filter { $0.title.range(of: query, options: [.anchored, .caseInsensitive, .diacriticInsensitive]) != nil }
+        let rest = found.filter { $0.title.range(of: query, options: [.anchored, .caseInsensitive, .diacriticInsensitive]) == nil }
+        return Array((leading + rest).prefix(limit))
+    }
+
+    private var results: [Track] { Self.results(search, in: model.library.playbackTracks, limit: 10) }
+
+    var body: some View {
+        TextField(placeholder, text: $search)
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            .onChange(of: search) { highlighted = 0 }
+            .onKeyPress(.downArrow) { move(1) }
+            .onKeyPress(.upArrow) { move(-1) }
+            .onSubmit { take(highlighted) }
+            .onExitCommand { search = "" }
+            .popover(isPresented: Binding(get: { focused && !results.isEmpty }, set: { if !$0 { search = "" } }), arrowEdge: .bottom) {
+                list
+            }
+    }
+
+    private var list: some View {
+        let shown = results
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(shown.enumerated()), id: \.element.id) { index, track in
+                HStack(spacing: 8) {
+                    Text(track.primaryFilename).lineLimit(1)
+                    Spacer(minLength: 12)
+                    if !track.isLocal {
+                        Image(systemName: "icloud").foregroundStyle(index == highlighted ? .white : Theme.armed)
+                            .help("Not downloaded")
+                    }
+                    Text(TimeText.plain(track.durationSec)).font(.caption).monospacedDigit()
+                        .foregroundStyle(index == highlighted ? .white : .secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .foregroundStyle(index == highlighted ? .white : .primary)
+                .background(index == highlighted ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .contentShape(Rectangle())
+                .onHover { if $0 { highlighted = index } }
+                .onTapGesture { take(index) }
+            }
+        }
+        .padding(5)
+        .frame(width: 380)
+    }
+
+    private func move(_ step: Int) -> KeyPress.Result {
+        let count = results.count
+        guard count > 0 else { return .ignored }
+        highlighted = (highlighted + step + count) % count
+        return .handled
+    }
+
+    private func take(_ index: Int) {
+        let shown = results
+        guard shown.indices.contains(index) else { return }
+        choose(shown[index])
+        search = ""
+        focused = false
+    }
+}
+
+private extension View {
+    /// Notes which row the pointer is over, so a trackpad swipe knows its row.
+    func swipeTarget(_ id: CueID, _ hovered: Binding<CueID?>) -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hovered.wrappedValue = id } else if hovered.wrappedValue == id { hovered.wrappedValue = nil }
+            }
+    }
+}
+
+/// A sideways two-finger swipe on the trackpad. SwiftUI's swipe actions belong to List, not Table,
+/// so the scroll events are read here. A swipe is taken once, when it has gone far enough sideways,
+/// and its events, momentum included, go no further.
+@MainActor
+final class RowSwipe {
+    private var monitor: Any?
+    private var travel = CGSize.zero
+    private var taken = false
+
+    /// `swiped` gets true for a swipe to the left, and answers whether a row took it.
+    func start(_ swiped: @escaping (Bool) -> Bool) {
+        stop()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            MainActor.assumeIsolated {
+                (self?.handle(event, swiped) ?? false) ? nil : event
+            }
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private func handle(_ event: NSEvent, _ swiped: (Bool) -> Bool) -> Bool {
+        guard event.hasPreciseScrollingDeltas else { return false }
+        if !event.momentumPhase.isEmpty { return taken }
+        if event.phase.contains(.began) {
+            travel = .zero
+            taken = false
+        }
+        // Where the fingers went, whichever way the content scrolls.
+        let sign: CGFloat = event.isDirectionInvertedFromDevice ? 1 : -1
+        travel.width += event.scrollingDeltaX * sign
+        travel.height += event.scrollingDeltaY
+        if !taken, abs(travel.width) > 40, abs(travel.width) > 2 * abs(travel.height) {
+            taken = swiped(travel.width < 0)
+        }
+        return taken
     }
 }
